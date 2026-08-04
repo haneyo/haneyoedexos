@@ -92,7 +92,8 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     libxkbcommon0 xdg-utils libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 \
     libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 \
     linux-firmware network-manager \
-    pulseaudio alsa-utils"
+    pulseaudio alsa-utils \
+    nodejs npm"
 
 # Bind-mount /proc,/sys,/dev for the chroot. If the runner forbids mounts
 # (GitHub containers), fall back to proot (userspace chroot, no mounts).
@@ -103,17 +104,21 @@ for m in /proc /sys /dev; do
         || { echo "[edex] WARN: cannot bind-mount $m — falling back to proot"; MOUNTS_OK=0; break; }
 done
 
+# Bake in the Claude Code CLI too, so the built-in assistant works out of the
+# box (only the API key still needs to be added once from the gear menu).
+INSTALL_CLAUDE='(npm install -g @anthropic-ai/claude-code 2>/dev/null || echo "[edex] WARN: claude CLI install skipped (best-effort)")'
+
 if [ "$MOUNTS_OK" = "1" ]; then
     echo "[edex] chroot apt preinstall (mounted)"
-    sudo chroot "$WORK/rootfs" /bin/bash -c \
-        "export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean" \
+    sudo -E chroot "$WORK/rootfs" /bin/bash -c \
+        "export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean; $INSTALL_CLAUDE" \
         || { echo "ERROR: chroot apt install failed"; exit 1; }
     for m in /proc /sys /dev; do sudo umount "$WORK/rootfs$m" 2>/dev/null || true; done
 else
     echo "[edex] installing proot and using userspace chroot"
     sudo apt-get install -y proot >/dev/null 2>&1 || true
     proot -S "$WORK/rootfs" /bin/bash -c \
-        "export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean" \
+        "export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean; $INSTALL_CLAUDE" \
         || { echo "ERROR: proot apt install failed"; exit 1; }
 fi
 # Bake the eDEX AppImage straight into the image.

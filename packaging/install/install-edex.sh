@@ -103,6 +103,13 @@ cat > "/home/$U/.config/eDEX-UI/settings.json" <<'SETTINGS'
         "wsPort": 6081,
         "appImageDirs": "~/Applications,~/AppImages"
     },
+    "claude": {
+        "enabled": true,
+        "baseUrl": "",
+        "apiKey": "",
+        "model": "",
+        "haikuModel": ""
+    },
     "webapps": [
         { "name": "Google", "url": "https://www.google.com" },
         { "name": "Bing",   "url": "https://www.bing.com" }
