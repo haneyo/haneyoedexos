@@ -6,7 +6,7 @@ on:
       ubuntu_iso:
         description: "Stock Ubuntu Server 24.04 x86_64 ISO URL to remaster"
         required: true
-        default: "https://releases.ubuntu.com/24.04/ubuntu-24.04.2-live-server-amd64.iso"
+        default: "https://releases.ubuntu.com/24.04/ubuntu-24.04.3-live-server-amd64.iso"
       volume_label:
         description: "ISO volume label"
         required: false

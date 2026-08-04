@@ -25,7 +25,7 @@ APPIMAGE="$(ls dist/*.AppImage | head -1)"
 echo "[edex] using AppImage: $APPIMAGE"
 
 if [ "$SRC" = "auto" ]; then
-    ISO_URL="${UBUNTU_ISO_URL:-https://releases.ubuntu.com/24.04/ubuntu-24.04.2-live-server-amd64.iso}"
+    ISO_URL="${UBUNTU_ISO_URL:-https://releases.ubuntu.com/24.04/ubuntu-24.04.3-live-server-amd64.iso}"
     echo "[edex] downloading stock ISO: $ISO_URL"
     curl -fL -o /tmp/ubuntu-stock.iso "$ISO_URL"
     SRC=/tmp/ubuntu-stock.iso
