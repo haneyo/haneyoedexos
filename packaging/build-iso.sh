@@ -90,7 +90,8 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     fonts-dejavu-core fontconfig libfuse2 \
     libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 libasound2 libgbm1 libdrm2 \
     libxkbcommon0 xdg-utils libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 \
-    libxext6 libxfixes3 libxi6 libxrandr2 libxrender1"
+    libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 \
+    linux-firmware network-manager"
 
 # Bind-mount /proc,/sys,/dev for the chroot. If the runner forbids mounts
 # (GitHub containers), fall back to proot (userspace chroot, no mounts).

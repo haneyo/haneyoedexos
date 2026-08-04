@@ -9,10 +9,12 @@
 autoinstall:
   version: 1
   # Fully OFFLINE install: the GUI stack + eDEX are baked into the squashfs, so
-  # no network and no update download is needed. Only locale / storage / user
-  # stay interactive (like stock Ubuntu).
+  # no network and no update download is needed. The network step is optional —
+  # connect WiFi during install if you like (it just writes the config), skip it
+  # to stay fully offline.
   interactive-sections:
     - locale
+    - network
     - storage
     - identity
   updates: none

@@ -50,6 +50,14 @@ if [ -z "$U" ]; then
     exit 1
 fi
 
+echo "[edex] NetworkManager as the network stack (WiFi via nmcli)"
+cat > /etc/netplan/01-network-manager-all.yaml <<'NETPLAN'
+network:
+  version: 2
+  renderer: NetworkManager
+NETPLAN
+systemctl enable NetworkManager.service 2>/dev/null || true
+
 echo "[edex] lightdm autologin"
 mkdir -p /etc/lightdm/lightdm.conf.d
 cat > /etc/lightdm/lightdm.conf.d/50-edex-autologin.conf <<CONF
