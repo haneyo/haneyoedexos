@@ -1031,20 +1031,63 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
 }
 .lock_key_fn { font-size: 1.9vh; opacity: 0.9; }
 
-/* ---- Virtual keyboard layer (overlays the DATA box, keeps the waveform) ---- */
+/* ---- Virtual keyboard layer (overlays the DATA box) ---- */
 #keyboard_layer {
     position: absolute;
-    inset: 0;
+    /* occupy the bottom band of the DATA box; the compact metric strip
+       (#cyber_panel_inner) shows above it */
+    top: 24%;
+    left: 0;
+    right: 0;
+    bottom: 0;
     display: flex;
-    align-items: center;
+    align-items: flex-end;   /* sit low in the band, flush to the bottom edge */
     justify-content: center;
     pointer-events: none;
     z-index: 3;
+    /* recessed dark band behind the keys, edge-to-edge with the panel so it
+       never shows a floating border line; the top line spans the whole window
+       (the panel's own frame is the only left/right border the keyboard needs) */
+    background: rgba(5, 8, 13, 0.55);
+    border-top: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
 }
 #keyboard_layer #keyboard {
     pointer-events: auto;
     position: static;
     margin: 0;
-    max-width: 100%;
-    max-height: 100%;
+    /* hug the widest row so a width-fit comes out edge-to-edge */
+    width: max-content;
+    /* sit slightly left of center */
+    transform: translateX(-1vh);
+}
+/* The Enter key is two stacked halves; the bottom half's thick dark top edge
+   reads as a break across the key at the DATA-box scale. Drop it so the two
+   halves meet as one continuous key (the seam keeps the top half's bottom
+   border only). */
+#keyboard_layer #keyboard div.keyboard_row#row_2 > div.keyboard_enter {
+    border-top: 0;
+}
+
+/* With the keyboard on, the DATA content compresses into a top strip above
+   the keys: the waveform canvas is dropped (its title stays), leaving the
+   metric bars + readouts (free space, memory, ...) visible. */
+#cyber_panel:has(#keyboard_layer) #cyber_panel_inner {
+    height: 24%;
+    flex: none;
+    overflow: hidden;
+}
+#cyber_panel:has(#keyboard_layer) #cyber_wave_wrap {
+    height: auto;
+    flex: 0 0 auto;
+    padding: 0.5vh 0 0 0;
+}
+#cyber_panel:has(#keyboard_layer) #cyber_waveform_canvas {
+    display: none;
+}
+/* The metric bars row (CPU/MEM/DSK/NET) is the only info kept above the
+   keyboard — the UPTIME/processes/net-rate/swap readouts and the log stream
+   are dropped so the strip stays compact. */
+#cyber_panel:has(#keyboard_layer) #cyber_extra,
+#cyber_panel:has(#keyboard_layer) #cyber_log {
+    display: none;
 }

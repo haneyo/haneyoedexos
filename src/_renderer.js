@@ -416,17 +416,37 @@ async function initUI() {
             } catch (e) {
                 require("electron").ipcRenderer.send("log", "error", "Keyboard init failed: " + (e && e.message));
             }
-            // Scale the keyboard down if its natural size would stick out of
-            // the DATA box frame.
-            requestAnimationFrame(() => {
+
+            // Fit the keyboard edge-to-edge inside the keyboard layer (the
+            // bottom band of the DATA box, below the compact metric strip):
+            // reset zoom, force a reflow, measure the natural size, then apply
+            // a 0.99 safety factor so it fills the width yet never clips.
+            const fitKeyboard = () => {
                 const kb = document.getElementById("keyboard");
-                const panel = cyberPanel.getBoundingClientRect();
                 if (!kb) return;
-                const kr = kb.getBoundingClientRect();
-                if (!kr.width || !kr.height) return;
-                const scale = Math.min(1, (panel.width - 16) / kr.width, (panel.height - 8) / kr.height);
-                if (scale < 1) kb.style.zoom = scale;
-            });
+                const lr = kbLayer.getBoundingClientRect();
+                if (!lr.width || !lr.height) return;
+                kb.style.zoom = "1";
+                void kb.offsetWidth;
+                const nw = kb.getBoundingClientRect().width;
+                const nh = kb.getBoundingClientRect().height;
+                if (!nw || !nh) return;
+                kb.style.zoom = 0.99 * Math.min(lr.width / nw, lr.height / nh);
+            };
+
+            // Initial fit once the keyboard's DOM has been laid out, plus a late
+            // re-fit after the boot welcome settles (the file manager starts at
+            // 0px wide, which temporarily stretches this panel and would lock in
+            // a too-big zoom once the layout settles to its real width).
+            setTimeout(fitKeyboard, 200);
+            setTimeout(fitKeyboard, 2600);
+
+            // Re-fit whenever the panel resizes (window resize, file-manager
+            // expansion) so it never gets clipped. Keep the observer referenced
+            // so it cannot be garbage-collected.
+            const fitRO = window.ResizeObserver ? new ResizeObserver(fitKeyboard) : null;
+            if (fitRO) fitRO.observe(cyberPanel);
+            window.addEventListener("resize", fitKeyboard);
         }
     }
 
