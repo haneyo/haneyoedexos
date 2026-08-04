@@ -38,8 +38,10 @@ jobs:
       - name: Build eDEX AppImage (x64)
         run: |
           npm run prebuild-linux
-          ./node_modules/.bin/electron-builder build -l --x64
+          ./node_modules/.bin/electron-builder build -l --x64 --publish never
           rm -R prebuild-src
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download stock Ubuntu Server ISO
         run: |

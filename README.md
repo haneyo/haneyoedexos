@@ -2,7 +2,7 @@
   <img alt="eDEX-OS" src="media/logo.png" width="360">
 </p>
 
-<p align="center"><strong>把一部笔记本电脑，变成电影里的科幻电脑。</strong></p>
+<p align="center"><strong>Turn a laptop into a sci-fi computer.</strong></p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/base-Ubuntu%20Server%2024.04-orange">
@@ -10,85 +10,85 @@
   <img src="https://img.shields.io/badge/license-GPLv3-red">
 </p>
 
-eDEX-OS 基于深度定制的 [eDEX-UI](https://github.com/GitSquared/edex-ui)(一套科幻终端模拟器 + 系统监视器),进一步把它**变成一套真正的桌面操作系统**:改装 Ubuntu Server 24.04 生成可安装的 ISO,装好后**开机直接进入 eDEX 全屏科幻界面**,而底下的 Linux 一切照常——`apt` 装软件、跑 AppImage,都行。
+eDEX-OS is built on a heavily customized [eDEX-UI](https://github.com/GitSquared/edex-ui) (a sci-fi terminal emulator + system monitor) and takes it one step further: **it becomes a real desktop operating system.** It remasters Ubuntu Server 24.04 into an installable ISO — after installation, the laptop **boots straight into the fullscreen eDEX sci-fi interface**, while the Linux underneath stays completely normal: `apt`, `.deb` and AppImage all work as usual.
 
 ---
 
-## ✨ 亮点
+## ✨ Highlights
 
-| 能力 | 说明 |
+| Feature | Description |
 |---|---|
-| **虚拟显示器(tab 4 / 5)** | 把原生 Linux 应用(GTK/Qt/AppImage)直接"显示进"终端标签页内(noVNC 流式渲染);也支持网页应用。点标签旁 ▾ 切换应用、可手动添加 AppImage/命令/网址,菜单支持键盘操作(↑↓ + Enter + Esc)。 |
-| **原生全屏** | 点全屏按钮,应用**完全原生地**接管整块真实屏幕(不再是流式画面);屏幕角落有不显眼的 `◀ EDEX` 按钮、或 `Ctrl+Shift+Q` 热键,一键回到 eDEX。 |
-| **内嵌 Claude Code(tab 3)** | 第 3 个终端标签是专用的 Claude Code 工作区。 |
-| **终端 + 系统监视** | 完整终端模拟器(多标签、颜色、鼠标、`curses`)、CPU/RAM/进程/网络实时监视、跟随终端目录的文件浏览器。 |
-| **深度定制模块** | CyberPanel 雷达面板、迷你音乐控制器、媒体播放器、ENCOM 风格地球仪、网页应用面板、纯代码风格的科幻屏保/锁屏。 |
-| **键盘可操作 UI** | 设置菜单与各类面板支持方向键导航,面向纯键盘/手柄操作设计。 |
+| **Virtual monitors (tab 4 / 5)** | Native Linux apps (GTK/Qt/AppImage) render *inside* a terminal tab (noVNC streaming); web apps load directly. Switch apps via the ▾ dropdown on the tab label, manually add AppImage paths / commands / URLs, and drive the menu with the keyboard (↑↓ + Enter + Esc). |
+| **Native fullscreen** | Hit the fullscreen button and the app takes over the real screen **completely natively** (no more streaming). A subtle `◀ EDEX` button in the corner — or `Ctrl+Shift+Q` — drops you back to eDEX. |
+| **Embedded Claude Code (tab 3)** | The 3rd terminal tab is a dedicated Claude Code workspace. |
+| **Terminal + system monitoring** | Full-featured terminal emulator (tabs, colors, mouse, `curses`), live CPU/RAM/process/network monitoring, and a directory viewer that follows the terminal's CWD. |
+| **Deeply customized modules** | CyberPanel radar, mini music controller, media player, ENCOM-style globe, web-app panel, and a pure-code-drawn sci-fi screensaver / lock screen. |
+| **Keyboard-operable UI** | Settings and panels navigate with arrow keys — designed for keyboard / gamepad-first operation. |
 
-## 📸 界面
+## 📸 Screenshots
 
-![默认界面](media/screenshot_default.png)
+![Default theme](media/screenshot_default.png)
 
-![blade 主题](media/screenshot_blade.png)
+![Blade theme](media/screenshot_blade.png)
 
-![horizon 主题](media/screenshot_horizon.png)
+![Horizon theme](media/screenshot_horizon.png)
 
 <details>
-<summary>演示动图</summary>
+<summary>Demo animation</summary>
 <img src="media/youtube-demo-teaser.gif" width="480">
 </details>
 
 ---
 
-## 🚀 快速上手(开发)
+## 🚀 Quick start (development)
 
-在 macOS / Linux 上从源码运行:
+Run from source on macOS / Linux:
 
 ```bash
-# 依赖安装
-npm run install-linux        # 或 install-darwin / install-windows
-# 运行
+# Install dependencies
+npm run install-linux        # or install-darwin / install-windows
+# Run
 npm start
 ```
 
-> 开发机上没有真实 Linux 时,tab 4/5 会自动使用内置的 **mock 演示后端**(纯代码渲染的画面),无需 X 服务器即可体验整条链路。
+> Without a real Linux box nearby, tabs 4/5 automatically fall back to a built-in **mock backend** (pure-code rendered frames) so the whole pipeline is demo-able with no X server.
 
-## 📦 构建
+## 📦 Building
 
 ```bash
-# 构建 AppImage(Linux x64)
+# Build the Linux x64 AppImage
 npm install
 npm run prebuild-linux
 ./node_modules/.bin/electron-builder build -l --x64
 
-# 构建可安装的 eDEX-OS ISO
-#   方式一:GitHub Actions 里手动触发 "Build eDEX-OS ISO"
-#   方式二:在 Ubuntu 24.04 机器上
+# Build the installable eDEX-OS ISO
+#   Option 1: trigger "Build eDEX-OS ISO" manually in GitHub Actions
+#   Option 2: on an Ubuntu 24.04 machine
 bash packaging/build-iso-local.sh
 ```
 
-## 💽 装机(把 eDEX-OS 装到一台电脑)
+## 💽 Installing on a laptop
 
-1. 从 GitHub Actions 下载 `eDEX-OS-ISO` artifact,或用 `build-iso-local.sh` 本地构建。
-2. 烧录 U 盘:`dd if=eDEX-OS-*.iso of=/dev/sdX bs=4M status=progress`(或 balenaEtcher / Rufus)。
-3. 笔记本从 U 盘启动,走一遍 Ubuntu 式安装(选语言 / 分区 / 建用户名密码,其余自动化)。
-4. 重启 → **自动登录并直接进入 eDEX 全屏**。
+1. Download the `eDEX-OS-ISO` artifact from GitHub Actions, or build locally with `build-iso-local.sh`.
+2. Flash a USB stick: `dd if=eDEX-OS-*.iso of=/dev/sdX bs=4M status=progress` (or balenaEtcher / Rufus).
+3. Boot the laptop from USB and run through the Ubuntu-style installer (pick language / partition / create a user — everything else is automated).
+4. Reboot → **auto-login straight into fullscreen eDEX**.
 
-完整装机与使用说明见 [`packaging/README.md`](packaging/README.md)。
+Full install & usage guide: [`packaging/README.md`](packaging/README.md).
 
-## 🗂️ 项目结构
+## 🗂️ Project layout
 
 ```
-src/                    # eDEX-UI 前端 + Electron 主进程
-  appmonitor/           # 虚拟显示器后端(mock RFB / real Xvfb+x11vnc + noVNC 客户端)
-  classes/              # 界面模块(含 appmonitorPanel / webapps / miniAudio ...)
-packaging/              # 发行版打包(autoinstall / 安装脚本 / ISO 构建)
-scripts/                # 辅助脚本(如 appmonitor 依赖安装)
-.github/workflows/      # CI(构建 AppImage / 构建 eDEX-OS ISO)
+src/                    # eDEX-UI frontend + Electron main process
+  appmonitor/           # Virtual-monitor backend (mock RFB / real Xvfb+x11vnc + noVNC client)
+  classes/              # UI modules (incl. appmonitorPanel / webapps / miniAudio ...)
+packaging/              # Distro packaging (autoinstall / install scripts / ISO build)
+scripts/                # Helper scripts (e.g. app-monitor dependencies)
+.github/workflows/      # CI (build AppImage / build eDEX-OS ISO)
 ```
 
-## 📄 许可与致谢
+## 📄 License & credits
 
-- 基于 [eDEX-UI](https://github.com/GitSquared/edex-ui) 深度定制,原作者 Gabriel "Squared" Saillard;遵循 [GPLv3.0](LICENSE)。
-- noVNC 内核来自 [@novnc/novnc](https://github.com/novnc/noVNC)(MPL-2.0,已 vendor 到 `src/assets/vendor/novnc`)。
-- 界面风格致敬《创:战纪》(TRON: Legacy)。
+- Deeply customized from [eDEX-UI](https://github.com/GitSquared/edex-ui) by Gabriel "Squared" Saillard; licensed under [GPLv3.0](LICENSE).
+- noVNC core from [@novnc/novnc](https://github.com/novnc/noVNC) (MPL-2.0, vendored into `src/assets/vendor/novnc`).
+- Visual style inspired by *TRON: Legacy*.
