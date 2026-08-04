@@ -89,6 +89,11 @@ cat > "/home/$U/CLAUDE.md" <<'RULES'
 ## 系统更新
 - `sudo apt update && sudo apt full-upgrade`;或提示用户用齿轮菜单的"系统更新"按钮。
 
+## Flatpak(需联网,一次性配好源)
+- 首次使用:先跑 `flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo`。
+- 安装:如 `flatpak install flathub dev.vencord.Vesktop`(wiliwili 的 x86_64 只有 flatpak 版)。
+- 装好的应用会出现在终端 tab 4/5 的 app 列表。
+
 ## 其它
 - 系统自带 Firefox(/opt/firefox)与 eDEX 终端(tab 1/2)与虚拟显示器(tab 4/5)。
 - 交互时用中文,简洁说明你做了什么。
