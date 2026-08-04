@@ -950,3 +950,55 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
     font-family: monospace; font-size: 1.1vh; line-height: 1.5;
     padding: 1vh; margin: 0 0 1vh 0; white-space: pre-wrap; word-break: break-all;
 }
+
+/* ---- Lock screen (fullscreen sci-fi lock) ---- */
+#lock_screen {
+    position: fixed; inset: 0; z-index: 10000;
+    background: #05080d;
+    display: flex; align-items: center; justify-content: center;
+}
+#lock_canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.lock_panel {
+    position: relative; z-index: 2;
+    display: flex; flex-direction: column; align-items: center; gap: 1.6vh;
+    padding: 4vh 5vh;
+    background: rgba(5, 8, 13, 0.72);
+    border: 0.2vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    box-shadow: 0 0 4vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.25);
+}
+.lock_title {
+    font-size: 2.6vh; letter-spacing: 0.35em; font-weight: bold;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    text-shadow: 0 0 1.2vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.8);
+}
+.lock_sub {
+    font-size: 1.2vh; letter-spacing: 0.3em; opacity: 0.7;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+}
+#lock_pass {
+    width: 26vh; text-align: center;
+    background: rgba(5, 8, 13, 0.9);
+    border: 0.15vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light); font-size: 2.4vh; letter-spacing: 0.6em;
+    padding: 1vh; outline: none;
+}
+#lock_pass:focus { border-color: rgb(var(--color_r), var(--color_g), var(--color_b)); }
+#lock_pass.shake { animation: lock_shake 0.35s; }
+@keyframes lock_shake {
+    0%,100% { transform: translateX(0); }
+    25% { transform: translateX(-0.8vh); } 50% { transform: translateX(0.8vh); }
+    75% { transform: translateX(-0.5vh); }
+}
+#lock_unlock {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.15);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.55);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light); font-size: 1.3vh; letter-spacing: 0.3em;
+    padding: 1vh 3vh; cursor: pointer;
+}
+#lock_unlock:hover { background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.3); }
+.lock_err {
+    min-height: 1.6vh; font-size: 1.1vh; letter-spacing: 0.25em;
+    color: #ff6b6b; text-shadow: 0 0 0.8vh rgba(255, 107, 107, 0.6);
+}

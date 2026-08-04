@@ -572,7 +572,9 @@ async function initUI() {
         status: () => ipc.invoke("wifi:status")
     };
     window.wifiPanel = new WifiPanel();
+    window.lockScreen = new LockScreen();
     ipc.on("open-wifi-panel", () => { if (window.wifiPanel) window.wifiPanel.open(); });
+    ipc.on("lock-screen", () => { if (window.lockScreen) window.lockScreen.show(); });
     ipc.on("edex-download-done", (e, d) => {
         if (window.wifiPanel) window.wifiPanel._notify((d && d.ok ? "Saved to Downloads: " : "Download failed: ") + ((d && d.name) || ""));
     });
@@ -1004,6 +1006,20 @@ window.openSettings = async () => {
                             <option>${(window.settings.screensaverStyle === "matrix") ? "code" : "matrix"}</option>
                         </select></td>
                     </tr>
+                    <tr><td colspan="3" class="settingsEditor_section">锁屏</td></tr>
+                    <tr>
+                        <td>锁屏密码</td>
+                        <td>全屏锁屏的解锁密码（演示用密码，非系统密码）</td>
+                        <td><input type="text" id="settingsEditor-lockCode" value="${window.settings.lockCode || '0000'}"></td>
+                    </tr>
+                    <tr>
+                        <td>空闲自动锁定</td>
+                        <td>空闲达到屏保时间后直接进入锁屏（而不是普通屏保）</td>
+                        <td><select id="settingsEditor-lockOnIdle">
+                            <option>${window.settings.lockOnIdle !== false}</option>
+                            <option>${window.settings.lockOnIdle === false}</option>
+                        </select></td>
+                    </tr>
                     <tr><td colspan="3" class="settingsEditor_section">Claude Code</td></tr>
                     <tr>
                         <td>启用 Claude 配置</td>
@@ -1065,6 +1081,7 @@ window.openSettings = async () => {
             {label: "保存到磁盘", action: "window.writeSettingsFile()"},
             {label: "快捷键", action: "window.openShortcutsHelp()"},
             {label: "WiFi", action: "window.wifiPanel.open()"},
+            {label: "锁屏", action: "window.lockScreen.show()"},
             {label: "系统更新", action: "window.systemUpdate.open()"},
             {label: "启动屏保", action: "window.modals[Object.keys(window.modals).pop()].close(); setTimeout(() => window.screensaver.show(), 150);"},
             {label: "重载界面", action: "window.location.reload(true);"},
@@ -1182,6 +1199,8 @@ window.writeSettingsFile = () => {
         screensaverEnabled: (document.getElementById("settingsEditor-screensaverEnabled").value === "true"),
         screensaverIdle: Number(document.getElementById("settingsEditor-screensaverIdle").value),
         screensaverStyle: document.getElementById("settingsEditor-screensaverStyle").value,
+        lockCode: document.getElementById("settingsEditor-lockCode").value,
+        lockOnIdle: (document.getElementById("settingsEditor-lockOnIdle").value === "true"),
         claude: {
             enabled: (document.getElementById("settingsEditor-claude-enabled").value === "true"),
             baseUrl: document.getElementById("settingsEditor-claude-baseUrl").value,
@@ -1825,7 +1844,10 @@ window.screensaver = (() => {
                 }
             }
         },
-        isActive() { return active; }
+        isActive() { return active; },
+        // Expose the procedural code generator so the lock screen can stream
+        // the same sci-fi C++ onto its own fullscreen canvas.
+        getCodeLine() { return nextLine(); }
     };
 })();
 
@@ -1843,5 +1865,10 @@ setInterval(() => {
     if (Object.keys(window.modals).length > 0) return; // keep modals (settings etc.) usable
     if (!window.settings.screensaverEnabled) return;
     let idle = (Number(window.settings.screensaverIdle) || 300) * 1000;
-    if (Date.now() - lastActivity > idle) window.screensaver.show();
+    if (Date.now() - lastActivity > idle) {
+        // Idle: lock (fullscreen code + passcode) when lockOnIdle is on,
+        // otherwise fall back to the plain screensaver.
+        if (window.settings.lockOnIdle !== false && window.lockScreen) window.lockScreen.show();
+        else window.screensaver.show();
+    }
 }, 1000);

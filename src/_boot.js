@@ -103,6 +103,8 @@ if (!fs.existsSync(settingsFile)) {
         screensaverEnabled: true,
         screensaverIdle: 300,
         screensaverStyle: "code",
+        lockCode: "0000",
+        lockOnIdle: true,
         claude: {
             enabled: false,
             baseUrl: "",
@@ -566,6 +568,13 @@ app.on('ready', async () => {
             if (win && !win.isDestroyed()) win.webContents.send("open-wifi-panel");
         });
     } catch (e) { signale.warn("Could not register wifi-panel hotkey: " + (e && e.message)); }
+
+    // Lock the screen (Ctrl+Shift+O).
+    try {
+        electron.globalShortcut.register("CommandOrControl+Shift+O", () => {
+            if (win && !win.isDestroyed()) win.webContents.send("lock-screen");
+        });
+    } catch (e) { signale.warn("Could not register lock hotkey: " + (e && e.message)); }
 
     // Support for more terminals, used for creating tabs (currently limited to 4 extra terms)
     extraTtys = {};
