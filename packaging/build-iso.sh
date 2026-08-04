@@ -62,12 +62,50 @@ BOOTFLAGS="$(xorriso -indev "$SRC_ISO" -report_el_torito as_mkisofs 2>/dev/null 
 echo "[edex] replaying boot flags:"
 echo "$BOOTFLAGS"
 
+echo "[edex] preinstalling the GUI stack into the live rootfs (fully OFFLINE install)"
+# The installer copies this squashfs verbatim to the target disk, so anything
+# installed here is present on the installed system with ZERO network at
+# install time. Build-time apt needs network; the install-time system does not.
+mkdir -p "$WORK/rootfs"
+sudo unsquashfs -d "$WORK/rootfs" "$EXTRACT/casper/filesystem.squashfs" >/dev/null 2>&1
+sudo mount --bind /dev  "$WORK/rootfs/dev"
+sudo mount --bind /proc "$WORK/rootfs/proc"
+sudo mount --bind /sys  "$WORK/rootfs/sys"
+sudo cp /etc/resolv.conf "$WORK/rootfs/etc/resolv.conf"
+# Give the chroot apt the build host's proxy config (CI needs it) and clear the
+# live image's cdrom-only sources.
+sudo cp /etc/apt/apt.conf.d/* "$WORK/rootfs/etc/apt/apt.conf.d/" 2>/dev/null || true
+sudo rm -rf "$WORK/rootfs/etc/apt/sources.list.d"/* 2>/dev/null || true
+sudo tee "$WORK/rootfs/etc/apt/sources.list" >/dev/null <<'EOF'
+deb http://archive.ubuntu.com/ubuntu noble main universe multiverse restricted
+deb http://security.ubuntu.com/ubuntu noble-security main universe multiverse restricted
+deb http://archive.ubuntu.com/ubuntu noble-updates main universe multiverse restricted
+EOF
+sudo chroot "$WORK/rootfs" /bin/bash -c '
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y
+    apt-get install -y xorg lightdm lightdm-autologin-greeter openbox \
+        xvfb x11vnc novnc websockify dbus-x11 wmctrl xterm curl \
+        fonts-dejavu-core fontconfig libfuse2 \
+        libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 libasound2 libgbm1 libdrm2 \
+        libxkbcommon0 xdg-utils libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 \
+        libxext6 libxfixes3 libxi6 libxrandr2 libxrender1
+    apt-get clean
+'
+# Bake the eDEX AppImage straight into the image.
+sudo mkdir -p "$WORK/rootfs/opt/edex"
+sudo cp "$EDEX_APPIMAGE" "$WORK/rootfs/opt/edex/eDEX-UI.AppImage"
+sudo chmod 755 "$WORK/rootfs/opt/edex/eDEX-UI.AppImage"
+sudo umount "$WORK/rootfs/dev"; sudo umount "$WORK/rootfs/proc"; sudo umount "$WORK/rootfs/sys"
+sudo rm -f "$EXTRACT/casper/filesystem.squashfs"
+sudo mksquashfs "$WORK/rootfs" "$EXTRACT/casper/filesystem.squashfs" -comp zstd -b 256K -noappend >/dev/null
+sudo rm -rf "$WORK/rootfs"
+
 echo "[edex] injecting nocloud datasource + payload"
 mkdir -p "$EXTRACT/nocloud"
 cp "$REPO_DIR/packaging/autoinstall/user-data"     "$EXTRACT/nocloud/user-data"
 cp "$REPO_DIR/packaging/autoinstall/meta-data"     "$EXTRACT/nocloud/meta-data"
 cp "$REPO_DIR/packaging/install/install-edex.sh"   "$EXTRACT/nocloud/install-edex.sh"
-cp "$EDEX_APPIMAGE"                                 "$EXTRACT/nocloud/eDEX-UI.AppImage"
 
 echo "[edex] enabling autoinstall on the kernel command line"
 # Append  autoinstall ds=nocloud\;s=/cdrom/nocloud/  just before the '---'

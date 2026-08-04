@@ -1,24 +1,10 @@
 #!/usr/bin/env bash
 # eDEX-OS target setup — runs INSIDE the freshly-installed system chroot during
-# the installer's late-commands (curtin in-target). Installs the GUI stack and
-# eDEX as the fullscreen shell, wires autologin, the X session, openbox, and a
-# seeded eDEX configuration. The eDEX AppImage is already at /opt/edex/ (copied
-# there by the autoinstall late-commands from the live ISO).
+# the installer's late-commands (curtin in-target). The GUI stack and the eDEX
+# AppImage are ALREADY baked into the image (squashfs preinstall), so this is
+# pure configuration with no network: X session, autologin, openbox, and a
+# seeded eDEX settings file.
 set -euo pipefail
-
-export DEBIAN_FRONTEND=noninteractive
-
-echo "[edex] apt update"
-apt-get update -y
-
-echo "[edex] installing GUI stack + app-monitor deps + Electron runtime"
-apt-get install -y \
-  xorg lightdm lightdm-autologin-greeter openbox \
-  xvfb x11vnc novnc websockify dbus-x11 wmctrl xterm curl \
-  fonts-dejavu-core fontconfig libfuse2 \
-  libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 libasound2 libgbm1 libdrm2 \
-  libxkbcommon0 xdg-utils libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 \
-  libxext6 libxfixes3 libxi6 libxrandr2 libxrender1
 
 echo "[edex] marking the AppImage executable"
 chmod +x /opt/edex/eDEX-UI.AppImage
