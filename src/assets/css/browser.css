@@ -1030,3 +1030,21 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
     box-shadow: 0 0 1.2vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.55);
 }
 .lock_key_fn { font-size: 1.9vh; opacity: 0.9; }
+
+/* ---- Virtual keyboard layer (overlays the DATA box, keeps the waveform) ---- */
+#keyboard_layer {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 3;
+}
+#keyboard_layer #keyboard {
+    pointer-events: auto;
+    position: static;
+    margin: 0;
+    max-width: 100%;
+    max-height: 100%;
+}

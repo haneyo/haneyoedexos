@@ -395,6 +395,41 @@ async function initUI() {
         container: "cyber_panel"
     });
 
+    // Virtual keyboard (settings.showKeyboard): overlay the ORIGINAL eDEX
+    // keyboard, scaled to fit the DATA box; the waveform/data stays visible in
+    // the leftover space. The radar is unaffected.
+    if (window.settings.showKeyboard) {
+        let cyberPanel = document.getElementById("cyber_panel");
+        if (cyberPanel) {
+            let kbLayer = document.createElement("div");
+            kbLayer.id = "keyboard_layer";
+            cyberPanel.appendChild(kbLayer);
+            let kbEl = document.createElement("section");
+            kbEl.id = "keyboard";
+            kbLayer.appendChild(kbEl);
+            try {
+                window.keyboard = new Keyboard({
+                    layout: path.join(keyboardsDir, (window.settings.keyboard || "en-US") + ".json"),
+                    container: "keyboard"
+                });
+                window.keyboard.attach();
+            } catch (e) {
+                require("electron").ipcRenderer.send("log", "error", "Keyboard init failed: " + (e && e.message));
+            }
+            // Scale the keyboard down if its natural size would stick out of
+            // the DATA box frame.
+            requestAnimationFrame(() => {
+                const kb = document.getElementById("keyboard");
+                const panel = cyberPanel.getBoundingClientRect();
+                if (!kb) return;
+                const kr = kb.getBoundingClientRect();
+                if (!kr.width || !kr.height) return;
+                const scale = Math.min(1, (panel.width - 16) / kr.width, (panel.height - 8) / kr.height);
+                if (scale < 1) kb.style.zoom = scale;
+            });
+        }
+    }
+
     await _delay(10);
 
     document.getElementById("main_shell").setAttribute("style", "");
@@ -1020,6 +1055,14 @@ window.openSettings = async () => {
                             <option>${window.settings.lockOnIdle === false}</option>
                         </select></td>
                     </tr>
+                    <tr>
+                        <td>虚拟键盘</td>
+                        <td>触屏用。开启后底部 DATA 框变为触屏键盘（雷达保留），重启 eDEX 生效</td>
+                        <td><select id="settingsEditor-showKeyboard">
+                            <option>${window.settings.showKeyboard === true}</option>
+                            <option>${window.settings.showKeyboard !== true}</option>
+                        </select></td>
+                    </tr>
                     <tr><td colspan="3" class="settingsEditor_section">Claude Code</td></tr>
                     <tr>
                         <td>启用 Claude 配置</td>
@@ -1201,6 +1244,7 @@ window.writeSettingsFile = () => {
         screensaverStyle: document.getElementById("settingsEditor-screensaverStyle").value,
         lockCode: document.getElementById("settingsEditor-lockCode").value,
         lockOnIdle: (document.getElementById("settingsEditor-lockOnIdle").value === "true"),
+        showKeyboard: (document.getElementById("settingsEditor-showKeyboard").value === "true"),
         claude: {
             enabled: (document.getElementById("settingsEditor-claude-enabled").value === "true"),
             baseUrl: document.getElementById("settingsEditor-claude-baseUrl").value,

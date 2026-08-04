@@ -105,6 +105,7 @@ if (!fs.existsSync(settingsFile)) {
         screensaverStyle: "code",
         lockCode: "0000",
         lockOnIdle: true,
+        showKeyboard: false,
         claude: {
             enabled: false,
             baseUrl: "",
