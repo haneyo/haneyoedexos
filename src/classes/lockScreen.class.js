@@ -21,12 +21,22 @@ class LockScreen {
         this.active = true;
         const el = document.createElement("div");
         el.id = "lock_screen";
+        // Numeric PIN keypad — feature-phone 9-grid (3×3 digits + ⌫/0/↵), digits
+        // shuffled each lock so touch users can unlock without a physical keyboard.
+        const digits = this._shuffled();
         el.innerHTML = `
             <canvas id="lock_canvas"></canvas>
             <div class="lock_panel">
                 <div class="lock_title">SYSTEM LOCKED</div>
-                <div class="lock_sub">ENTER PASSCODE TO RESUME</div>
-                <input id="lock_pass" type="password" autocomplete="off" maxlength="64" placeholder="····">
+                <div class="lock_sub">ENTER PIN TO RESUME</div>
+                <input id="lock_pass" type="password" inputmode="numeric" pattern="[0-9]*"
+                       autocomplete="off" maxlength="16" placeholder="····">
+                <div class="lock_keypad">
+                    ${digits.slice(0, 9).map(d => `<button class="lock_key" data-d="${d}" onclick="window.lockScreen.keypadPress(${d})">${d}</button>`).join("")}
+                    <button class="lock_key lock_key_fn" onclick="window.lockScreen.keypadPress(-1)">⌫</button>
+                    <button class="lock_key" data-d="${digits[9]}" onclick="window.lockScreen.keypadPress(${digits[9]})">${digits[9]}</button>
+                    <button class="lock_key lock_key_fn" onclick="window.lockScreen.unlock()">↵</button>
+                </div>
                 <button id="lock_unlock" onclick="window.lockScreen.unlock()">UNLOCK</button>
                 <div class="lock_err" id="lock_err"></div>
             </div>`;
@@ -71,6 +81,30 @@ class LockScreen {
             input.classList.add("shake");
             setTimeout(() => input.classList.remove("shake"), 400);
         }
+    }
+
+    // Numeric keypad: press a digit (d>=0) appends it, d=-1 backspaces.
+    keypadPress(d) {
+        const input = document.getElementById("lock_pass");
+        if (!input || !this.active) return;
+        if (d === -1) {
+            input.value = input.value.slice(0, -1);
+        } else if (input.value.length < 16) {
+            input.value += String(d);
+        }
+        const err = document.getElementById("lock_err");
+        if (err) err.textContent = "";
+        input.focus();
+    }
+
+    // Shuffled 0-9 for the scrambled keypad (a fresh order each lock).
+    _shuffled() {
+        const arr = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+        for (let i = arr.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+        return arr;
     }
 
     _resize() {

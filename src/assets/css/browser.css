@@ -1002,3 +1002,31 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
     min-height: 1.6vh; font-size: 1.1vh; letter-spacing: 0.25em;
     color: #ff6b6b; text-shadow: 0 0 0.8vh rgba(255, 107, 107, 0.6);
 }
+
+/* ---- Lock screen numeric PIN keypad (feature-phone 9-grid, scrambled) ---- */
+.lock_keypad {
+    display: grid;
+    grid-template-columns: repeat(3, 5.6vh);
+    grid-auto-rows: 5.6vh;
+    gap: 0.7vh;
+    justify-content: center;
+}
+.lock_key {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.12);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.45);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 2.4vh;
+    cursor: pointer;
+    user-select: none;
+    touch-action: manipulation;
+    transition: background 0.08s, transform 0.08s, box-shadow 0.08s;
+}
+/* eDEX-keyboard-style press: quick flash + slight lift */
+.lock_key:hover { background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.28); }
+.lock_key:active {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    transform: translateY(0.2vh) scale(0.95);
+    box-shadow: 0 0 1.2vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.55);
+}
+.lock_key_fn { font-size: 1.9vh; opacity: 0.9; }

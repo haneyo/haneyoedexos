@@ -267,3 +267,26 @@ div#mod_netstat_netfooter {
     overflow: hidden;
     text-overflow: ellipsis;
 }
+
+/* ---- "AUTO" auto-detect location button ---- */
+button.mod_loc_auto {
+    flex: 0 0 auto;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.06);
+    color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.85);
+    border: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+    border-radius: 0;
+    font-family: var(--font_main_light);
+    font-size: 0.92vh;
+    letter-spacing: 0.08vh;
+    padding: 0.22vh 0.45vh;
+    cursor: pointer;
+    white-space: nowrap;
+}
+button.mod_loc_auto:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.16);
+}
+button.mod_loc_auto.mod_loc_auto_active {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
+    border-color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-weight: bold;
+}

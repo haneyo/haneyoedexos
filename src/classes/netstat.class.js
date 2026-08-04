@@ -112,6 +112,7 @@ class Netstat {
             <div id="mod_netstat_inner">
                 <h1>WEATHER</h1>
                 <div id="mod_netstat_weather_loc">
+                    <button type="button" class="mod_loc_auto" title="Auto-detect my location (works anywhere)">AUTO</button>
                     <div class="mod_loc_dd">
                         <button type="button" class="mod_loc_btn" data-field="province">--</button>
                         <div class="mod_loc_list" data-field="province"></div>
@@ -263,12 +264,14 @@ class Netstat {
         this._openField = null;
         this._userPicked = false;
         this._autoApplied = false;
+        this._auto = !!(saved && saved.auto);   // explicit "AUTO" mode (works for non-China)
 
         // Delegated clicks, scoped to this module so the settings editor's own
         // `.mod_loc_*` dropdowns are left alone.
         document.addEventListener("click", e => {
             let inWeather = e.target.closest && e.target.closest("#mod_netstat_weather_loc");
             if (inWeather) {
+                if (e.target.closest(".mod_loc_auto")) { this._enableAuto(); return; }
                 let btn = e.target.closest(".mod_loc_btn");
                 if (btn) { this._toggleField(btn.dataset.field); return; }
                 let opt = e.target.closest(".mod_loc_opt");
@@ -333,6 +336,34 @@ class Netstat {
             `Weather auto-located to ${found.prov}/${found.city} (${geo.latitude}, ${geo.longitude})`);
     }
 
+    // Explicit "AUTO" location — uses the detected coordinates directly, so it
+    // works for users OUTSIDE China too (no province/city mapping required).
+    _enableAuto() {
+        this._auto = true;
+        this._userPicked = true;
+        clearInterval(this._autoLocTimer);
+        if (!this._applyAuto()) {
+            clearInterval(this._autoRetry);
+            this._autoRetry = setInterval(() => { if (this._applyAuto()) clearInterval(this._autoRetry); }, 2000);
+        }
+    }
+
+    // Applies the geo-detected location to the weather. Returns true once done.
+    _applyAuto() {
+        let geo = this.ipinfo && this.ipinfo.geo;
+        if (!geo || typeof geo.latitude !== "number" || typeof geo.longitude !== "number") return false;
+        const name = geo.city || geo.country || "AUTO";
+        window.settings.weatherLocation = {
+            latitude: geo.latitude, longitude: geo.longitude,
+            name: name, country: geo.country || "", auto: true
+        };
+        this._weatherSaved = window.settings.weatherLocation;
+        this._renderPicker();
+        if (this.weather && this.weather.destroy) this.weather.destroy();
+        this._initWeather();
+        return true;
+    }
+
     // Rebuild the whole picker from `this._loc`: English button labels, the
     // Chinese dropdown lists and the open/closed state of each list.
     _renderPicker() {
@@ -340,6 +371,22 @@ class Netstat {
         if (!provBtn) return; // pre-rebuild DOM detached; the timer re-runs this
         let cityBtn = document.querySelector("#mod_netstat_weather_loc .mod_loc_btn[data-field='city']");
         let distBtn = document.querySelector("#mod_netstat_weather_loc .mod_loc_btn[data-field='district']");
+        let autoBtn = document.querySelector("#mod_netstat_weather_loc .mod_loc_auto");
+        let status = document.getElementById("mod_netstat_weather_loc_status");
+        let dds = document.querySelectorAll("#mod_netstat_weather_loc .mod_loc_dd");
+
+        if (this._auto) {
+            // AUTO mode: show the detected place, hide the CN pickers.
+            if (autoBtn) autoBtn.classList.add("mod_loc_auto_active");
+            if (status) status.textContent = (this._weatherSaved && this._weatherSaved.name) || "detecting…";
+            dds.forEach(d => { d.style.display = "none"; });
+            if (cityBtn) cityBtn.textContent = "";
+            if (distBtn) distBtn.textContent = "";
+            return;
+        }
+        if (autoBtn) autoBtn.classList.remove("mod_loc_auto_active");
+        if (status) status.textContent = "";
+        dds.forEach(d => { d.style.display = ""; });
 
         provBtn.textContent = this._en("province", this._loc.province);
         if (cityBtn) cityBtn.textContent = this._en("city", this._loc.city);
@@ -381,6 +428,7 @@ class Netstat {
 
     _selectOption(field, value) {
         this._userPicked = true;
+        this._auto = false;   // manual pick leaves AUTO mode
         if (field === "province") {
             this._loc.province = value;
             let cities = this._cnAdmin[value] || {};
