@@ -1071,9 +1071,13 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
 #keyboard_layer #keyboard div.keyboard_enter {
     border: 0;
     background: transparent;
+    /* the two halves are just label carriers now — let the label spill past
+       the top half's box instead of being clipped by .keyboard_key's
+       overflow:hidden */
+    overflow: visible;
 }
 #keyboard_layer #keyboard div.keyboard_row#row_1 > div.keyboard_enter h1 {
-    margin-top: 0.7vh;
+    top: 2.8vh;
 }
 
 /* With the keyboard on, the DATA content compresses into a top strip above

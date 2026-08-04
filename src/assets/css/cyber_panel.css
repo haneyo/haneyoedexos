@@ -247,6 +247,41 @@
     height: 16vh;
     flex: 0 0 auto;
     aspect-ratio: 1;
+    position: relative;
+}
+
+/* Clipped-corner outline around the radar canvas. A real DOM ring (like the
+   terminal's .shell_outline): the outer bl/tr-cut shape minus an inset copy of
+   itself, filled with the theme color — so the line stays continuous around
+   the corner cuts and the interior stays transparent. */
+#cyber_radar_canvas_wrap::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    background: rgb(var(--color_r), var(--color_g), var(--color_b));
+    opacity: 0.35;
+    --w: 0.092vh;
+    --cut: 15px; /* matches augmented-ui's default --aug-tr / --aug-bl */
+    clip-path: polygon(
+        0 0,
+        calc(100% - var(--cut)) 0,
+        100% var(--cut),
+        100% 100%,
+        var(--cut) 100%,
+        0 calc(100% - var(--cut)),
+        0 0,
+        var(--w) var(--w),
+        var(--w) calc(100% - var(--cut) - var(--w) / 2),
+        calc(var(--cut) + var(--w) / 2) calc(100% - var(--w)),
+        calc(100% - var(--w)) calc(100% - var(--w)),
+        calc(100% - var(--w)) calc(var(--cut) + var(--w) / 2),
+        calc(100% - var(--cut) - var(--w) / 2) var(--w),
+        var(--w) var(--w)
+    );
 }
 
 #cyber_radar_canvas {
@@ -254,8 +289,13 @@
     height: 100%;
     display: block;
     background: radial-gradient(circle, rgba(var(--color_r), var(--color_g), var(--color_b), 0.06) 0%, transparent 70%);
-    border: 0.092vh solid var(--panel-line-soft);
+    /* the frame is drawn by #cyber_radar_canvas_wrap::after (a clipped ring),
+       so the canvas itself is borderless and just clips to the cut corners */
+    border: 0;
     box-shadow: 0 0 1.5vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.12);
+    /* match the radar window's clipped corners (bl-clip tr-clip, 15px) so the
+       square canvas frame no longer clashes with the cut-corner frame */
+    clip-path: polygon(0 0, calc(100% - 15px) 0, 100% 15px, 100% 100%, 15px 100%, 0 calc(100% - 15px));
 }
 
 /* Data readout column inside the radar element */
