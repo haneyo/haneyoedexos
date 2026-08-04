@@ -171,6 +171,9 @@ class AppMonitorPanel {
                 this.menu.style.top = (r.bottom + 6) + "px";
             }
             this.menu.style.display = "block";
+            // Re-scan the app list (e.g. a new AppImage just dropped into
+            // ~/Applications) so it shows up without restarting eDEX.
+            this.refresh();
             this._focusMenu(0);
         } else {
             this.closeMenu();

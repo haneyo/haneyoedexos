@@ -67,6 +67,10 @@ autologin-session=edex
 user-session=edex
 CONF
 
+echo "[edex] creating the ~/Applications folder (drop .AppImage files here)"
+mkdir -p "/home/$U/Applications"
+chown "$U":"$U" "/home/$U/Applications"
+
 echo "[edex] seeding eDEX settings"
 mkdir -p "/home/$U/.config/eDEX-UI"
 cat > "/home/$U/.config/eDEX-UI/settings.json" <<'SETTINGS'
