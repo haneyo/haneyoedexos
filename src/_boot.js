@@ -502,6 +502,40 @@ app.on('ready', async () => {
         if (win && !win.isDestroyed()) { win.show(); win.focus(); }
         return r;
     });
+
+    // ---- WiFi (NetworkManager) — the simple-connect panel ----
+    const execFile = require("child_process").execFile;
+    ipc.handle("wifi:list", () => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve({ ok: false, error: "linux only" });
+        execFile("nmcli", ["-t", "-f", "SSID,SIGNAL,SECURITY", "dev", "wifi", "list", "--rescan", "yes"],
+            { timeout: 25000 }, (err, stdout) => {
+                if (err) return resolve({ ok: false, error: (err.stderr || err.message).trim() });
+                const networks = stdout.split("\n").filter(Boolean).map(line => {
+                    const [ssid, signal, security] = line.split(":");
+                    return { ssid: ssid || "", signal: parseInt(signal) || 0, security: security || "" };
+                }).filter(n => n.ssid);
+                resolve({ ok: true, networks });
+            });
+    }));
+    ipc.handle("wifi:connect", (e, { ssid, password }) => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve({ ok: false, error: "linux only" });
+        const args = ["device", "wifi", "connect", ssid];
+        if (password) args.push("password", password);
+        execFile("nmcli", args, { timeout: 30000 }, (err, stdout, stderr) => {
+            resolve(err ? { ok: false, error: (stderr || err.message).trim() } : { ok: true, ssid });
+        });
+    }));
+    ipc.handle("wifi:status", () => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve({ ok: false });
+        execFile("nmcli", ["-t", "-f", "ACTIVE,SSID", "dev", "wifi"], { timeout: 10000 }, (err, stdout) => {
+            if (err) return resolve({ ok: false });
+            const line = (stdout || "").split("\n").find(l => l.startsWith("yes:"));
+            resolve({ ok: true, connected: !!line, ssid: line ? line.split(":")[1] : "" });
+        });
+    }));
+    // Let the renderer open the WiFi panel (floating button / hotkey).
+    ipc.on("open-wifi-panel", () => { if (win && !win.isDestroyed()) win.webContents.send("open-wifi-panel"); });
+
     startAppMonitor(settings, cleanEnv);
 
     createWindow(settings);
@@ -511,6 +545,13 @@ app.on('ready', async () => {
         electron.globalShortcut.register("CommandOrControl+Shift+Q", exitFullscreenViaMain);
     } catch (e) { signale.warn("Could not register exit-fullscreen hotkey: " + (e && e.message)); }
     ipc.on("edex-exit-fullscreen", exitFullscreenViaMain);
+
+    // Open the WiFi connect panel.
+    try {
+        electron.globalShortcut.register("CommandOrControl+Shift+W", () => {
+            if (win && !win.isDestroyed()) win.webContents.send("open-wifi-panel");
+        });
+    } catch (e) { signale.warn("Could not register wifi-panel hotkey: " + (e && e.message)); }
 
     // Support for more terminals, used for creating tabs (currently limited to 4 extra terms)
     extraTtys = {};
@@ -617,27 +658,26 @@ app.on('ready', async () => {
         }
     });
 
-    // Download manager: intercept the embedded browser's downloads, save them to
-    // the OS Downloads folder and stream progress to the renderer's download bar.
-    let browserDownloadId = 0;
-    electron.session.fromPartition("persist:edex-browser").on("will-download", (event, item, webContents) => {
-        const file = path.join(electron.app.getPath("downloads"), item.getFilename());
-        try { item.setSavePath(file); } catch (err) {}
-        const id = ++browserDownloadId;
-        const send = (type, extra) => {
-            if (!webContents.hostWebContents) return;
-            webContents.hostWebContents.send("browser-download", type, Object.assign({
-                id,
-                name: item.getFilename(),
-                path: file,
-                received: item.getReceivedBytes(),
-                total: item.getTotalBytes()
-            }, extra));
-        };
-        send("start");
-        item.on("updated", () => send("progress"));
-        item.on("done", (e, state) => send(state === "completed" ? "done" : "failed"));
-    });
+    // Download manager: intercept downloads from the embedded browser AND the
+    // virtual-monitor webviews (tabs 4/5), save them to the OS Downloads folder
+    // and tell the renderer to show a toast when each finishes.
+    const wireDownloads = partition => {
+        electron.session.fromPartition(partition).on("will-download", (event, item, webContents) => {
+            const file = path.join(electron.app.getPath("downloads"), item.getFilename());
+            try { item.setSavePath(file); } catch (err) {}
+            item.on("done", (e, state) => {
+                const host = webContents && webContents.hostWebContents;
+                if (host && !host.isDestroyed()) {
+                    host.send("edex-download-done", {
+                        name: item.getFilename(),
+                        path: file,
+                        ok: state === "completed"
+                    });
+                }
+            });
+        });
+    };
+    for (const p of ["persist:edex-browser", "persist:edex-monitor-a", "persist:edex-monitor-b"]) wireDownloads(p);
 
     // ---- Ad-blocking for the embedded browser (tab 5), default ON ----
     // @cliqz/adblocker (EasyList + EasyPrivacy + uBlock filters) wired into the

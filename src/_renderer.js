@@ -565,6 +565,26 @@ async function initUI() {
     window.appmonitorA = new AppMonitorPanel({ parentId: "appmonitor_a_slot", monitorId: "a", labelId: "shell_tab3_label" });
     window.appmonitorB = new AppMonitorPanel({ parentId: "appmonitor_b_slot", monitorId: "b", labelId: "shell_tab4_label" });
 
+    // WiFi connect panel (Linux + NetworkManager via nmcli).
+    window.wifiApi = {
+        list: () => ipc.invoke("wifi:list"),
+        connect: (ssid, password) => ipc.invoke("wifi:connect", { ssid, password }),
+        status: () => ipc.invoke("wifi:status")
+    };
+    window.wifiPanel = new WifiPanel();
+    ipc.on("open-wifi-panel", () => { if (window.wifiPanel) window.wifiPanel.open(); });
+    ipc.on("edex-download-done", (e, d) => {
+        if (window.wifiPanel) window.wifiPanel._notify((d && d.ok ? "Saved to Downloads: " : "Download failed: ") + ((d && d.name) || ""));
+    });
+
+    // Floating WiFi quick-connect button (bottom-right corner).
+    const wifiBtn = document.createElement("button");
+    wifiBtn.className = "wifi_btn";
+    wifiBtn.title = "WiFi";
+    wifiBtn.innerHTML = "WIFI";
+    wifiBtn.onclick = () => { if (window.wifiPanel) window.wifiPanel.open(); };
+    document.body.appendChild(wifiBtn);
+
     // True-fullscreen overlay for a webview: a body-level fixed layer hosting a
     // fresh <webview> for the same URL/partition, so the page can fill the whole
     // screen without touching the in-frame webview. Exit via the floating button
@@ -1010,6 +1030,7 @@ window.openSettings = async () => {
             {label: "用外部编辑器打开", action:`electron.shell.openPath('${settingsFile}');electronWin.minimize();`},
             {label: "保存到磁盘", action: "window.writeSettingsFile()"},
             {label: "快捷键", action: "window.openShortcutsHelp()"},
+            {label: "WiFi", action: "window.wifiPanel.open()"},
             {label: "启动屏保", action: "window.modals[Object.keys(window.modals).pop()].close(); setTimeout(() => window.screensaver.show(), 150);"},
             {label: "重载界面", action: "window.location.reload(true);"},
             {label: "重启 eDEX", action: "remote.app.relaunch();remote.app.quit();"}

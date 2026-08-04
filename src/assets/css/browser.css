@@ -891,3 +891,52 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
     width: 2vh;
     height: 2vh;
 }
+
+/* ---- WiFi panel (gear menu / Ctrl+Shift+W / floating button) ---- */
+.wifi_btn {
+    position: fixed;
+    right: 1vw;
+    bottom: 1vh;
+    z-index: 900;
+    background: rgba(5, 8, 13, 0.85);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.55);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 1.1vh;
+    letter-spacing: 0.2em;
+    padding: 0.5vh 1.2vh;
+    cursor: pointer;
+    box-shadow: 0 0 1.2vh rgba(0, 0, 0, 0.5);
+}
+.wifi_btn:hover { background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.2); }
+
+.wifi_panel { min-width: 34vh; max-height: 50vh; overflow: hidden; }
+.wifi_status {
+    font-size: 1.2vh; letter-spacing: 0.15em; opacity: 0.85;
+    margin-bottom: 1vh; color: rgb(var(--color_r), var(--color_g), var(--color_b));
+}
+.wifi_list { max-height: 34vh; overflow-y: auto; }
+.wifi_net {
+    display: flex; align-items: center; gap: 1vh;
+    padding: 0.7vh 0.8vh; cursor: pointer;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-size: 1.2vh; letter-spacing: 0.05em;
+    border-left: 0.3vh solid transparent;
+}
+.wifi_net:hover { background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.12); }
+.wifi_net.selected {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.25);
+    border-left-color: rgb(var(--color_r), var(--color_g), var(--color_b));
+}
+.wifi_sig { width: 4vh; opacity: 0.9; }
+.wifi_name { flex: 1; }
+.wifi_lock { opacity: 0.6; }
+.wifi_empty { color: rgb(var(--color_r), var(--color_g), var(--color_b)); opacity: 0.6; font-size: 1.1vh; padding: 0.6vh; }
+.wifi_pw input {
+    width: 100%; box-sizing: border-box;
+    background: rgba(5, 8, 13, 0.9);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.45);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light); font-size: 1.2vh;
+    padding: 0.6vh 0.8vh; margin-top: 0.8vh; outline: none;
+}
