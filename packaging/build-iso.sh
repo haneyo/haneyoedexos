@@ -94,7 +94,8 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     linux-firmware network-manager \
     pulseaudio alsa-utils \
     nodejs npm \
-    flatpak xdg-desktop-portal xdg-desktop-portal-gtk"
+    flatpak xdg-desktop-portal xdg-desktop-portal-gtk \
+    playerctl"
 
 # Bind-mount /proc,/sys,/dev for the chroot. If the runner forbids mounts
 # (GitHub containers), fall back to proot (userspace chroot, no mounts).
