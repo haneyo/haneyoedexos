@@ -38,7 +38,7 @@ EXTRACT="$WORK/iso-extract"
 echo "[edex] installing build tools"
 export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update -y
-sudo apt-get install -y squashfs-tools xorriso genisoimage bsdtar
+sudo apt-get install -y squashfs-tools xorriso genisoimage
 
 echo "[edex] extracting stock ISO"
 mkdir -p "$EXTRACT"
