@@ -38,6 +38,7 @@ bash packaging/build-iso-local.sh            # 自动下载官方 ISO 并构建
 - **原生全屏**:tab 内点右上角全屏按钮 → 应用**直接接管整块屏幕原生运行**(不再流式);屏幕角落有一个不显眼的 `◀ EDEX` 小按钮,点击回到 eDEX;`Ctrl+Shift+Q` 是兜底热键。
 - **装应用**:就是普通 Ubuntu——`sudo apt install <app>` 或 AppImage。
 - **像 macOS 一样放 AppImage**:把 `.AppImage` 文件丢进主目录的 `~/Applications`(装机时已自动创建),tab 4/5 的 ▾ 下拉就会直接列出它,选中即可显示。点开下拉菜单会自动重新扫描,新放的文件无需重启。
+- **浏览器开箱即用**:系统已内置 **Firefox**(官方版,离线可用),在 tab 4/5 的 app 列表里直接选;全屏按钮可原生全屏浏览。
 - **锁屏/屏保**:闲置自动进入 eDEX 风格纯代码屏保(可在设置里改)。
 
 ## 四、常见问题

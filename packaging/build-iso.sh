@@ -121,6 +121,30 @@ else
         "export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean; $INSTALL_CLAUDE" \
         || { echo "ERROR: proot apt install failed"; exit 1; }
 fi
+
+echo "[edex] baking in Firefox (official tarball — offline, no snap)"
+# Ubuntu 24.04's 'firefox' package is a snap; for a fully offline system we
+# instead embed Mozilla's official Linux tarball and register a .desktop entry
+# so it shows up in the app-monitor list.
+curl -fsSL -o "$WORK/firefox.tar.xz" \
+    "https://download.mozilla.org/?product=firefox-latest-ssl&os=linux64&lang=en-US" \
+    || echo "[edex] WARN: Firefox download failed (best-effort)"
+if [ -s "$WORK/firefox.tar.xz" ]; then
+    sudo mkdir -p "$WORK/rootfs/opt/firefox"
+    sudo tar -xJf "$WORK/firefox.tar.xz" -C "$WORK/rootfs/opt/firefox" --strip-components=1 \
+        || echo "[edex] WARN: Firefox extract failed (best-effort)"
+    sudo tee "$WORK/rootfs/usr/share/applications/firefox.desktop" >/dev/null <<'DESK'
+[Desktop Entry]
+Name=Firefox
+Comment=Browse the web
+Exec=/opt/firefox/firefox
+Icon=/opt/firefox/browser/chrome/icons/default/default128.png
+Type=Application
+Terminal=false
+Categories=Network;WebBrowser;
+DESK
+fi
+
 # Bake the eDEX AppImage straight into the image.
 sudo mkdir -p "$WORK/rootfs/opt/edex"
 sudo cp "$EDEX_APPIMAGE" "$WORK/rootfs/opt/edex/eDEX-UI.AppImage"
