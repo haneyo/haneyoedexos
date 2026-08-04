@@ -77,18 +77,20 @@ class LockScreen {
         if (!this._canvas) return;
         this._canvas.width = window.innerWidth;
         this._canvas.height = window.innerHeight;
-        this._charW = 7.8;                            // 13px Fira Mono ≈ 7.8px/char
+        this._charW = 7.2;                            // 12px Fira Mono ≈ 7.2px/char
         this._charsPerRow = Math.max(60, Math.floor(window.innerWidth / this._charW));
-        this._rows = Math.max(6, Math.floor(window.innerHeight / 18));
+        this._rowH = 22;                              // generous spacing → no overlap
+        this._rows = Math.max(6, Math.floor(window.innerHeight / this._rowH));
     }
 
     _startStream() {
         // ONE continuous ultra-wide stream: every row spans the full screen
         // width (built from concatenated code fragments), so there are no
-        // columns and no empty right strip.
+        // columns and no empty right strip. Slower scroll + strong fade keeps
+        // the trail clean instead of overlapping.
         this._rowsArr = [];
         for (let i = 0; i < this._rows; i++) this._rowsArr.push(this._fullRow());
-        this._timer = setInterval(() => this._draw(), 90);
+        this._timer = setInterval(() => this._draw(), 130);
     }
 
     _genLine(maxLen) {
@@ -116,17 +118,20 @@ class LockScreen {
     _draw() {
         const ctx = this._ctx, w = this._canvas.width, h = this._canvas.height;
         if (!ctx) return;
-        ctx.fillStyle = "rgba(5, 8, 13, 0.16)";
+        // SOLID clear every frame: no persistence, so rows can never overlap.
+        // Depth comes from a position-based brightness gradient instead.
+        ctx.fillStyle = "#05080d";
         ctx.fillRect(0, 0, w, h);
-        ctx.font = "13px 'Fira Mono', monospace";
+        ctx.font = "12px 'Fira Mono', monospace";
         const r = window.theme.r, g = window.theme.g, b = window.theme.b;
         this._rowsArr.push(this._fullRow());
         if (this._rowsArr.length > this._rows) this._rowsArr.shift();
-        const startY = h - 20;
+        const startY = h - 18;
         for (let i = 0; i < this._rowsArr.length; i++) {
-            const y = startY - i * 18;
-            if (y < -12) break;
-            const alpha = 0.10 + 0.85 * (i / this._rowsArr.length);
+            const y = startY - i * this._rowH;
+            if (y < -14) break;
+            // Newest rows (bottom) are bright; older rows dim out smoothly.
+            const alpha = 0.14 + 0.86 * Math.pow(i / this._rowsArr.length, 1.5);
             ctx.fillStyle = "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
             ctx.fillText(this._rowsArr[i], 8, y);
         }
