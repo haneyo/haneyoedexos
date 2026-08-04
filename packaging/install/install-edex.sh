@@ -75,6 +75,17 @@ chown "$U":"$U" "/home/$U/Applications"
 # (their updaters write into /opt/firefox and the npm global dir).
 chown -R "$U":"$U" /opt/firefox /usr/local/lib/node_modules /usr/local/bin 2>/dev/null || true
 
+echo "[edex] passwordless sudo for $U (single-user demo laptop)"
+echo "$U ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/edex-user
+chmod 440 /etc/sudoers.d/edex-user
+
+# apt must point at the Ubuntu archive so 'sudo apt update && upgrade' works.
+cat > /etc/apt/sources.list <<'SOURCES'
+deb http://archive.ubuntu.com/ubuntu noble main universe multiverse restricted
+deb http://security.ubuntu.com/ubuntu noble-security main universe multiverse restricted
+deb http://archive.ubuntu.com/ubuntu noble-updates main universe multiverse restricted
+SOURCES
+
 echo "[edex] seeding eDEX settings"
 mkdir -p "/home/$U/.config/eDEX-UI"
 cat > "/home/$U/.config/eDEX-UI/settings.json" <<'SETTINGS'

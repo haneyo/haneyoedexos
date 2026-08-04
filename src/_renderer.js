@@ -585,6 +585,40 @@ async function initUI() {
     wifiBtn.onclick = () => { if (window.wifiPanel) window.wifiPanel.open(); };
     document.body.appendChild(wifiBtn);
 
+    // System update modal (sudo apt update + full-upgrade, streamed).
+    window.systemUpdate = {
+        modal: null,
+        open() {
+            if (this.modal) return;
+            this.modal = new Modal({
+                type: "custom",
+                title: "SYSTEM UPDATE",
+                html: `<pre class="sysup_out" id="sysup_out">Needs network + passwordless sudo.\nPress Start to check for & install updates…</pre>`,
+                buttons: [
+                    { label: "Start", action: "window.systemUpdate.start()" },
+                    { label: "Close", action: "window.systemUpdate.close()" }
+                ]
+            }, () => { this.modal = null; });
+        },
+        close() { if (this.modal) this.modal.close(); },
+        start() {
+            const pre = document.getElementById("sysup_out");
+            if (!pre || pre.dataset.running === "1") return;
+            pre.dataset.running = "1";
+            pre.textContent = "Running apt update + full-upgrade…\n";
+            ipc.invoke("system:update").then(r => {
+                pre.textContent += r.ok
+                    ? "\n✓ Update complete. Reboot if the kernel changed."
+                    : "\n✗ Update failed" + (r.error ? ": " + r.error : "") + ".";
+                delete pre.dataset.running;
+            });
+        }
+    };
+    ipc.on("system-update-output", (e, line) => {
+        const pre = document.getElementById("sysup_out");
+        if (pre && line) pre.textContent += line + "\n";
+    });
+
     // True-fullscreen overlay for a webview: a body-level fixed layer hosting a
     // fresh <webview> for the same URL/partition, so the page can fill the whole
     // screen without touching the in-frame webview. Exit via the floating button
@@ -1031,6 +1065,7 @@ window.openSettings = async () => {
             {label: "保存到磁盘", action: "window.writeSettingsFile()"},
             {label: "快捷键", action: "window.openShortcutsHelp()"},
             {label: "WiFi", action: "window.wifiPanel.open()"},
+            {label: "系统更新", action: "window.systemUpdate.open()"},
             {label: "启动屏保", action: "window.modals[Object.keys(window.modals).pop()].close(); setTimeout(() => window.screensaver.show(), 150);"},
             {label: "重载界面", action: "window.location.reload(true);"},
             {label: "重启 eDEX", action: "remote.app.relaunch();remote.app.quit();"}

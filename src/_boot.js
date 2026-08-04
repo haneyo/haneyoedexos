@@ -536,6 +536,20 @@ app.on('ready', async () => {
     // Let the renderer open the WiFi panel (floating button / hotkey).
     ipc.on("open-wifi-panel", () => { if (win && !win.isDestroyed()) win.webContents.send("open-wifi-panel"); });
 
+    // System update: sudo apt update && full-upgrade, streaming output to the
+    // renderer (needs passwordless sudo + network — both set up at install).
+    ipc.handle("system:update", () => new Promise(resolve => {
+        const { spawn } = require("child_process");
+        const cmd = "sudo apt-get update -y && sudo apt-get full-upgrade -y " +
+                    "-o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef";
+        const proc = spawn("bash", ["-c", cmd], { env: Object.assign({}, process.env, { DEBIAN_FRONTEND: "noninteractive" }) });
+        const send = line => { if (win && !win.isDestroyed()) win.webContents.send("system-update-output", line); };
+        proc.stdout.on("data", d => String(d).split("\n").forEach(l => l.trim() && send(l.trim())));
+        proc.stderr.on("data", d => String(d).split("\n").forEach(l => l.trim() && send(l.trim())));
+        proc.on("close", code => resolve({ ok: code === 0, code }));
+        proc.on("error", e => resolve({ ok: false, error: e.message }));
+    }));
+
     startAppMonitor(settings, cleanEnv);
 
     createWindow(settings);

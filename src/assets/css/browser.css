@@ -940,3 +940,13 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
     font-family: var(--font_main_light); font-size: 1.2vh;
     padding: 0.6vh 0.8vh; margin-top: 0.8vh; outline: none;
 }
+
+/* ---- System update modal output ---- */
+.sysup_out {
+    min-width: 60vh; max-width: 80vw; height: 34vh; overflow-y: auto;
+    background: rgba(5, 8, 13, 0.92);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: monospace; font-size: 1.1vh; line-height: 1.5;
+    padding: 1vh; margin: 0 0 1vh 0; white-space: pre-wrap; word-break: break-all;
+}
