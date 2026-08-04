@@ -895,9 +895,13 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
 /* ---- WiFi panel (gear menu / Ctrl+Shift+W / floating button) ---- */
 .wifi_btn {
     position: fixed;
-    right: 1vw;
-    bottom: 1vh;
-    z-index: 900;
+    /* right/bottom edges flush with the cyber radar window
+       (#cyber_radar: left 84.1vw, width 27vh, bottom 1.1vh) */
+    right: calc(100vw - 84.1vw - 27vh);
+    bottom: 1.1vh;
+    /* below the mini music controller (z-index 900) so the controller covers
+       it when it slides in, but still above the radar (z-index auto) */
+    z-index: 890;
     background: rgba(5, 8, 13, 0.85);
     border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.55);
     color: rgb(var(--color_r), var(--color_g), var(--color_b));
