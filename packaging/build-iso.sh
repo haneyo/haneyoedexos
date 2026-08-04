@@ -50,7 +50,11 @@ echo "[edex] replaying the stock ISO's boot flags (authoritative)"
 # -report_el_torito as_mkisofs prints the exact El Torito / GPT-partition flags
 # the stock ISO was built with (UEFI may be a file or an appended partition —
 # this handles both). The GRUB2 MBR boot code is captured separately below.
-BOOTFLAGS="$(xorriso -indev "$SRC_ISO" -report_el_torito as_mkisofs 2>/dev/null | grep -E '^-[a-z]|^--' || true)"
+# Drop the flags that don't replay under `-as mkisofs`: the original volume
+# label (-V, we set our own) and the volume-date keyword.
+BOOTFLAGS="$(xorriso -indev "$SRC_ISO" -report_el_torito as_mkisofs 2>/dev/null \
+    | grep -E '^-[a-z]|^--' \
+    | grep -vE '^-V[[:space:]]|^-volume_date' || true)"
 [[ -n "$BOOTFLAGS" ]] || { echo "ERROR: could not read boot flags from $SRC_ISO"; exit 1; }
 echo "[edex] boot flags: $BOOTFLAGS"
 
