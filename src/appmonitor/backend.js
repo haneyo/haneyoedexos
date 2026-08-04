@@ -97,11 +97,20 @@ function realBackend(deps) {
         }
     }
 
+    // Chromium-based apps (Chrome/Chromium/Brave/Edge/Opera/Electron/AppImage)
+    // cannot use their SUID/userns sandbox inside a nested X display — they
+    // need --no-sandbox to start there (and in native fullscreen via openbox).
+    function isChromium(cmd) {
+        return /(chrome|chromium|brave|vivaldi|edge|opera|electron|\.appimage)/i.test(cmd);
+    }
+
     function buildCommand(app) {
         if (app.exec) {
             const t = tokenizeExec(app.exec);
             if (!t.length) return null;
-            return { cmd: t[0], args: t.slice(1) };
+            const args = t.slice(1);
+            if (isChromium(t[0])) args.push("--no-sandbox");
+            return { cmd: t[0], args };
         }
         if (app.path) return { cmd: app.path, args: ["--no-sandbox"] };
         return null;
@@ -131,7 +140,7 @@ function realBackend(deps) {
             if (!cmd) return Promise.resolve({ ok: false, error: "cannot build command" });
             killTree(monitorId);
             const env = Object.assign({}, process.env, { DISPLAY: m.display });
-            if (/\.appimage$/i.test(cmd.cmd) || /electron/i.test(cmd.cmd)) {
+            if (isChromium(cmd.cmd)) {
                 env.ELECTRON_DISABLE_SANDBOX = "1";
             }
             // Give the display a moment to be ready before spawning the app.
@@ -160,7 +169,7 @@ function realBackend(deps) {
             killTree(monitorId);           // stop the streamed preview instance
             exitFullscreenApp();           // clear any previous fullscreen app
             const env = Object.assign({}, process.env, { DISPLAY: ":0" });
-            if (/\.appimage$/i.test(cmd.cmd) || /electron/i.test(cmd.cmd)) env.ELECTRON_DISABLE_SANDBOX = "1";
+            if (isChromium(cmd.cmd)) env.ELECTRON_DISABLE_SANDBOX = "1";
             const child = spawn(cmd.cmd, cmd.args, { env, stdio: "ignore" });
             child.on("error", e => console.error("[appmonitor] fullscreen spawn:", e.message));
             fullscreenPid = child.pid;
