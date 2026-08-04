@@ -31,7 +31,7 @@ eDEX-OS is built on a heavily customized [eDEX-UI](https://github.com/GitSquared
 
 ![Blade theme](media/screenshot_blade.png)
 
-![Horizon theme](media/screenshot_horizon.png)
+![Matrix theme](media/screenshot_matrix.png)
 
 <details>
 <summary>Demo animation</summary>
