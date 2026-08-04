@@ -77,20 +77,17 @@ class LockScreen {
         if (!this._canvas) return;
         this._canvas.width = window.innerWidth;
         this._canvas.height = window.innerHeight;
-        this._colW = 340;                    // px per code column
-        this._cols = Math.max(2, Math.floor(this._canvas.width / this._colW));
-        this._rows = Math.max(6, Math.floor(this._canvas.height / 18));
+        this._charW = 7.8;                            // 13px Fira Mono ≈ 7.8px/char
+        this._charsPerRow = Math.max(60, Math.floor(window.innerWidth / this._charW));
+        this._rows = Math.max(6, Math.floor(window.innerHeight / 18));
     }
 
     _startStream() {
-        // One rolling buffer per column, so the code streams across the WHOLE
-        // screen instead of a single left-aligned column.
-        this._columns = [];
-        for (let c = 0; c < this._cols; c++) {
-            const col = [];
-            for (let i = 0; i < this._rows; i++) col.push(this._genLine(40));
-            this._columns.push(col);
-        }
+        // ONE continuous ultra-wide stream: every row spans the full screen
+        // width (built from concatenated code fragments), so there are no
+        // columns and no empty right strip.
+        this._rowsArr = [];
+        for (let i = 0; i < this._rows; i++) this._rowsArr.push(this._fullRow());
         this._timer = setInterval(() => this._draw(), 90);
     }
 
@@ -105,6 +102,17 @@ class LockScreen {
         return short.length > maxLen ? short.slice(0, maxLen) : short;
     }
 
+    // Build one row that fills the whole width with code fragments.
+    _fullRow() {
+        const target = this._charsPerRow;
+        let s = "";
+        while (s.length < target) {
+            s += this._genLine(180);
+            if (s.length < target) s += "   ";
+        }
+        return s.slice(0, target);
+    }
+
     _draw() {
         const ctx = this._ctx, w = this._canvas.width, h = this._canvas.height;
         if (!ctx) return;
@@ -112,20 +120,15 @@ class LockScreen {
         ctx.fillRect(0, 0, w, h);
         ctx.font = "13px 'Fira Mono', monospace";
         const r = window.theme.r, g = window.theme.g, b = window.theme.b;
-        const maxChars = Math.max(16, Math.floor(this._colW / 7.8));
-        for (let c = 0; c < this._cols; c++) {
-            const col = this._columns[c];
-            col.push(this._genLine(maxChars));
-            if (col.length > this._rows) col.shift();
-            const x = c * this._colW + 8;
-            const startY = h - 20;
-            for (let i = 0; i < col.length; i++) {
-                const y = startY - i * 18;
-                if (y < -12) break;
-                const alpha = 0.10 + 0.85 * (i / col.length);
-                ctx.fillStyle = "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
-                ctx.fillText(col[i], x, y);
-            }
+        this._rowsArr.push(this._fullRow());
+        if (this._rowsArr.length > this._rows) this._rowsArr.shift();
+        const startY = h - 20;
+        for (let i = 0; i < this._rowsArr.length; i++) {
+            const y = startY - i * 18;
+            if (y < -12) break;
+            const alpha = 0.10 + 0.85 * (i / this._rowsArr.length);
+            ctx.fillStyle = "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
+            ctx.fillText(this._rowsArr[i], 8, y);
         }
     }
 }
