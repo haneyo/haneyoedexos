@@ -71,6 +71,10 @@ echo "[edex] creating the ~/Applications folder (drop .AppImage files here)"
 mkdir -p "/home/$U/Applications"
 chown "$U":"$U" "/home/$U/Applications"
 
+# Let the autologin user update the baked-in Firefox and Claude CLI in place
+# (their updaters write into /opt/firefox and the npm global dir).
+chown -R "$U":"$U" /opt/firefox /usr/local/lib/node_modules /usr/local/bin 2>/dev/null || true
+
 echo "[edex] seeding eDEX settings"
 mkdir -p "/home/$U/.config/eDEX-UI"
 cat > "/home/$U/.config/eDEX-UI/settings.json" <<'SETTINGS'
