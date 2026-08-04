@@ -1,0 +1,20 @@
+#cloud-config
+# eDEX-OS autoinstall — keeps the key steps interactive (like installing stock
+# Ubuntu: locale / network / storage / identity), automates everything else and
+# installs eDEX as the whole desktop shell via late-commands.
+#
+# Files this relies on, all on the ISO under /cdrom/nocloud/:
+#   install-edex.sh       the target-setup script (runs inside the installed chroot)
+#   eDEX-UI.AppImage      the eDEX-UI AppImage (built by the CI pipeline)
+autoinstall:
+  version: 1
+  interactive-sections:
+    - locale
+    - network
+    - storage
+    - identity
+  late-commands:
+    - mkdir -p /target/opt/edex
+    - cp /cdrom/nocloud/install-edex.sh /target/root/install-edex.sh
+    - cp /cdrom/nocloud/eDEX-UI.AppImage /target/opt/edex/eDEX-UI.AppImage
+    - curtin in-target --target=/target -- bash /root/install-edex.sh

@@ -1,0 +1,403 @@
+/* Cyber Core Data Panel + Radar - replaces the on-screen keyboard.
+   The data panel sits beside the file manager (bottom-left); the radar is a
+   separate square placed below the right-hand network column. */
+
+/* Startup entrance: elements appear one by one (more noticeable than a fade),
+   and the outer frame only shows after all the content has appeared
+   (the `--aug-border-opacity: 0` override lives at the end of this file). */
+#cyber_wave_wrap,
+#cyber_bars,
+#cyber_extra,
+#cyber_log,
+#cyber_radar_canvas_wrap,
+#cyber_radar_data {
+    opacity: 0;
+    animation: cyberElFadeIn 0.4s ease forwards;
+    animation-play-state: paused;
+}
+@keyframes cyberElFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+#cyber_panel {
+    --main-color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    --main-color-soft: rgba(var(--color_r), var(--color_g), var(--color_b), 0.55);
+    --theme-glow: 0 0 0.6vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.55);
+    --panel-bg: color-mix(in srgb, var(--color_light_black) 55%, transparent);
+    --panel-line: rgba(var(--color_r), var(--color_g), var(--color_b), 0.22);
+    --panel-line-soft: rgba(var(--color_r), var(--color_g), var(--color_b), 0.12);
+
+    flex: 1;
+    min-width: 0;
+    width: auto;
+    height: 30vh;
+    box-sizing: border-box;
+    position: relative;
+    top: -0.925vh; /* match the file manager's offset so bottoms align */
+
+    /* Augmented border that follows the cut corners (same look as the terminal) */
+    --aug-border: 0.092vh;
+    --aug-border-bg: rgb(var(--color_r), var(--color_g), var(--color_b));
+    --aug-border-opacity: 0.35;
+
+    font-family: var(--font_main_light);
+    letter-spacing: 0.06vh;
+    color: var(--main-color);
+    background: var(--panel-bg);
+    box-shadow: var(--theme-glow), inset 0 0 3vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.07);
+}
+
+/* Bottom row: file manager (43vw, untouched) + cyber data panel. Left-aligned
+   (margin-right: auto) so the file manager keeps its original position. */
+#bottom_row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    width: 82.9vw; /* right edge aligns with the terminal (main_shell) border */
+    margin-right: auto;
+    gap: 0.5vw;
+}
+
+#cyber_panel_inner {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+}
+
+.cyber_panel_title {
+    margin: 0 0 0.3vh 0;
+    padding-left: 1.1vh; /* keep the label off the box's left edge */
+    font-size: 1.15vh;
+    font-weight: normal;
+    letter-spacing: 0.12vh;
+    opacity: 0.85;
+}
+
+.cyber_panel_title > i {
+    font-style: normal;
+    font-size: 0.85vh;
+    opacity: 0.45;
+    margin-left: 0.8vh;
+}
+
+/* Waveform */
+#cyber_wave_wrap {
+    flex: 0 0 auto;
+    height: 40%;
+    display: flex;
+    flex-direction: column;
+    padding: 0.6vh 0 0.3vh 0;
+    box-sizing: border-box;
+    min-width: 0;
+}
+
+#cyber_waveform_canvas {
+    flex: 1;
+    width: 100%;
+    min-height: 0;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.03);
+    border: 0.092vh solid var(--panel-line-soft);
+}
+
+/* Progress bars + log */
+#cyber_bars_wrap {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 0.5vh 0.9vh 0.4vh 0.9vh;
+    min-height: 0;
+    min-width: 0;
+}
+
+#cyber_bars {
+    display: flex;
+    flex-direction: row;
+    gap: 1.1vh;
+}
+
+.cyber_bar {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.cyber_bar h4 {
+    margin: 0;
+    font-size: 0.9vh;
+    font-weight: normal;
+    letter-spacing: 0.1vh;
+    opacity: 0.55;
+}
+
+.cyber_bar_track {
+    height: 1.0vh;
+    margin: 0.35vh 0 0.3vh 0;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.07);
+    border: 0.092vh solid var(--panel-line);
+    overflow: hidden;
+}
+
+.cyber_bar_fill {
+    height: 100%;
+    width: 0%;
+    background: var(--main-color);
+    box-shadow: var(--theme-glow);
+    transition: width .5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.cyber_bar_val {
+    font-size: 0.8vh;
+    opacity: 0.7;
+    letter-spacing: 0.08vh;
+    white-space: nowrap;
+}
+
+/* Extra live readouts row (uptime / processes / net / swap) */
+#cyber_extra {
+    display: flex;
+    flex-direction: row;
+    gap: 1.2vh;
+    padding: 0.4vh 0 0.3vh 0;
+    border-bottom: 0.092vh solid var(--panel-line-soft);
+    margin-bottom: 0.3vh;
+}
+
+.cyber_extra_item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.cyber_extra_item span {
+    font-size: 0.7vh;
+    opacity: 0.45;
+    letter-spacing: 0.1vh;
+}
+
+.cyber_extra_item b {
+    font-size: 1.0vh;
+    font-weight: normal;
+    opacity: 0.9;
+    margin-top: 0.1vh;
+    text-shadow: var(--theme-glow);
+}
+
+/* Multi-line tech log - 10 lines, code-like stream */
+#cyber_log {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    overflow: hidden;
+    font-size: 0.72vh;
+    opacity: 0.75;
+    border-top: 0.092vh solid var(--panel-line-soft);
+    padding-top: 0.35vh;
+    letter-spacing: 0.03vh;
+    line-height: 1.3;
+}
+
+.cyber_log_line {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Radar - flattened element below the right-hand network column: a circular
+   sweep plus a small data readout column in the leftover space. */
+#cyber_radar {
+    --main-color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    --theme-glow: 0 0 0.6vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.55);
+    --panel-bg: color-mix(in srgb, var(--color_light_black) 55%, transparent);
+    --panel-line: rgba(var(--color_r), var(--color_g), var(--color_b), 0.22);
+    --panel-line-soft: rgba(var(--color_r), var(--color_g), var(--color_b), 0.12);
+
+    position: absolute;
+    left: 84.1vw; /* left edge aligns with the network column modules above */
+    bottom: 1.1vh; /* bottom aligns with the file manager's bottom edge */
+    width: 27vh;
+    height: 19vh;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 1.1vh;
+    box-sizing: border-box;
+    padding: 0 0.8vh;
+
+    /* Augmented border that follows the cut corners (same look as the terminal) */
+    --aug-border: 0.092vh;
+    --aug-border-bg: rgb(var(--color_r), var(--color_g), var(--color_b));
+    --aug-border-opacity: 0.35;
+
+    font-family: var(--font_main_light);
+    letter-spacing: 0.06vh;
+    color: var(--main-color);
+    background: var(--panel-bg);
+    box-shadow: var(--theme-glow), inset 0 0 2vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.06);
+}
+
+#cyber_radar_canvas_wrap {
+    width: 16vh;
+    height: 16vh;
+    flex: 0 0 auto;
+    aspect-ratio: 1;
+}
+
+#cyber_radar_canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    background: radial-gradient(circle, rgba(var(--color_r), var(--color_g), var(--color_b), 0.06) 0%, transparent 70%);
+    border: 0.092vh solid var(--panel-line-soft);
+    box-shadow: 0 0 1.5vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.12);
+}
+
+/* Data readout column inside the radar element */
+#cyber_radar_data {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.32vh;
+    min-width: 0;
+    padding-left: 0.8vh;
+    border-left: 0.092vh solid var(--panel-line-soft);
+}
+
+.cyber_radar_data_label {
+    font-size: 0.72vh;
+    opacity: 0.4;
+    letter-spacing: 0.2vh;
+    margin-bottom: 0.2vh;
+}
+
+.cyber_radar_stat {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.85vh;
+    letter-spacing: 0.07vh;
+}
+
+.cyber_radar_stat span {
+    opacity: 0.5;
+}
+
+.cyber_radar_stat b {
+    font-weight: normal;
+    opacity: 0.95;
+    text-shadow: var(--theme-glow);
+}
+
+/* Outer frame stays hidden during the element-by-element entrance; cyberEntrance
+   restores it (to 0.35) once all the content has appeared. */
+#cyber_panel,
+#cyber_radar {
+    --aug-border-opacity: 0;
+}
+
+/* ---- Mini music controller (bottom-right of the DATA window) ---- */
+#mini_audio {
+    position: fixed;
+    right: 1vh;
+    bottom: 1vh;
+    z-index: 900;
+    transition: transform 0.3s ease;
+}
+/* Hidden by default: slide the widget off the right edge, leaving the small
+   peek arrow sticking out at the screen edge. */
+#mini_audio.mini_audio_hidden {
+    transform: translateX(calc(100% + 2.2vh));
+}
+.mini_audio {
+    display: flex;
+    flex-direction: column;
+    width: 30vh;
+    background: rgba(5, 8, 13, 0.88);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.4);
+    border-radius: 0.4vh;
+    padding: 0.8vh;
+    font-family: var(--font_main_light);
+}
+.mini_audio_canvas {
+    width: 100%;
+    height: 6vh;
+    cursor: pointer;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.05);
+    border-radius: 0.3vh;
+}
+/* Small arrow that stays at the screen edge while the controller is hidden. */
+.mini_audio_peek {
+    position: absolute;
+    left: -2.2vh;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 2.4vh;
+    height: 5vh;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(5, 8, 13, 0.9);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    border-radius: 0.3vh;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    cursor: pointer;
+}
+.mini_audio_peek svg {
+    width: 1.4vh;
+    height: 1.4vh;
+}
+.mini_audio_peek:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+}
+#mini_audio.mini_audio_hidden .mini_audio_peek {
+    display: flex;
+}
+.mini_audio_info {
+    margin: 0.5vh 0.2vh;
+    overflow: hidden;
+}
+.mini_audio_title {
+    display: block;
+    font-size: 1.2vh;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.mini_audio_artist {
+    display: block;
+    font-size: 1vh;
+    opacity: 0.6;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.mini_audio_controls {
+    display: flex;
+    gap: 0.4vh;
+}
+.mini_audio_btn {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.4);
+    border-radius: 0.3vh;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    cursor: pointer;
+    padding: 0.3vh 0;
+}
+.mini_audio_btn svg {
+    width: 1.6vh;
+    height: 1.6vh;
+}
+.mini_audio_btn:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
+}

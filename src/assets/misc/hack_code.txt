@@ -1,0 +1,145 @@
+/* ==== memory dump ==== */
+0x7F3A9B2C  0x1A2B3C4D  0x5E6F7081  0x92A3B4C5  0xD6E7F809  0x0A1B2C3D  0x4E5F6071  0x8293A4B5  0xC6D7E8F9  0x0A1B2C3D
+[2026-08-03 13:45:11]  session=0x1A2B3C4D  user=root  auth=PASS  src=10.0.0.7:4444  dst=192.168.1.105:22  payload=0x5E6F7081  status=ESTABLISHED
+[2026-08-03 13:45:12]  token=0x92A3B4C5D6E7F809  scope=admin,root,system  issued_by=10.0.0.7  expires=+3600s  signature=VALID
+--mem 0x4E5F6071: 73 6f 6d 65 20 73 65 6e 73 69 74 69 76 65 20 64 61 74 61 20 62 6c 6f 63 6b 20 6f 66 20 31 32 38 20 62 79 74 65 73 20
+[+] decrypt(aes-256-cbc, key=0x0A1B2C3D4E5F6071, iv=0x8293A4B5C6D7E8F9)  ->  "FLAG{th1s_1s_n0t_4_r34l_fl4g_but_1t_l00ks_c00l}"  (38 bytes)
+[*] exfiltrate: /var/log/auth.log -> 10.0.0.7:8080/uploads/  (chunk 4/9, 131072 bytes, md5=0xC6D7E8F90A1B2C3D)  (encrypted)
+
+/* ==== exploit.c ==== */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+#define BUFFER_SIZE 1024
+#define DEFAULT_PORT 4444
+
+int create_socket(int port) {
+    int sockfd;
+    struct sockaddr_in server;
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        perror("socket");
+        exit(EXIT_FAILURE);
+    }
+    server.sin_family = AF_INET;
+    server.sin_addr.s_addr = INADDR_ANY;
+    server.sin_port = htons(port);
+    if (bind(sockfd, (struct sockaddr *)&server, sizeof(server)) < 0) {
+        perror("bind");
+        exit(EXIT_FAILURE);
+    }
+    listen(sockfd, 5);
+    return sockfd;
+}
+
+int main(int argc, char *argv[]) {
+    int sockfd = create_socket(DEFAULT_PORT);
+    int client;
+    char buffer[BUFFER_SIZE];
+    printf("[+] Listening on port %d\n", DEFAULT_PORT);
+    while (1) {
+        client = accept(sockfd, NULL, NULL);
+        read(client, buffer, BUFFER_SIZE);
+        printf("[+] Received: %s\n", buffer);
+        close(client);
+    }
+    return 0;
+}
+
+/* ==== scanner.py ==== */
+import socket
+import sys
+import time
+
+def tcp_scan(target, ports):
+    open_ports = []
+    for port in ports:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.8)
+        result = s.connect_ex((target, port))
+        if result == 0:
+            open_ports.append(port)
+            print(f"[+] {target}:{port} OPEN")
+        s.close()
+    return open_ports
+
+def main():
+    target = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
+    ports = [21, 22, 23, 80, 110, 443, 445, 1433, 3306, 3389, 5432, 8080]
+    print(f"[*] Scanning {target} - {len(ports)} ports")
+    found = tcp_scan(target, ports)
+    print(f"[*] Scan complete: {len(found)} open ports")
+    for p in found:
+        print(f"    -> {target}:{p}")
+
+if __name__ == "__main__":
+    main()
+
+/* ==== audit.sh ==== */
+#!/bin/bash
+# remote host audit
+HOSTS="10.0.0.0/24"
+TIMEOUT=1
+for ip in $(nmap -sL "$HOSTS" 2>/dev/null | grep -oP '\d+\.\d+\.\d+\.\d+'); do
+    nc -z -w "$TIMEOUT" "$ip" 22 2>/dev/null && echo "$ip: ssh open"
+    nc -z -w "$TIMEOUT" "$ip" 80 2>/dev/null && echo "$ip: http open"
+    nc -z -w "$TIMEOUT" "$ip" 443 2>/dev/null && echo "$ip: https open"
+done
+echo "[*] audit finished at $(date +%H:%M:%S)"
+
+/* ==== relay.js ==== */
+const net = require('net');
+const PORT = 4444;
+
+const server = net.createServer((socket) => {
+    console.log('[+] Connection from ' + socket.remoteAddress + ':' + socket.remotePort);
+    socket.write('Welcome to the relay\n');
+    socket.on('data', (data) => {
+        console.log('[+] Relay: ' + data.toString().trim());
+        socket.write('ACK\n');
+    });
+    socket.on('close', () => {
+        console.log('[-] Connection closed');
+    });
+});
+
+server.listen(PORT, () => {
+    console.log('[+] Relay listening on 0.0.0.0:' + PORT);
+    console.log('[+] Ctrl-C to abort');
+});
+
+/* ==== unpack.rb ==== */
+class Unpacker
+  def initialize(data)
+    @data = data
+  end
+
+  def decrypt(key)
+    result = ""
+    @data.bytes.each_with_index do |byte, i|
+      result << (byte ^ key.bytes[i % key.bytesize]).chr
+    end
+    result
+  end
+
+  def unpack(payload)
+    magic = payload.bytes[0, 2].pack("C*")
+    raise "bad magic" unless magic == "MZ"
+    offset = payload.bytes[2, 2].pack("C*").unpack1("v")
+    payload.byteslice(offset, payload.bytesize - offset)
+  end
+end
+
+u = Unpacker.new(File.binread("payload.bin"))
+puts "[*] payload size: #{File.size("payload.bin")} bytes"
+puts "[+] unpacked: #{u.unpack(u.decrypt("k3y")).bytesize} bytes"
+
+/* ==== memory dump (2) ==== */
+0x0A1B2C3D  0x4E5F6071  0x8293A4B5  0xC6D7E8F9  0x0A1B2C3D  0x4E5F6071  0x8293A4B5  0xC6D7E8F9  0x0A1B2C3D  0x4E5F6071
+[2026-08-03 13:45:14]  rule_id=0x7F3A9B2C  action=DROP  proto=tcp  src=0.0.0.0/0  dst=10.0.0.7  dport=4444  count=1337  alert=CRITICAL
+[2026-08-03 13:45:15]  cipher=chacha20-poly1305  key_rotated=yes  nonce=0x5E6F708192A3B4C5  auth=HMAC-SHA256  status=ACTIVE

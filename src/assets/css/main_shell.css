@@ -1,0 +1,303 @@
+section#main_shell {
+    width: 65%;
+    height: 60.3%;
+    --shell-pad: 0.74vh;
+    padding: var(--shell-pad);
+    /* border: 0.18vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5); */
+    /* border-radius: 0.278vh; */
+
+    /* The augmented-ui ::after border is unreliable in this bl/tr-clip config
+       (it fills the whole interior), so it is disabled entirely. The thin
+       outline is drawn by the dedicated .shell_outline child element instead. */
+    --aug-border: 0;
+    --aug-border-bg: transparent;
+    --aug-border-opacity: 0;
+
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    overflow: hidden;
+
+    transition: width .5s cubic-bezier(0.85, 0.5, 0.85, 0.5), height .5s cubic-bezier(0.85, 0.5, 0.85, 0.5);
+}
+
+/* Hairline outline around the terminal. A real DOM child (not the augmented-ui
+   ::after, which painted a full fill) - we fill a hand-written ring (the outer
+   corner-cut shape minus an inset copy of itself) with the theme color, so the
+   line is continuous around the bl/tr corner cuts and the interior stays
+   transparent. */
+div.shell_outline {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    background: rgb(var(--color_r), var(--color_g), var(--color_b));
+    opacity: 0.35;
+    z-index: 1;
+
+    --w: 0.13vh;
+    --cut: 15px; /* matches augmented-ui's default --aug-tr / --aug-bl */
+    clip-path: polygon(
+        /* outer corner-cut shape */
+        0 0,
+        calc(100% - var(--cut)) 0,
+        100% var(--cut),
+        100% 100%,
+        var(--cut) 100%,
+        0 calc(100% - var(--cut)),
+        0 0,
+        /* inner shape, inset by the outline width, traced back */
+        var(--w) var(--w),
+        var(--w) calc(100% - var(--cut) - var(--w) / 2),
+        calc(var(--cut) + var(--w) / 2) calc(100% - var(--w)),
+        calc(100% - var(--w)) calc(100% - var(--w)),
+        calc(100% - var(--w)) calc(var(--cut) + var(--w) / 2),
+        calc(100% - var(--cut) - var(--w) / 2) var(--w),
+        var(--w) var(--w)
+    );
+}
+
+h1#main_shell_greeting {
+    font-size: 3.9vh;
+    font-weight: normal;
+    margin: auto;
+    opacity: 0;
+    transition: opacity .5s cubic-bezier(0.4, 0, 1, 1);
+}
+
+h1#main_shell_greeting > em {
+    font-style: normal;
+    font-weight: bold;
+}
+
+section#main_shell > h3.title {
+    top: 0.74vh;
+    left: 16.5vw;
+    width: 66%;
+    transition: opacity .5s cubic-bezier(0.4, 0, 1, 1) .5s;
+}
+
+section#main_shell > h3.title > p {
+    width: 49.8%;
+}
+
+ul#main_shell_tabs {
+    margin: 0;
+    margin-top: -0.70vh;
+    margin-left: -0.74vh;
+    padding: 0;
+    width: calc(100% + 1.48vh);
+    display: flex;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    border-bottom: 0.18vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    border-top-left-radius: 0.278vh;
+    border-top-right-radius: 0.278vh;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-evenly;
+    flex-wrap: nowrap;
+    overflow: hidden;
+}
+
+ul#main_shell_tabs > li {
+    cursor: pointer;
+    display: block;
+    font-family: var(--font_main);
+    font-weight: normal;
+    width: 100%;
+    padding-top: 0.7vh;
+    padding-bottom: 0.4vh;
+    text-align: center;
+    box-sizing: border-box;
+
+    background: var(--color_light_black);
+    transform: skewX(35deg);
+}
+ul#main_shell_tabs > li > p {
+    margin: 0;
+    transform: skewX(-35deg);
+    /* Fixed line box so every tab (and its active highlight) is exactly the
+       same height - the WEB APP tab's chevron used to inflate its line box,
+       which made the strip taller and left a gap below the other tabs. Tall
+       enough (2vh) that CJK labels are never clipped at the top. */
+    line-height: 2vh;
+    height: 2vh;
+    overflow: hidden;
+}
+ul#main_shell_tabs > li:not(:first-child) {
+    border-left: 0.18vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+}
+ul#main_shell_tabs > li:first-child,
+ul#main_shell_tabs > li:first-child.active {
+    /* The first tab sits against the strip's square left edge, so its
+       highlight is a trapezoid - square on the left, slanted on the right
+       (matching the other tabs' right edge). Done without skewX (a clip-path
+       on a skewed element resolves in the transformed space, which is
+       unreliable); 1.09vh = tan(35deg) * tab height / 2. The box is widened
+       by that amount (negative margin keeps the layout) because clip-path
+       clamps to the border box - otherwise the slanted right edge would not
+       reach the neighbour's parallelogram edge and a notch would show. */
+    transform: none;
+    width: calc(100% + 1.09vh);
+    margin-right: calc(-1.09vh);
+    /* 2.17vh = tan(35deg) * height so the slanted right edge has the SAME
+       angle as the neighbouring parallelogram edges and they coincide. */
+    clip-path: polygon(0 0, calc(100% - 2.17vh) 0, 100% 100%, 0 100%);
+}
+ul#main_shell_tabs > li:first-child > p {
+    transform: none;
+}
+
+ul#main_shell_tabs > li.active {
+    background: rgb(var(--color_r), var(--color_g), var(--color_b));
+    color: var(--color_light_black);
+    font-weight: bold;
+    /* scale(1.2) made the skewed parallelogram poke above and below the tab
+       strip (visible overflow lines); the fill color already marks the active
+       tab, so keep just the skew. z-index:-1 used to put the active tab behind
+       the (transparent) strip for hit-testing, which made everything inside it
+       unclickable (the WEB APP dropdown chevron) - keep it in front instead. */
+    transform: skewX(35deg);
+    z-index: 2;
+}
+
+div#main_shell_innercontainer, div#main_shell_innercontainer pre {
+    height: 100%;
+    width: 100%;
+    margin: 0vh;
+}
+
+/* Each terminal clips its own xterm content; the container itself stays
+   un-clipped so the browser/webapp slots can bleed out to the frame edge.
+   min-height:0 keeps the container shrinkable in the column flex (its
+   automatic minimum size would otherwise let it squeeze the tab strip). */
+div#main_shell_innercontainer {
+    min-height: 0;
+}
+div#main_shell_innercontainer pre {
+    overflow: hidden;
+}
+
+div#main_shell_innercontainer {
+    position: relative; /* anchors the screensaver canvas to the terminal area */
+}
+
+div#main_shell_innercontainer pre {
+    z-index: -999;
+    opacity: 0;
+    position: relative;
+}
+
+div#main_shell_innercontainer pre.active {
+    z-index: inherit;
+    opacity: 1;
+}
+
+div#main_shell_innercontainer pre#terminal1 {
+    top: -100%;
+}
+div#main_shell_innercontainer pre#terminal2 {
+    top: -200%;
+}
+div#main_shell_innercontainer pre#terminal3 {
+    top: -300%;
+}
+div#main_shell_innercontainer pre#terminal4 {
+    top: -400%;
+}
+
+.terminal .xterm-viewport {
+    overflow: hidden;
+    cursor: default;
+    position: absolute;
+    right: 0;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    padding-bottom: 10px;
+}
+
+.xterm {
+    font-family: var(--font_mono), monospace; /* terminal must stay monospace */
+    font-feature-settings: "liga" 0;
+    position: relative;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.xterm.focus,
+.xterm:focus {
+    outline: none;
+}
+
+.xterm .xterm-helpers {
+    position: absolute;
+    top: 0;
+    z-index: 10;
+}
+
+.xterm .xterm-helper-textarea {
+    position: absolute;
+    opacity: 0;
+    left: -9999em;
+    top: 0;
+    width: 0;
+    height: 0;
+    z-index: -10;
+    white-space: nowrap;
+    overflow: hidden;
+    resize: none;
+}
+
+.xterm .composition-view {
+    background: #000;
+    color: #FFF;
+    display: none;
+    position: absolute;
+    white-space: nowrap;
+    z-index: 1;
+}
+
+.xterm .composition-view.active {
+    display: block;
+}
+
+.xterm .xterm-viewport {
+    background-color: transparent;
+    overflow-y: hidden;
+}
+
+.xterm .xterm-screen {
+    position: relative;
+}
+
+.xterm canvas {
+    position: absolute;
+    left: 0;
+    top: 0;
+}
+
+.xterm .xterm-scroll-area {
+    visibility: hidden;
+}
+
+.xterm .xterm-char-measure-element {
+    display: inline-block;
+    visibility: hidden;
+    position: absolute;
+    left: -9999em;
+    line-height: normal;
+}
+
+.xterm.enable-mouse-events {
+    /* When mouse events are enabled (eg. tmux), revert to the standard pointer cursor */
+    cursor: default;
+}
+
+.xterm:not(.enable-mouse-events) {
+    cursor: text;
+}

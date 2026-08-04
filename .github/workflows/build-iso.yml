@@ -1,0 +1,72 @@
+name: Build eDEX-OS ISO
+
+on:
+  workflow_dispatch:
+    inputs:
+      ubuntu_iso:
+        description: "Stock Ubuntu Server 24.04 x86_64 ISO URL to remaster"
+        required: true
+        default: "https://releases.ubuntu.com/24.04/ubuntu-24.04.2-live-server-amd64.iso"
+      volume_label:
+        description: "ISO volume label"
+        required: false
+        default: "eDEX-OS"
+
+jobs:
+  build-iso:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache npm + Electron
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            ~/.cache/electron
+          key: ${{ runner.os }}-edex-${{ hashFiles('**/package-lock.json') }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install build deps
+        run: |
+          npm install
+          (cd src && npm install) || (npm install-scripts approve node-pty ffmpeg-static && (cd src && npm install))
+
+      - name: Build eDEX AppImage (x64)
+        run: |
+          npm run prebuild-linux
+          ./node_modules/.bin/electron-builder build -l --x64
+          rm -R prebuild-src
+
+      - name: Download stock Ubuntu Server ISO
+        run: |
+          curl -fL -o /tmp/ubuntu-stock.iso "${{ github.event.inputs.ubuntu_iso }}"
+          ls -lh /tmp/ubuntu-stock.iso
+
+      - name: Build eDEX-OS ISO
+        run: |
+          APPIMAGE=$(ls dist/*.AppImage | head -1)
+          bash packaging/build-iso.sh /tmp/ubuntu-stock.iso "$APPIMAGE" \
+            eDEX-OS-${{ github.ref_name }}.iso "${{ github.event.inputs.volume_label }}"
+
+      - name: QEMU boot smoke test (best-effort)
+        run: |
+          sudo apt-get update -y && sudo apt-get install -y qemu-system-x86 >/dev/null 2>&1 || true
+          timeout 90 qemu-system-x86_64 -m 2G -cdrom eDEX-OS-${{ github.ref_name }}.iso -boot d \
+            -serial stdio -display none > /tmp/qemu-boot.log 2>&1 || true
+          if grep -qiE "grub|kernel|Booting|Ubuntu|error" /tmp/qemu-boot.log; then
+            echo "QEMU boot smoke: GRUB/kernel output observed (see log)."
+          else
+            echo "WARNING: QEMU could not confirm boot output — install on real hardware to verify."
+          fi
+          tail -5 /tmp/qemu-boot.log || true
+
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: eDEX-OS-ISO
+          path: eDEX-OS-${{ github.ref_name }}.iso
+          if-no-files-found: error

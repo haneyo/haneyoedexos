@@ -1,0 +1,893 @@
+/* ---- Embedded browser (tab 5) + Chrome webapp panel (tab 4) ---- */
+
+/* Shell content slots 3/4 are <div>s, parallel to the <pre> terminals in
+   main_shell.css: stacked via negative top offsets, only the .active one is
+   visible. Children: #webapp_slot (index 3) and #browser_slot (index 4). */
+/* The pre-terminals hide via opacity/z-index (xterm needs its layout), but a
+   <webview> is a separate compositor surface: opacity:0 does NOT reliably hide
+   it (stays painted over the terminal), and display:none makes it come back
+   BLANK when re-shown (the surface is not re-created). visibility keeps the
+   layout so the webview re-paints correctly, while pointer-events:none stops
+   the hidden slot from swallowing clicks. */
+div#main_shell_innercontainer div.shell_slot {
+    height: 100%;
+    width: 100%;
+    margin: 0vh;
+    position: relative;
+    visibility: hidden;
+    pointer-events: none;
+}
+div#main_shell_innercontainer div.shell_slot.active {
+    visibility: visible;
+    pointer-events: auto;
+}
+div#main_shell_innercontainer div#appmonitor_a_slot {
+    top: -300%;
+}
+div#main_shell_innercontainer div#appmonitor_b_slot {
+    top: -400%;
+}
+
+/* ---- Browser chrome (tab 5) ---- */
+.browser_chrome {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    background: rgba(5, 8, 13, 0.92);
+    font-family: var(--font_main_light);
+}
+
+.browser_tabstrip {
+    display: flex;
+    align-items: flex-end;
+    flex: 0 0 auto;
+    padding: 0.4vh 0.4vh 0;
+    background: rgba(5, 8, 13, 0.97);
+    overflow: hidden;
+}
+.browser_tabs {
+    display: flex;
+    align-items: flex-end;
+    flex: 1;
+    overflow: hidden;
+    gap: 0.2vh;
+}
+.browser_tab {
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    position: relative;
+    height: 3.1vh;
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 26vh;
+    padding: 0 0.7vh;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.08);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-size: 1.05vh;
+    white-space: nowrap;
+    transform: skewX(20deg);
+    border-top: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.18);
+    overflow: hidden;
+}
+.browser_tab:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.14);
+}
+.browser_tab.active {
+    /* Merges with the toolbar below (same --color_light_black). */
+    background: var(--color_light_black);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-weight: bold;
+    border-top-color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.4);
+}
+.browser_tab_fav {
+    display: inline-flex;
+    flex: 0 0 auto;
+    margin-right: 0.5vh;
+    transform: skewX(-20deg);
+}
+.browser_tab_fav img {
+    width: 1.2vh;
+    height: 1.2vh;
+}
+.browser_tab_title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transform: skewX(-20deg);
+}
+.browser_tab_close {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    margin-left: 0.4vh;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 1.8vh;
+    height: 1.8vh;
+    opacity: 0.7;
+    transform: skewX(-20deg);
+}
+.browser_tab_close svg {
+    width: 1.1vh;
+    height: 1.1vh;
+}
+.browser_tab_close:hover {
+    opacity: 1;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.25);
+}
+.browser_newtab {
+    flex: 0 0 auto;
+    width: 2.6vh;
+    height: 2.6vh;
+    margin: 0 0.5vh 0.4vh 0.4vh;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    cursor: pointer;
+    transform: skewX(-20deg);
+}
+.browser_newtab svg {
+    width: 1.5vh;
+    height: 1.5vh;
+    transform: skewX(20deg);
+}
+.browser_newtab:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.2);
+}
+
+.browser_toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.3vh;
+    flex: 0 0 auto;
+    padding: 0.5vh 0.6vh;
+    background: var(--color_light_black);
+    border-bottom: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.25);
+}
+.browser_toolbar button {
+    width: 2.7vh;
+    height: 2.7vh;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    cursor: pointer;
+}
+.browser_toolbar button svg {
+    width: 1.6vh;
+    height: 1.6vh;
+}
+.browser_toolbar button:hover:not(.disabled) {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.2);
+}
+.browser_toolbar button.disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+.browser_toolbar button[data-state="loading"] {
+    animation: eb_spin 1s linear infinite;
+}
+@keyframes eb_spin {
+    to { transform: rotate(360deg); }
+}
+/* eDEX-style omnibox: sharp box with a leading status glyph. */
+.browser_omnibox {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.6vh;
+    height: 2.9vh;
+    margin: 0 0.4vh;
+    padding: 0 1vh;
+    background: rgba(5, 8, 13, 0.55);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
+}
+.browser_omnibox:focus-within {
+    border-color: rgb(var(--color_r), var(--color_g), var(--color_b));
+}
+.browser_omnibox_icon {
+    display: inline-flex;
+    flex: 0 0 auto;
+    opacity: 0.85;
+}
+.browser_omnibox_icon svg {
+    width: 1.5vh;
+    height: 1.5vh;
+}
+.browser_address {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 1.1vh;
+    outline: none;
+    padding: 0;
+}
+.browser_toolbar button[data-act="bookmark"] {
+    color: #9aa;
+}
+.browser_toolbar button[data-act="bookmark"].active {
+    color: #ffd700;
+}
+.browser_tab.incognito .browser_tab_title::after {
+    content: "●";
+    margin-left: 0.4vh;
+    color: rgba(255, 215, 0, 0.85);
+    font-size: 0.8vh;
+}
+
+/* Find-in-page bar (Chrome-style, floats top-right of the web content). */
+.browser_find {
+    position: absolute;
+    top: 0.6vh;
+    right: 1vh;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    gap: 0.4vh;
+    padding: 0.4vh 0.8vh;
+    background: var(--color_light_black);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    box-shadow: 0 0 1vh rgba(0, 0, 0, 0.5);
+}
+.browser_find_input {
+    width: 18vh;
+    background: rgba(5, 8, 13, 0.6);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 1.1vh;
+    padding: 0.3vh 0.6vh;
+    outline: none;
+}
+.browser_find_count {
+    font-size: 1vh;
+    opacity: 0.7;
+    min-width: 4vh;
+    text-align: center;
+}
+.browser_find button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2vh;
+    height: 2vh;
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+}
+.browser_find button:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.2);
+}
+.browser_find button svg {
+    width: 1.3vh;
+    height: 1.3vh;
+}
+
+/* ---- Download bar / manager ---- */
+.browser_downloads {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 3;
+    background: var(--color_light_black);
+    border-top: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    padding: 0.5vh 1vh;
+    max-height: 24vh;
+    overflow-y: auto;
+}
+.browser_downloads_title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 1.2vh;
+    font-weight: bold;
+    margin-bottom: 0.4vh;
+}
+.browser_downloads_close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2vh;
+    height: 2vh;
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+}
+.browser_downloads_close:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.2);
+}
+.browser_downloads_close svg {
+    width: 1.3vh;
+    height: 1.3vh;
+}
+.browser_dl {
+    display: flex;
+    align-items: center;
+    gap: 0.6vh;
+    padding: 0.3vh 0;
+}
+.browser_dl_name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 1.05vh;
+}
+.browser_dl_progress {
+    width: 16vh;
+    height: 1vh;
+    flex: 0 0 auto;
+    background: rgba(5, 8, 13, 0.6);
+    overflow: hidden;
+}
+.browser_dl_bar {
+    height: 100%;
+    width: 0;
+    background: rgb(var(--color_r), var(--color_g), var(--color_b));
+    transition: width 0.2s;
+}
+.browser_dl_pct {
+    width: 5vh;
+    flex: 0 0 auto;
+    font-size: 1vh;
+    opacity: 0.8;
+    text-align: right;
+}
+.browser_dl.done .browser_dl_bar {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+}
+.browser_dl button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2vh;
+    height: 2vh;
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+}
+.browser_dl button:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.2);
+}
+.browser_dl button svg {
+    width: 1.3vh;
+    height: 1.3vh;
+}
+
+/* Body-level panels: bookmarks / menu / history. (Settings is a full overlay
+   inside .browser_views, styled separately below.) */
+.browser_bookmark_menu, .browser_menu, .browser_history {
+    position: fixed;
+    z-index: 3000;
+    min-width: 26vh;
+    max-width: 46vh;
+    max-height: 62vh;
+    overflow-y: auto;
+    /* Matches the app's native mod_loc dropdown look. */
+    background: #0a0f14;
+    border: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    box-shadow: 0 0 1.5vh rgba(0, 0, 0, 0.6);
+    padding: 0.4vh 0;
+    font-family: var(--font_main_light);
+    font-size: 1.2vh;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+}
+.browser_panel_title {
+    padding: 0.5vh 1vh;
+    border-bottom: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.25);
+    font-weight: bold;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.browser_panel_clear {
+    background: none;
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.4);
+    color: inherit;
+    cursor: pointer;
+    font-size: 1vh;
+    padding: 0.15vh 0.6vh;
+}
+.browser_panel_empty {
+    padding: 1vh;
+    opacity: 0.7;
+}
+.browser_panel_opt {
+    display: flex;
+    align-items: center;
+    gap: 0.6vh;
+    padding: 0.55vh 1vh;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.browser_panel_opt:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.15);
+}
+.browser_panel_label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.browser_panel_url {
+    opacity: 0.6;
+    font-size: 1vh;
+    max-width: 20vh;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.browser_panel_del {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.6;
+    padding: 0 0.3vh;
+}
+.browser_panel_del svg {
+    width: 1.2vh;
+    height: 1.2vh;
+}
+.browser_panel_del:hover { opacity: 1; }
+
+.browser_menu_sep {
+    height: 0.1vh;
+    margin: 0.4vh 0.5vh;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.2);
+}
+.browser_menu_opt {
+    padding: 0.55vh 1.4vh;
+    cursor: pointer;
+}
+.browser_menu_opt:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.15);
+}
+
+/* ---- Chrome-style settings overlay (covers .browser_views) ---- */
+.browser_settings {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    background: var(--color_light_black);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 1.2vh;
+}
+.browser_settings_header {
+    display: flex;
+    align-items: center;
+    gap: 1vh;
+    padding: 0.8vh 1.2vh;
+    border-bottom: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.25);
+    flex: 0 0 auto;
+}
+.browser_settings_title {
+    font-weight: bold;
+    font-size: 1.5vh;
+    letter-spacing: 0.05em;
+}
+.browser_settings_search {
+    flex: 1;
+    max-width: 40vh;
+    background: rgba(5, 8, 13, 0.55);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 1.1vh;
+    padding: 0.4vh 1vh;
+    outline: none;
+}
+.browser_settings_search:focus {
+    border-color: rgb(var(--color_r), var(--color_g), var(--color_b));
+}
+.browser_settings_close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.6vh;
+    height: 2.6vh;
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+}
+.browser_settings_close:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.2);
+}
+.browser_settings_close svg {
+    width: 1.6vh;
+    height: 1.6vh;
+}
+.browser_settings_body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+}
+.browser_settings_sidebar {
+    flex: 0 0 20vh;
+    padding: 1vh 0;
+    border-right: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.2);
+    overflow-y: auto;
+}
+.browser_settings_cat {
+    display: flex;
+    align-items: center;
+    gap: 0.8vh;
+    padding: 0.7vh 1.2vh;
+    cursor: pointer;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    opacity: 0.75;
+    border-left: 0.3vh solid transparent;
+}
+.browser_settings_cat.active {
+    border-left-color: rgb(var(--color_r), var(--color_g), var(--color_b));
+}
+.browser_settings_cat svg {
+    width: 1.5vh;
+    height: 1.5vh;
+    flex: 0 0 auto;
+}
+.browser_settings_cat:hover {
+    opacity: 1;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.12);
+}
+.browser_settings_cat.active {
+    opacity: 1;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.22);
+    font-weight: bold;
+}
+.browser_settings_content {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    padding: 1.2vh 2vh;
+}
+.browser_settings_section h3 {
+    margin: 0 0 1vh;
+    font-size: 1.6vh;
+    letter-spacing: 0.05em;
+    border-bottom: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.2);
+    padding-bottom: 0.5vh;
+}
+.browser_settings_field {
+    display: block;
+    margin-bottom: 1.2vh;
+}
+.browser_settings_label {
+    display: block;
+    margin-bottom: 0.4vh;
+    opacity: 0.75;
+}
+.browser_settings_field input[type="text"], .browser_settings_field select {
+    width: 100%;
+    max-width: 46vh;
+    box-sizing: border-box;
+    background: rgba(5, 8, 13, 0.55);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.4);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 1.1vh;
+    padding: 0.45vh 0.8vh;
+    outline: none;
+}
+.browser_settings_field input[type="text"]:focus, .browser_settings_field select:focus {
+    border-color: rgb(var(--color_r), var(--color_g), var(--color_b));
+}
+.browser_settings_field.browser_settings_check {
+    display: flex;
+    align-items: center;
+    gap: 0.6vh;
+}
+.browser_settings input[type="radio"],
+.browser_settings input[type="checkbox"] {
+    accent-color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    width: 1.5vh;
+    height: 1.5vh;
+    margin: 0;
+}
+.browser_settings_check input[type="radio"] {
+    margin: 0;
+}
+.browser_settings_check input[type="text"] {
+    width: 30vh;
+    margin-left: 2vh;
+}
+.browser_settings_section h4 {
+    margin: 1.2vh 0 0.8vh;
+    font-size: 1.3vh;
+    opacity: 0.85;
+}
+.browser_settings_hint {
+    opacity: 0.7;
+    margin: 0 0 1vh;
+}
+.browser_settings_row {
+    display: flex;
+    gap: 0.6vh;
+}
+.browser_settings_footer {
+    display: flex;
+    align-items: center;
+    gap: 0.6vh;
+    margin-top: 1.6vh;
+    padding-top: 1vh;
+    border-top: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.2);
+}
+.browser_settings_about {
+    margin-left: auto;
+    opacity: 0.55;
+    font-size: 1vh;
+}
+.browser_panel_btn {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.15);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    cursor: pointer;
+    font-family: var(--font_main_light);
+    font-size: 1.1vh;
+    padding: 0.4vh 1.2vh;
+}
+.browser_panel_btn:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
+}
+
+.browser_views {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+}
+.browser_webview,
+.webapp_webview,
+.appmonitor_webview {
+    position: absolute;
+    /* Bleed out past the shell's padding so the page fills the whole frame... */
+    inset: 0 calc(-1 * var(--shell-pad, 0.74vh)) calc(-1 * var(--shell-pad, 0.74vh)) calc(-1 * var(--shell-pad, 0.74vh));
+    border: none;
+    background: #000;
+    /* ...and clip its bottom-left corner to match the frame's bl notch
+       (augmented-ui bl-clip default, 15px). Ancestor clip-path does not reach
+       a <webview> guest surface, so it must be applied to the element itself. */
+    clip-path: polygon(
+        0 0,
+        100% 0,
+        100% 100%,
+        15px 100%,
+        0 calc(100% - 15px)
+    );
+}
+
+/* ---- Webapp panel (tab 4) ---- */
+/* .webapp_webview shares the full-bleed / corner-clip rules above. */
+
+/* ---- Tab 3 label: webapp switcher ---- */
+.webapp_chevron {
+    /* Fits inside the tab's fixed 1.5vh line box so it never inflates the
+       <p> height (the old ▾ glyph did, misaligning the tab highlight). */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5vh;
+    height: 1.5vh;
+    vertical-align: middle;
+    margin-left: 0.4vh;
+    cursor: pointer;
+}
+.webapp_chevron svg {
+    width: 1.1vh;
+    height: 1.1vh;
+}
+.webapp_chevron:hover {
+    opacity: 0.7;
+}
+
+/* Body-level dropdown. The tab bar has overflow:hidden so the menu cannot live
+   inside the <li> - it is appended to <body> and positioned on click. */
+.webapp_menu {
+    position: fixed;
+    z-index: 3000;
+    min-width: 20vh;
+    max-height: 60vh;
+    overflow-y: auto;
+    background: rgba(5, 8, 13, 0.97);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    border-radius: 0.3vh;
+    padding: 0.4vh 0;
+    font-family: var(--font_main_light);
+}
+.webapp_menu_opt {
+    display: flex;
+    align-items: center;
+    gap: 0.8vh;
+    padding: 0.6vh 1vh;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    cursor: pointer;
+    font-size: 1.2vh;
+    white-space: nowrap;
+}
+.webapp_menu_opt img {
+    width: 2.2vh;
+    height: 2.2vh;
+}
+.webapp_menu_opt:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.15);
+}
+.webapp_menu_opt.active {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
+    font-weight: bold;
+}
+.webapp_menu_opt .webapp_menu_del {
+    /* Always visible (dimmed) so the remove action is discoverable; brightens
+       on hover. */
+    display: inline-block;
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    font-size: 1.4vh;
+    opacity: 0.4;
+    padding: 0 0.3vh;
+}
+.webapp_menu_opt .webapp_menu_del:hover {
+    opacity: 1;
+    color: #ff6b6b;
+}
+
+/* ---- App monitor (terminal tabs 4/5) menu extras ---- */
+.appmonitor_opt:focus {
+    outline: none;
+}
+.appmonitor_menu_add {
+    border-bottom: 0.1vh dashed rgba(var(--color_r), var(--color_g), var(--color_b), 0.4);
+    font-weight: bold;
+    letter-spacing: 0.1em;
+    margin-bottom: 0.4vh;
+}
+.appmonitor_badge {
+    display: inline-block;
+    min-width: 2.6vh;
+    text-align: center;
+    font-size: 1vh;
+    letter-spacing: 0.08em;
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.45);
+    padding: 0.2vh 0.4vh;
+    border-radius: 0.2vh;
+    opacity: 0.75;
+}
+.appmonitor_add {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6vh;
+    font-family: var(--font_main_light);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    padding: 0.4vh 0;
+}
+.appmonitor_add label {
+    font-size: 1.1vh;
+    letter-spacing: 0.18em;
+    margin-top: 0.5vh;
+    opacity: 0.8;
+}
+.appmonitor_add input,
+.appmonitor_add select {
+    background: rgba(5, 8, 13, 0.9);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.45);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 1.2vh;
+    padding: 0.5vh 0.8vh;
+    outline: none;
+}
+.appmonitor_add input:focus,
+.appmonitor_add select:focus {
+    border-color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    box-shadow: 0 0 0.8vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+}
+
+/* Non-blocking toast for "Added as webapp" style notifications. */
+.browser_toast {
+    position: fixed;
+    bottom: 8vh;
+    left: 50%;
+    transform: translateX(-50%) translateY(1.5vh);
+    z-index: 4000;
+    background: #0a0f14;
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.6);
+    box-shadow: 0 0 1.5vh rgba(0, 0, 0, 0.6);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 1.2vh;
+    padding: 0.7vh 1.4vh;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    white-space: nowrap;
+}
+.browser_toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+/* ---- Floating fullscreen toggle for the webapp view ---- */
+.webapp_fullscreen_btn {
+    position: absolute;
+    top: 0.6vh;
+    right: 0.6vh;
+    z-index: 2;
+    width: 2.6vh;
+    height: 2.6vh;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(5, 8, 13, 0.7);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    cursor: pointer;
+    opacity: 0.55;
+    transition: opacity 0.2s;
+}
+.webapp_fullscreen_btn svg {
+    width: 1.5vh;
+    height: 1.5vh;
+}
+.webapp_fullscreen_btn:hover {
+    opacity: 1;
+}
+
+/* ---- True fullscreen overlay (browser + webapp) ---- */
+.web_fullscreen {
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    background: #000;
+}
+.web_fullscreen webview {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: none;
+}
+.web_fullscreen_exit {
+    position: absolute;
+    top: 1.2vh;
+    right: 1.2vh;
+    z-index: 1;
+    width: 3.4vh;
+    height: 3.4vh;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.75);
+    border: 0.1vh solid rgba(255, 255, 255, 0.6);
+    color: #fff;
+    cursor: pointer;
+}
+.web_fullscreen_exit svg {
+    width: 2vh;
+    height: 2vh;
+}

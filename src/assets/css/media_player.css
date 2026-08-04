@@ -1,0 +1,364 @@
+/* Media player - modern HUD controls for audio (with retro spectrum) & video. */
+
+.media_container {
+    position: relative;
+    max-width: 46vw;
+    margin: 0 auto;
+    background: var(--color_light_black);
+    line-height: 0;
+}
+
+.media_container .media {
+    display: block;
+    margin: 0 auto;
+    max-width: 100%;
+}
+
+/* Real fullscreen: the container must drop its max-width when fullscreen. */
+.media_container[data-fullscreen=true] {
+    max-width: none;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+}
+
+.media_container[data-fullscreen=true] .media {
+    height: 100%;
+    width: 100%;
+    max-width: none;
+    max-height: none;
+    object-fit: contain;
+}
+
+/* Control bar: overlay at the bottom, all controls on one flex row. */
+.media_controls {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: calc(1vh * var(--ctrl-scale, 1));
+    padding: calc(0.9vh * var(--ctrl-scale, 1)) calc(1.1vh * var(--ctrl-scale, 1)) calc(1vh * var(--ctrl-scale, 1));
+    border: none;
+    border-top: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+    background: linear-gradient(transparent, rgba(5, 8, 13, 0.92));
+    backdrop-filter: blur(4px);
+    /* Scale all em-based controls (buttons/icons/time) with the video width. */
+    font-size: calc(1em * var(--ctrl-scale, 1));
+}
+
+.media_controls>div {
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.media_controls .media_button {
+    font-size: 1.5em;
+    height: 1em;
+    width: 1em;
+    border-radius: 0.4em;
+    transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.media_controls .media_button:hover {
+    cursor: pointer;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+    transform: scale(1.08);
+}
+
+.media_controls .media_time {
+    margin: 0 0.5vh;
+    /* UI font + tabular figures keep the label a stable width, so the modal
+       does not resize as the playback position changes. */
+    min-width: 7.5ch;
+    font-family: var(--font_main_light);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.1vh;
+    white-space: nowrap;
+}
+
+.media_controls .volume_icon {
+    font-size: 1.5em;
+    height: 1em;
+    width: 1em;
+}
+
+.media_controls .volume_icon:hover {
+    cursor: pointer;
+}
+
+.media_controls .volume {
+    position: relative;
+    width: calc(8vw * var(--ctrl-scale, 1));
+    height: 2.4vh;
+    cursor: pointer;
+}
+
+/* Volume slider: a thin line with a filled portion and a round knob. */
+.media_controls .volume_bkg {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 0.35vh;
+    transform: translateY(-50%);
+    border-radius: 0.3vh;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.25);
+}
+
+.media_controls .volume_bar {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    height: 0.35vh;
+    width: 100%;
+    transform: translateY(-50%);
+    border-radius: 0.3vh;
+    background: rgb(var(--color_r), var(--color_g), var(--color_b));
+    box-shadow: 0 0 0.6vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.6);
+}
+
+.media_controls .volume_knob {
+    position: absolute;
+    top: 50%;
+    left: 100%;
+    width: 1.5vh;
+    height: 1.5vh;
+    border-radius: 50%;
+    background: rgb(var(--color_r), var(--color_g), var(--color_b));
+    box-shadow: 0 0 0.8vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.8);
+    transform: translate(-50%, -50%);
+}
+
+/* Stroke-based control icons (play/pause/volume/fs) fill their buttons. */
+.media_controls svg {
+    width: 100%;
+    height: 100%;
+}
+
+.media_controls .progress_container {
+    flex: 1;
+    flex-shrink: 1;
+    min-width: 0;
+}
+
+/* ---- Audio player: "classified recording" HUD ----
+   status strip on top, spectrum strip on the left, transport controls right. */
+.media_container.audio_player {
+    width: 46vw;
+    max-width: 60vw;
+    display: flex;
+    flex-direction: column;
+    background: linear-gradient(160deg, rgba(5, 8, 13, 0.9), rgba(5, 8, 13, 0.98));
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.4);
+    border-radius: 0.4vh;
+    overflow: hidden;
+}
+.audio_status {
+    display: flex;
+    align-items: center;
+    gap: 0.9vh;
+    padding: 0.8vh 1.3vh;
+    border-bottom: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.06);
+    font-family: var(--font_main_light);
+    font-size: 1.2vh;
+    letter-spacing: 0.25vh;
+    line-height: 1.4;
+}
+.audio_status_dot {
+    width: 1vh;
+    height: 1vh;
+    border-radius: 50%;
+    background: rgb(var(--color_r), var(--color_g), var(--color_b));
+    box-shadow: 0 0 0.8vh rgb(var(--color_r), var(--color_g), var(--color_b));
+    flex-shrink: 0;
+}
+.audio_player.playing .audio_status_dot {
+    background: #ff4d4d;
+    box-shadow: 0 0 0.8vh #ff4d4d;
+    animation: audio_dot_blink 1s steps(2, start) infinite;
+}
+@keyframes audio_dot_blink {
+    to { opacity: 0.2; }
+}
+.audio_status_text {
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-weight: bold;
+}
+.audio_player.playing .audio_status_text {
+    color: #ff6b6b;
+}
+.audio_status_name {
+    margin-left: auto;
+    max-width: 55%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0.7;
+}
+.audio_body {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    flex: 1;
+    min-height: 18vh;
+}
+.audio_body .media_spectrum_wrap {
+    position: relative;
+    flex: 0 0 40%;
+    width: 40%;
+    min-height: 18vh;
+    overflow: hidden;
+}
+.audio_body .media_spectrum_wrap .media_spectrum {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+}
+.media_spectrum_mode {
+    position: absolute;
+    bottom: 0.4vh;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-family: var(--font_main_light);
+    font-size: 1vh;
+    letter-spacing: 0.3vh;
+    color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.55);
+    pointer-events: none;
+    z-index: 2;
+}
+/* Right side of the audio player: an explicit grid with three cells -
+   metadata | progress | transport - so nothing can collapse into a clump. */
+.audio_body .media_controls {
+    position: static !important;
+    flex: 1;
+    min-width: 0;
+    display: grid !important;
+    grid-template-rows: auto auto auto;
+    grid-template-columns: 1fr;
+    align-content: start;
+    row-gap: 1.8vh;
+    padding: 2vh 2.2vh;
+    background: transparent;
+    border: none;
+    border-left: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
+    backdrop-filter: none;
+    /* The media container forces line-height:0 (for videos); undo it here so
+       the audio metadata / controls text doesn't collapse on top of itself. */
+    line-height: normal;
+}
+/* Override the generic `.media_controls > div` centering with explicit cells. */
+.audio_body .media_controls .audio_info {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr;
+    gap: 1vh 2.4vh;
+    align-items: start;
+    justify-content: start;
+    line-height: normal;
+}
+.audio_body .media_controls .progress_container {
+    display: block !important;
+    width: 100%;
+}
+.audio_body .media_controls .audio_row {
+    display: flex !important;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 1.2vh;
+    flex-wrap: nowrap;
+    line-height: normal;
+}
+.audio_body .media_time {
+    min-width: 19ch;
+}
+
+/* Audio file metadata readouts - clean 2x2 grid. The high-specificity
+   selector is required to beat the generic `.media_controls > div` rule that
+   would otherwise force a centered flex layout. */
+.audio_body .media_controls .audio_info {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1vh 2.4vh;
+}
+.audio_info_item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.4vh;
+    font-family: var(--font_main_light);
+}
+.audio_info_item span {
+    font-size: 1vh;
+    letter-spacing: 0.25vh;
+    opacity: 0.55;
+    white-space: nowrap;
+}
+.audio_info_item b {
+    font-size: 1.5vh;
+    font-weight: bold;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    white-space: nowrap;
+}
+
+/* The audio player shows the file name in its own status strip, so drop the
+   duplicated modal title for a cleaner window. */
+div.modal_popup:has(.audio_player) > h1 {
+    display: none;
+}
+
+.media_controls .progress {
+    display: block;
+    cursor: pointer;
+    width: 100%;
+    height: 0.55vh;
+    border-radius: 0.4vh;
+    background-color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.22);
+    overflow: hidden;
+}
+
+.media_controls .progress_bar {
+    width: 0%;
+    height: 100%;
+    display: block;
+    background: linear-gradient(90deg, rgba(var(--color_r), var(--color_g), var(--color_b), 0.6), rgb(var(--color_r), var(--color_g), var(--color_b)));
+    box-shadow: 0 0 1.2vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+}
+
+.fs {
+    margin-left: auto;
+}
+
+.fullscreen_hidden {
+    visibility: hidden;
+    opacity: 0;
+    transition: visibility 0s 2s, opacity 2s linear;
+}
+
+/* Video controls auto-hide while idle during playback. */
+.media_container.media_controls_hidden .media_controls {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.4s ease, visibility 0s 0.4s;
+}
+.media_container.media_controls_hidden {
+    cursor: none;
+}
+
+/* Retro audio spectrum (classic equalizer bars on a gridded dark screen). */
+.media_spectrum {
+    display: block;
+    width: 100%;
+    height: 10vh;
+    background-color: var(--color_light_black);
+    background-image:
+        linear-gradient(rgba(var(--color_r), var(--color_g), var(--color_b), 0.08) 1px, transparent 1px);
+    background-size: 100% 20%;
+}

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>eDEX MONITOR</title>
+<style>
+    /* Themed by query params in client.js: --cr/--cg/--cb/--cfont are set on :root. */
+    :root { --cr: 170; --cg: 207; --cb: 209; --cfont: "United Sans Light", sans-serif; }
+    html, body {
+        margin: 0; height: 100%; overflow: hidden;
+        background: #05080d;
+        font-family: var(--cfont);
+    }
+    #screen { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+    #screen canvas { cursor: crosshair; }
+    #hud {
+        position: absolute; top: 0.5vh; left: 0.7vw;
+        font-size: 11px; letter-spacing: 0.15em;
+        color: rgb(var(--cr), var(--cg), var(--cb)); opacity: 0.85;
+        pointer-events: none; text-transform: uppercase;
+        text-shadow: 0 0 6px rgba(var(--cr), var(--cg), var(--cb), 0.55);
+        white-space: nowrap; overflow: hidden; max-width: 90vw;
+    }
+    #overlay {
+        position: absolute; inset: 0; display: none;
+        flex-direction: column; align-items: center; justify-content: center;
+        background: rgba(5, 8, 13, 0.94);
+        color: rgb(var(--cr), var(--cg), var(--cb));
+        font-size: 13px; letter-spacing: 0.25em; text-transform: uppercase;
+    }
+    #overlay button {
+        margin-top: 16px;
+        background: rgba(var(--cr), var(--cg), var(--cb), 0.15);
+        border: 1px solid rgba(var(--cr), var(--cg), var(--cb), 0.55);
+        color: rgb(var(--cr), var(--cg), var(--cb));
+        font-family: var(--cfont); font-size: 12px; letter-spacing: 0.2em;
+        cursor: pointer; padding: 0.6em 1.4em; outline: none;
+    }
+    #overlay button:hover  { background: rgba(var(--cr), var(--cg), var(--cb), 0.3); }
+    #overlay button:focus  { box-shadow: 0 0 8px rgba(var(--cr), var(--cg), var(--cb), 0.6); }
+</style>
+</head>
+<body>
+    <div id="screen"></div>
+    <div id="hud">◈ <span id="name">MONITOR</span></div>
+    <div id="overlay">
+        <div id="overlay-msg">LINK LOST</div>
+        <button id="retry" onclick="window.__connect()">RETRY</button>
+    </div>
+    <script type="module" src="/client.js"></script>
+</body>
+</html>

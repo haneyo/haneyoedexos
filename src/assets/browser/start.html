@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>eDEX Browser</title>
+<style>
+  html, body { margin:0; height:100%; }
+  body { background:#07090d; color:#7fdbca; font-family:"Fira Mono","SF Mono",Menlo,monospace; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .box { text-align:center; }
+  h1 { letter-spacing:.35em; font-size:2.2rem; font-weight:bold; color:#2de0b0; text-shadow:0 0 12px rgba(45,224,176,.4); margin:0 0 1.4rem; }
+  form input[type=text] { width:44vw; max-width:560px; padding:.7rem 1rem; background:#0a0f14; border:1px solid #2de0b0; color:#e6f1f4; font-family:inherit; font-size:1rem; outline:none; }
+  form input[type=submit] { padding:.7rem 1.2rem; margin-left:.6rem; background:#0a0f14; border:1px solid #2de0b0; color:#2de0b0; font-family:inherit; font-size:1rem; cursor:pointer; }
+  .links { margin-top:2.2rem; display:flex; gap:1rem; flex-wrap:wrap; justify-content:center; max-width:64vw; }
+  .links a { color:#8fbfe0; text-decoration:none; border:1px solid #1d3a4f; padding:.5rem .95rem; font-size:.85rem; }
+  .links a:hover { border-color:#2de0b0; color:#2de0b0; }
+  .ver { margin-top:2.6rem; font-size:.75rem; color:#3f6b75; }
+</style>
+</head>
+<body>
+  <div class="box">
+    <h1>BROWSER</h1>
+    <form action="https://duckduckgo.com/" method="get" autocomplete="off">
+      <input type="text" name="q" placeholder="Search or type a URL…" autofocus>
+      <input type="submit" value="GO">
+    </form>
+    <div class="links">
+      <a href="http://localhost:3000">localhost:3000</a>
+      <a href="https://github.com">GitHub</a>
+      <a href="https://duckduckgo.com">DuckDuckGo</a>
+      <a href="https://www.google.com">Google</a>
+      <a href="https://mail.google.com">Gmail</a>
+    </div>
+    <div class="ver" id="ver"></div>
+  </div>
+  <script>
+    try {
+      var v = new URLSearchParams(location.search).get("v");
+      document.getElementById("ver").textContent = v ? ("Chromium " + v + " · embedded in eDEX") : "embedded in eDEX";
+    } catch (e) {}
+  </script>
+</body>
+</html>

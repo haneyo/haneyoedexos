@@ -1,0 +1,269 @@
+div#mod_netstat {
+    border-top: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
+    font-family: var(--font_main_light);
+    letter-spacing: 0.092vh;
+    font-size: 1.111vh;
+    padding: 0vh;
+    padding-top: 0.645vh;
+    display: flex;
+}
+
+div#mod_netstat::before {
+    content: "";
+    border-left: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
+    align-self: flex-start;
+    position: relative;
+    left: -0.092vh;
+    top: -1.111vh;
+    height: 0.833vh;
+}
+
+div#mod_netstat::after {
+    content: "";
+    border-right: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
+    position: relative;
+    right: -0.092vh;
+    top: -1.111vh;
+    height: 0.833vh;
+}
+
+div#mod_netstat_inner > h1:first-child {
+    font-size: 1.48vh;
+    margin: 0vh;
+    width: 98%;
+    padding-left: 2%;
+}
+
+/* Header subtitle (the location) - keep it on the header line, right-aligned */
+/* ---- Manual location picker (province / city / district, theme dropdowns) ---- */
+div#mod_netstat_weather_loc {
+    display: flex;
+    align-items: center;
+    gap: 0.4vh;
+    margin: 0.3vh 0 0.2vh;
+    padding: 0.2vh 0.15vh;
+    border-top: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.18);
+    border-bottom: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.18);
+}
+
+div.mod_loc_dd {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+}
+
+button.mod_loc_btn {
+    width: 100%;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.06);
+    color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.85);
+    border: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+    border-radius: 0;
+    font-family: var(--font_main_light);
+    font-size: 0.92vh;
+    letter-spacing: 0.04vh;
+    padding: 0.22vh 0.25vh;
+    cursor: pointer;
+    outline: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+div.mod_loc_list {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 300;
+    min-width: 100%;
+    max-height: 18vh;
+    overflow-y: auto;
+    background: #0a0f14;
+    border: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    box-shadow: 0 0 1.5vh rgba(0, 0, 0, 0.6);
+}
+
+div.mod_loc_list.mod_loc_open {
+    display: block;
+}
+
+div.mod_loc_opt {
+    padding: 0.3vh 0.5vh;
+    font-size: 0.95vh;
+    letter-spacing: 0.04vh;
+    color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.85);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+div.mod_loc_opt:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.15);
+}
+
+div.mod_loc_opt.mod_loc_opt_active {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.85);
+    color: var(--color_light_black);
+}
+
+div#mod_netstat_weather_loc_status {
+    font-size: 0.75vh;
+    opacity: 0.5;
+    white-space: nowrap;
+    letter-spacing: 0.05vh;
+}
+
+/* ---- Current conditions: icon stacked above the temperature ---- */
+div#mod_netstat_weather_main {
+    display: flex;
+    align-items: center;
+    gap: 1.2vh;
+    margin: 0.5vh 0 0.4vh;
+    padding-left: 0.2vh;
+}
+
+div#mod_netstat_weather_main_temp {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.1vh;
+    min-width: 0;
+}
+
+#mod_netstat_weather_icon {
+    /* Fixed box so the "—" placeholder and the 5.4vh SVG occupy the same
+       height - the module must not grow when the weather icon arrives. */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 5.4vh;
+    height: 5.4vh;
+    line-height: 1;
+    opacity: 0.92;
+}
+
+/* Theme-colored stroke SVG icons (drawn with currentColor) */
+#mod_netstat_weather_icon svg {
+    display: block;
+    width: 5.4vh;
+    height: 5.4vh;
+}
+
+div#mod_netstat_weather_temp {
+    font-size: 6.4vh;
+    line-height: 1;
+    font-family: var(--font_main_light);
+    letter-spacing: 0;
+}
+
+div.mod_netstat_fx span.mod_weather_icon svg {
+    display: block;
+    width: 1.5vh;
+    height: 1.5vh;
+    margin: 0 auto;
+}
+
+div#mod_netstat_weather_meta {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.3vh;
+    min-width: 0;
+}
+
+div#mod_netstat_weather_meta h2 {
+    margin: 0vh;
+}
+
+div#mod_netstat_weather_cond {
+    font-size: 1.35vh;
+    opacity: 0.85;
+    white-space: nowrap;
+}
+
+div#mod_netstat_weather_detail {
+    font-size: 0.9vh;
+    opacity: 0.5;
+    white-space: nowrap;
+}
+
+div#mod_netstat_weather_range {
+    font-size: 0.9vh;
+    opacity: 0.6;
+    white-space: nowrap;
+}
+
+/* ---- 7-day forecast: one column per day ---- */
+div#mod_netstat_forecast_label {
+    font-size: 0.82vh;
+    opacity: 0.4;
+    letter-spacing: 0.12vh;
+    margin: 0.45vh 0 0.15vh;
+}
+
+div#mod_netstat_forecast {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 0.3vh 0.2vh;
+    margin: 0;
+    padding: 0.5vh 0 0.2vh;
+    border-top: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.2);
+}
+
+div.mod_netstat_fx {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    font-size: 0.82vh;
+    line-height: 1.15;
+    opacity: 0.85;
+    padding: 0.1vh 0;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+div.mod_netstat_fx span:first-child {
+    opacity: 0.5;
+    font-size: 0.74vh;
+    letter-spacing: 0.05vh;
+}
+
+div.mod_netstat_fx span.mod_weather_icon {
+    font-size: 1.15vh;
+    line-height: 1.1;
+    margin: 0.18vh 0 0.12vh;
+}
+
+/* High temperature - brightest */
+div.mod_netstat_fx span:nth-child(3) {
+    font-size: 1.05vh;
+    opacity: 0.95;
+}
+
+/* Low temperature - dim */
+div.mod_netstat_fx em.mod_netstat_fx_low {
+    font-style: normal;
+    opacity: 0.5;
+    font-size: 0.74vh;
+    min-height: 0.9vh;
+}
+
+/* Rain probability - accent */
+div.mod_netstat_fx em.mod_netstat_fx_rain {
+    font-style: normal;
+    opacity: 0.75;
+    font-size: 0.7vh;
+    min-height: 0.9vh;
+}
+
+/* ---- Subtle network status footer ---- */
+div#mod_netstat_netfooter {
+    font-size: 0.82vh;
+    opacity: 0.4;
+    margin-top: 0.35vh;
+    padding-bottom: 0.2vh;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

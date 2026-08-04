@@ -1,0 +1,600 @@
+section#filesystem {
+    position: relative;
+    top: -0.925vh;
+    width: 43vw;
+    height: 30vh;
+    margin-right: 0.5vw;
+    overflow: hidden; /* keep scrolled files from escaping the module frame */
+
+    opacity: 0;
+    transition: opacity .5s cubic-bezier(0.4, 0, 1, 1);
+}
+
+section#filesystem > h3.title {
+    width: 43vw;
+    padding-right: 0;
+}
+
+section#filesystem.hideDotfiles > h3.title > p#fs_disp_title_dir::before {
+    content: "dotfiles hidden - ";
+}
+
+h2#fs_disp_error {
+    font-weight: bold;
+    text-align: center;
+    padding-top: 12vh;
+}
+
+/* Gear button next to the "FILESYSTEM" title: opens the eDEX settings editor */
+button.fs_gear {
+    display: inline-block;
+    vertical-align: middle;
+    width: 1.6vh;
+    height: 1.6vh;
+    margin-left: 0.5vh;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.7);
+    cursor: pointer;
+    transition: color .2s, filter .2s;
+}
+button.fs_gear:hover {
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    filter: drop-shadow(0 0 0.5vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.6));
+}
+button.fs_gear svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+/* Quick-access shortcuts to common macOS folders */
+div#fs_quickbar {
+    display: flex;
+    flex-direction: row;
+    gap: 0.5vh;
+    padding: 0.2vh 0.4vw 0.4vh 0.4vw;
+    margin-top: 2vh; /* sit below the fixed module title (which is taller now that it
+                        carries the gear button); margin (not relative top) so the file
+                        grid below flows after the quickbar instead of overlapping it */
+    border-bottom: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.2);
+}
+
+div#fs_quickbar button {
+    flex: 1;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.06);
+    border: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_mono), monospace;
+    font-size: 0.8vh;
+    letter-spacing: 0.1vh;
+    padding: 0.4vh 0;
+    cursor: pointer;
+    transition: background .2s, box-shadow .2s;
+}
+
+div#fs_quickbar button:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.18);
+    box-shadow: 0 0 0.6vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.4);
+}
+
+/* Each quick tab wraps its main button + a small corner badge for editing the
+   path. The badge is a triangle that looks like a clipped corner. */
+div.fs_quick_link {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    display: flex;
+}
+
+div.fs_quick_link > button.fs_quick_btn {
+    flex: 1;
+    width: 100%;
+}
+
+div.fs_quick_link > button.fs_quick_badge {
+    position: absolute;
+    top: -0.15vh;
+    right: -0.15vh;
+    width: 1.7vh;
+    height: 1.7vh;
+    flex: none;
+    padding: 0;
+    border: none;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.55);
+    clip-path: polygon(100% 0, 100% 100%, 0 0);
+    cursor: pointer;
+    z-index: 2;
+    transition: background .2s;
+}
+
+div.fs_quick_link > button.fs_quick_badge:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.9);
+}
+
+/* Quick-tab editor inputs inside the modal */
+div.modal_popup input#fs_quick_edit_label,
+div.modal_popup input#fs_quick_edit_path,
+div.modal_popup input#fs_new_folder_name,
+div.modal_popup input#fs_rename_name {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--color_light_black);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    border: 0.15vh solid rgb(var(--color_r), var(--color_g), var(--color_b));
+    padding: 0.5vh;
+    font-size: 1.4vh;
+}
+
+/* Selected files (via drag or right-click) */
+#fs_disp_container > *[data-path].selected {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.25);
+    box-shadow: 0 0 1.2vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+}
+
+/* Drag-box multi-select */
+div#fs_drag_box {
+    position: fixed;
+    z-index: 400;
+    border: 0.092vh dashed rgba(var(--color_r), var(--color_g), var(--color_b), 0.7);
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.12);
+    pointer-events: none;
+}
+
+/* Right-click operations menu */
+div.fs_ctx_menu {
+    position: fixed;
+    z-index: 500;
+    min-width: 16vh;
+    background: var(--color_light_black);
+    border: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    box-shadow: 0 0 1.5vh rgba(0, 0, 0, 0.6);
+    padding: 0.3vh 0;
+}
+div.fs_ctx_menu button.fs_ctx_item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.9);
+    font-family: var(--font_main_light);
+    font-size: 1.2vh;
+    letter-spacing: 0.06vh;
+    padding: 0.5vh 1vh;
+    cursor: pointer;
+}
+div.fs_ctx_menu button.fs_ctx_item:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.18);
+}
+div.fs_ctx_menu button.fs_ctx_item.disabled {
+    opacity: 0.35;
+    pointer-events: none;
+}
+
+/* File info modal rows */
+div.fs_info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5vh;
+    min-width: 38vh;
+    max-width: 60vh;
+    /* The HUD disables text selection globally (body user-select:none);
+       re-enable it here so file-info details can be selected and copied. */
+    user-select: text !important;
+    -webkit-user-select: text !important;
+}
+div.fs_info > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 2vh;
+    padding-bottom: 0.4vh;
+    border-bottom: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.12);
+    font-size: 1.35vh;
+}
+div.fs_info > div span {
+    opacity: 0.5;
+    flex: 0 0 auto;
+}
+div.fs_info > div b {
+    font-weight: normal;
+    text-align: right;
+    word-break: break-all;
+}
+
+/* Sci-fi loading overlay shown while a file opened from the manager loads */
+.fs_loading {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1.3vh;
+    background: rgba(5, 8, 13, 0.72);
+}
+.fs_loading_ring {
+    width: 5.5vh;
+    height: 5.5vh;
+    border: 0.3vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.22);
+    border-top-color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    border-radius: 50%;
+    animation: fs_loading_spin .9s linear infinite;
+}
+@keyframes fs_loading_spin {
+    to { transform: rotate(360deg); }
+}
+.fs_loading_text {
+    font-size: 1.1vh;
+    letter-spacing: 0.4vh;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    opacity: 0.85;
+    animation: fs_loading_blink 1.3s ease-in-out infinite;
+}
+@keyframes fs_loading_blink {
+    50% { opacity: 0.2; }
+}
+.modal_popup .fs_loading_cancel {
+    background: transparent;
+    border: 0.19vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.7);
+    border-radius: 0.278vh;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 1.4vh;
+    padding: 0.5vh 1.4vh;
+    cursor: pointer;
+    /* Override the generic modal button's left margin so the loading overlay
+       content (spinner + text + cancel) stays centered. */
+    margin: 0 !important;
+    border-bottom-left-radius: 0.278vh;
+    border-bottom-right-radius: 0.278vh;
+}
+.modal_popup .fs_loading_cancel:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
+}
+.fs_media_error {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1.2vh;
+    min-height: 12vh;
+    padding: 2.5vh 3vh;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 1.4vh;
+    letter-spacing: 0.15vh;
+    text-align: center;
+    opacity: 0.9;
+}
+
+div#fs_disp_container {
+    position: relative;
+    left: .35vw;
+    top: 0.5vh;
+    height: 20.5vh;
+    width: calc(43vw - 0.35vw); /* align right edge with the module frame */
+    overflow: auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(8.5vh, 1fr));
+    grid-auto-rows: 8.5vh;
+    grid-gap: 1vh;
+    box-sizing: border-box;
+}
+
+div#fs_disp_container > * {
+    overflow: hidden;
+    width: 8.5vh;
+    height: 8.5vh;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 1;
+    transition: opacity .2s linear;
+}
+
+div#fs_disp_container > *.animationWait {
+    opacity: 0 !important;
+}
+
+div#fs_disp_container > *:active {
+    animation-name: blink;
+    animation-iteration-count: infinite;
+    animation-duration: .1s;
+}
+
+@keyframes blink {
+    0% {background-color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.0);}
+    50% {background-color: rgba(var(--color_r), var(--color_g), var(--color_b), 1);}
+    100% {background-color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.0);}
+}
+
+div#fs_disp_container > *.hidden {
+    opacity: 0.7;
+}
+
+section#filesystem.hideDotfiles > div#fs_disp_container > *.hidden {
+    display: none;
+}
+
+div#fs_disp_container > * > svg {
+    width: 5vh;
+}
+
+/* Add padding around non-edex icons */
+div#fs_disp_container > * > svg:not([viewBox="0 0 24 24"]) {
+    padding: 0.5vh;
+    box-sizing: border-box;
+}
+
+div#fs_disp_container > * > h3 {
+    font-size: 1.1vh;
+    max-width: 100%;
+    max-height: 30%;
+    margin: 0px;
+    padding-top: .5vh;
+    box-sizing: border-box;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+}
+
+section#filesystem:not(.list-view) > div#fs_disp_container > div > h4 {
+    display: none;
+}
+
+div#fs_disp_container.disks > div > h4 {
+	  display: none;
+}
+
+section#filesystem.list-view > div#fs_disp_container {
+    grid-template-columns: 1fr;
+    grid-auto-rows: 2vh;
+    grid-gap: 0.5vh;
+    padding-right: 0.5vh;
+}
+
+section#filesystem.list-view > div#fs_disp_container:not(.disks) > * {
+    width: auto;
+    height: 2vh;
+    flex-direction: row;
+    justify-content: flex-start;
+}
+
+section#filesystem.list-view > div#fs_disp_container:not(.disks) > div > svg {
+    height: 2vh;
+    margin: 0;
+    width: auto;
+    margin-right: 2%;
+}
+
+section#filesystem.list-view > div#fs_disp_container:not(.disks) > div > h3 {
+    max-height: unset;
+    padding-top: .2vh;
+    text-align: left;
+    width: 32%;
+}
+
+section#filesystem.list-view > div#fs_disp_container:not(.disks) > div > h4 {
+    font-size: 1.3vh;
+    font-weight: normal;
+    padding-top: .2vh;
+    text-align: right;
+    overflow: hidden;
+}
+
+section#filesystem.list-view > div#fs_disp_container:not(.disks) > div > h4:nth-of-type(1) { width: 15%; }
+
+section#filesystem.list-view > div#fs_disp_container:not(.disks) > div > h4:nth-of-type(2) { width: 10%; }
+
+section#filesystem.list-view > div#fs_disp_container:not(.disks) > div > h4:nth-of-type(3) { width: 38%; }
+
+div#fs_disp_container.disks {
+    display: flex;
+    align-items: center;
+    justify-content: space-evenly;
+    border: 0.4vh double rgba(var(--color_r), var(--color_g), var(--color_b), 0.8);
+    flex-wrap: wrap;
+}
+div#fs_disp_container.disks > * {
+    width: auto;
+    max-width: 8vw;
+}
+
+section#filesystem:not(.list-view) div.fs_disp_showDisks > svg, section#filesystem:not(.list-view) div.fs_disp_up > svg {
+    width: 4vh !important;
+    margin-bottom: 0.5vh;
+    margin-top: 0.5vh;
+}
+
+div.fs_disp_file > h3 {
+    font-weight: normal;
+}
+div.fs_disp_symlink > h3 {
+    font-weight: normal;
+    text-decoration: underline;
+}
+div.fs_disp_other > h3 {
+    font-style: italic;
+}
+
+div#fs_space_bar {
+    position: relative;
+    top: 1.5vh;
+    left: .15vw;
+}
+
+div#fs_space_bar > h1 {
+    display: none;
+
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.1);
+    height: 3.2vh;
+    width: 100%;
+    position: relative;
+    bottom: .7vh;
+    left: .3vh;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    border: 2px solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    border-radius: 2px;
+    font-family: var(--font_main);
+    font-weight: bold;
+    font-size: 1.5vh;
+    cursor: pointer;
+}
+
+div#fs_disp_container.disks+div#fs_space_bar > h1 {
+    display: flex;
+}
+div#fs_disp_container.disks+div#fs_space_bar > *:not(h1) {
+    display: none;
+}
+
+/* "CD" button - cds the current browser directory into the active terminal tab */
+button#fs_cd_btn {
+    position: absolute;
+    right: 0.5vw; /* keep the whole button (incl. its right border) inside the module */
+    bottom: 0.3vh;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.12);
+    border: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.45);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 0.95vh;
+    letter-spacing: 0.12vh;
+    padding: 0.3vh 0.7vh;
+    cursor: pointer;
+    z-index: 3;
+    transition: background .2s;
+}
+button#fs_cd_btn:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+}
+
+div#fs_space_bar > h3 {
+    width: 25%;
+    margin: 0;
+    display: inline-block;
+    font-size: 1.4vh;
+    font-weight: normal;
+    white-space: nowrap;
+    position: relative;
+    bottom: .4vh;
+}
+
+div#fs_space_bar > progress {
+    width: 60%;
+    height: 2.2vh;
+    padding-top: .5vh;
+    -webkit-appearance: none;
+}
+
+div#fs_space_bar > progress::after {
+    content: "";
+    position: absolute;
+    right: -.1vh;
+    top: .45vh;
+    width: .1vh;
+    height: 1.7vh;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.8);
+}
+
+div#fs_space_bar > progress:not([value])::after {
+    animation: space_bar_working 1.7s ease-in-out alternate infinite;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 1);
+}
+
+@keyframes space_bar_working {
+    0% { right: 0%; }
+    100% { right: 70%; }
+}
+
+div#fs_space_bar > progress::-webkit-progress-bar {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.4);
+    height: .7vh;
+    position: relative;
+    top: .7vh;
+}
+
+div#fs_space_bar > progress::-webkit-progress-value {
+    background: rgb(var(--color_r), var(--color_g), var(--color_b));
+    height: .7vh;
+    position: relative;
+    bottom: .7vh;
+    transition: width .5s cubic-bezier(0.4, 0, 1, 1);
+}
+
+.pdf_container {
+    text-align: center;
+    background: var(--color_light_black);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    border: 0.15vh solid rgb(var(--color_r), var(--color_g), var(--color_b));
+    padding: 0.4vh 0.2vh;
+    font-size: 1.4vh;
+    resize: none;
+    overflow: auto;
+    width: 50vw;
+    height: 50vh;
+}
+
+.pdf_options button {
+    width: 40px;
+    height: 40px;
+    padding: 5px;
+}
+
+.pdf_options span {
+    margin-left: 1.5vh;
+    font-size: 24px;
+}
+
+/* Error state: a directory couldn't be read. The quick-access tabs and space
+   bar stay in place; only the file grid area shows the error + recovery
+   buttons, so the browser can always be navigated back without a restart. */
+div#fs_disp_container.failed {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1.4vh;
+    padding: 2vh 1vw;
+    box-sizing: border-box;
+}
+
+div#fs_disp_container.failed > * {
+    width: auto !important;
+    height: auto !important;
+    flex: none;
+}
+
+div#fs_disp_container.failed > h2#fs_disp_error {
+    padding-top: 0;
+    display: block;
+}
+
+div#fs_failed_actions {
+    display: flex;
+    gap: 0.8vh;
+}
+
+div#fs_failed_actions button {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.1);
+    border: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.45);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_mono), monospace;
+    font-size: 1vh;
+    letter-spacing: 0.12vh;
+    padding: 0.6vh 1.2vh;
+    cursor: pointer;
+    transition: background .2s, box-shadow .2s;
+}
+
+div#fs_failed_actions button:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.25);
+    box-shadow: 0 0 0.6vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.4);
+}

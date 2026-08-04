@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <meta http-equiv="Content-Security-Policy" content="default-src file: 'unsafe-inline'; img-src file: data: http: https:; media-src file:; connect-src ws: file:; child-src http: https: file:; frame-src http: https: file:">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>eDEX-UI</title>
+
+        <!-- Load dependency css -->
+        <link rel="stylesheet" href="node_modules/augmented-ui/augmented.css" />
+        <!-- Load main css -->
+        <link rel="stylesheet" href="assets/css/main.css" />
+        <link rel="stylesheet" href="assets/css/modal.css" />
+        <link rel="stylesheet" href="assets/css/boot_screen.css" />
+        <link rel="stylesheet" href="assets/css/media_player.css" />
+        <!-- Load main modules css -->
+        <link rel="stylesheet" href="assets/css/main_shell.css" />
+        <link rel="stylesheet" href="assets/css/filesystem.css" />
+        <!-- Load secondary modules css -->
+        <link rel="stylesheet" href="assets/css/mod_column.css" />
+        <link rel="stylesheet" href="assets/css/mod_clock.css" />
+        <link rel="stylesheet" href="assets/css/mod_sysinfo.css" />
+        <link rel="stylesheet" href="assets/css/mod_hardwareInspector.css" />
+        <link rel="stylesheet" href="assets/css/mod_cpuinfo.css" />
+        <link rel="stylesheet" href="assets/css/mod_netstat.css" />
+        <link rel="stylesheet" href="assets/css/mod_conninfo.css" />
+        <link rel="stylesheet" href="assets/css/mod_globe.css" />
+        <link rel="stylesheet" href="assets/css/mod_ramwatcher.css" />
+        <link rel="stylesheet" href="assets/css/mod_toplist.css" />
+        <link rel="stylesheet" href="assets/css/mod_fuzzyFinder.css" />
+        <link rel="stylesheet" href="assets/css/mod_processlist.css" />
+        <link rel="stylesheet" href="assets/css/cyber_panel.css" />
+        <link rel="stylesheet" href="assets/css/browser.css" />
+        <!-- Load extra CSS -->
+        <link rel="stylesheet" href="assets/css/extra_ratios.css" />
+
+        <!-- Load dependency js -->
+        <script src="node_modules/pdfjs-dist/build/pdf.js"></script>
+        <!-- Icon library (inline SVG, window.Icons) -->
+        <script src="assets/js/icons.js"></script>
+        <!-- Load main modules classes -->
+        <script src="classes/modal.class.js"></script>
+        <script src="classes/terminal.class.js"></script>
+        <script src="classes/docReader.class.js"></script>
+        <script src="classes/mediaPlayer.class.js"></script>
+        <script src="classes/filesystem.class.js"></script>
+        <script src="classes/updateChecker.class.js"></script>
+        <!-- Load secondary modules classes -->
+        <script src="classes/clock.class.js"></script>
+        <script src="classes/sysinfo.class.js"></script>
+        <script src="classes/hardwareInspector.class.js"></script>
+        <script src="classes/cpuinfo.class.js"></script>
+        <script src="classes/weather.class.js"></script>
+        <script src="classes/netstat.class.js"></script>
+        <script src="classes/conninfo.class.js"></script>
+        <script src="classes/locationGlobe.class.js"></script>
+        <script src="classes/ramwatcher.class.js"></script>
+        <script src="classes/toplist.class.js"></script>
+        <script src="classes/fuzzyFinder.class.js"></script>
+        <script src="classes/cyberPanel.class.js"></script>
+        <script src="classes/miniAudio.class.js"></script>
+        <!-- Webapps discovery + virtual app monitors (terminal tabs 4/5) -->
+        <script src="classes/webapps.class.js"></script>
+        <script src="classes/appmonitorPanel.class.js"></script>
+        <!-- Retired: multi-tab browser + standalone webapp panel -->
+        <script src="classes/webappPanel.class.js"></script>
+        <script src="classes/browser.class.js"></script>
+        <!-- Load extra classes -->
+        <script src="classes/audiofx.class.js"></script>
+    </head>
+    <body class="solidBackground">
+        <section id="boot_screen">
+        </section>
+
+        <script src="_renderer.js"></script>
+    </body>
+</html>
