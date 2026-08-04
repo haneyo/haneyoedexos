@@ -67,10 +67,8 @@ echo "[edex] preinstalling the GUI stack into the live rootfs (fully OFFLINE ins
 # installed here is present on the installed system with ZERO network at
 # install time. Build-time apt needs network; the install-time system does not.
 mkdir -p "$WORK/rootfs"
-sudo unsquashfs -d "$WORK/rootfs" "$EXTRACT/casper/filesystem.squashfs" >/dev/null 2>&1
-sudo mount --bind /dev  "$WORK/rootfs/dev"
-sudo mount --bind /proc "$WORK/rootfs/proc"
-sudo mount --bind /sys  "$WORK/rootfs/sys"
+echo "[edex] unsquashfs..."
+sudo unsquashfs -d "$WORK/rootfs" "$EXTRACT/casper/filesystem.squashfs"
 sudo cp /etc/resolv.conf "$WORK/rootfs/etc/resolv.conf"
 # Give the chroot apt the build host's proxy config (CI needs it) and clear the
 # live image's cdrom-only sources.
@@ -81,17 +79,36 @@ deb http://archive.ubuntu.com/ubuntu noble main universe multiverse restricted
 deb http://security.ubuntu.com/ubuntu noble-security main universe multiverse restricted
 deb http://archive.ubuntu.com/ubuntu noble-updates main universe multiverse restricted
 EOF
-sudo chroot "$WORK/rootfs" /bin/bash -c '
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update -y
-    apt-get install -y xorg lightdm lightdm-autologin-greeter openbox \
-        xvfb x11vnc novnc websockify dbus-x11 wmctrl xterm curl \
-        fonts-dejavu-core fontconfig libfuse2 \
-        libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 libasound2 libgbm1 libdrm2 \
-        libxkbcommon0 xdg-utils libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 \
-        libxext6 libxfixes3 libxi6 libxrandr2 libxrender1
-    apt-get clean
-'
+# The GUI stack to bake in. Shared by the chroot and proot branches.
+APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
+    xvfb x11vnc novnc websockify dbus-x11 wmctrl xterm curl \
+    fonts-dejavu-core fontconfig libfuse2 \
+    libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 libasound2 libgbm1 libdrm2 \
+    libxkbcommon0 xdg-utils libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 \
+    libxext6 libxfixes3 libxi6 libxrandr2 libxrender1"
+
+# Bind-mount /proc,/sys,/dev for the chroot. If the runner forbids mounts
+# (GitHub containers), fall back to proot (userspace chroot, no mounts).
+MOUNTS_OK=1
+for m in /proc /sys /dev; do
+    sudo mkdir -p "$WORK/rootfs$m"
+    sudo mount --bind "$m" "$WORK/rootfs$m" 2>/dev/null \
+        || { echo "[edex] WARN: cannot bind-mount $m — falling back to proot"; MOUNTS_OK=0; break; }
+done
+
+if [ "$MOUNTS_OK" = "1" ]; then
+    echo "[edex] chroot apt preinstall (mounted)"
+    sudo chroot "$WORK/rootfs" /bin/bash -c \
+        "export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean" \
+        || { echo "ERROR: chroot apt install failed"; exit 1; }
+    for m in /proc /sys /dev; do sudo umount "$WORK/rootfs$m" 2>/dev/null || true; done
+else
+    echo "[edex] installing proot and using userspace chroot"
+    sudo apt-get install -y proot >/dev/null 2>&1 || true
+    proot -S "$WORK/rootfs" /bin/bash -c \
+        "export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean" \
+        || { echo "ERROR: proot apt install failed"; exit 1; }
+fi
 # Bake the eDEX AppImage straight into the image.
 sudo mkdir -p "$WORK/rootfs/opt/edex"
 sudo cp "$EDEX_APPIMAGE" "$WORK/rootfs/opt/edex/eDEX-UI.AppImage"
