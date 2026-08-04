@@ -1064,12 +1064,16 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
     /* sit slightly left of center */
     transform: translateX(-1vh);
 }
-/* The Enter key is two stacked halves; the bottom half's thick dark top edge
-   reads as a break across the key at the DATA-box scale. Drop it so the two
-   halves meet as one continuous key (the seam keeps the top half's bottom
-   border only). */
-#keyboard_layer #keyboard div.keyboard_row#row_2 > div.keyboard_enter {
-    border-top: 0;
+/* The Enter key is two stacked halves; at the DATA-box scale their borders
+   read as two separate blocks. Like every other key, drop the border so the
+   Enter reads as one plain key (its ENTER label), and let the label sit a
+   little lower than dead-center. */
+#keyboard_layer #keyboard div.keyboard_enter {
+    border: 0;
+    background: transparent;
+}
+#keyboard_layer #keyboard div.keyboard_row#row_1 > div.keyboard_enter h1 {
+    margin-top: 0.7vh;
 }
 
 /* With the keyboard on, the DATA content compresses into a top strip above

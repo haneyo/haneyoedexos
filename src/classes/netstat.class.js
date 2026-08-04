@@ -391,15 +391,19 @@ class Netstat {
         let dds = document.querySelectorAll("#mod_netstat_weather_loc .mod_loc_dd");
 
         if (this._auto) {
-            // AUTO mode highlights the button and shows the detected place,
-            // but the CN pickers stay available so a manual pick can always
-            // take over (picking a division exits AUTO via _selectOption).
+            // AUTO mode: show the detected place and hide the CN pickers. The
+            // AUTO button itself is the restore control - press it again to
+            // leave AUTO and bring the manual province/city/district buttons
+            // back (see _disableAuto).
             if (autoBtn) autoBtn.classList.add("mod_loc_auto_active");
             if (status) status.textContent = (this._weatherSaved && this._weatherSaved.name) || "detecting…";
-        } else {
-            if (autoBtn) autoBtn.classList.remove("mod_loc_auto_active");
-            if (status) status.textContent = "";
+            dds.forEach(d => { d.style.display = "none"; });
+            if (cityBtn) cityBtn.textContent = "";
+            if (distBtn) distBtn.textContent = "";
+            return;
         }
+        if (autoBtn) autoBtn.classList.remove("mod_loc_auto_active");
+        if (status) status.textContent = "";
         dds.forEach(d => { d.style.display = ""; });
 
         provBtn.textContent = this._en("province", this._loc.province);
