@@ -398,12 +398,15 @@ async function initUI() {
     // Virtual keyboard (touch screens): replaces the bottom DATA panel with the
     // on-screen keyboard; the radar stays. Toggled via settings.showKeyboard.
     if (window.settings.showKeyboard) {
+        // Replace the DATA panel's content with the keyboard so it fills the
+        // same box; the radar (a separate element) stays put.
+        let cyberPanel = document.getElementById("cyber_panel");
         let cyberInner = document.getElementById("cyber_panel_inner");
         if (cyberInner) cyberInner.style.display = "none";
         let keyEl = document.createElement("section");
         keyEl.id = "keyboard";
-        keyEl.style.cssText = "width:82.9vw;margin:0 auto;";
-        document.getElementById("bottom_row").appendChild(keyEl);
+        keyEl.style.cssText = "width:100%;height:100%;align-items:center;justify-content:center;";
+        cyberPanel.appendChild(keyEl);
         try {
             window.keyboard = new Keyboard({
                 layout: path.join(keyboardsDir, (window.settings.keyboard || "en-US") + ".json"),
