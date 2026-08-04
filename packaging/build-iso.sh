@@ -66,9 +66,14 @@ echo "[edex] preinstalling the GUI stack into the live rootfs (fully OFFLINE ins
 # The installer copies this squashfs verbatim to the target disk, so anything
 # installed here is present on the installed system with ZERO network at
 # install time. Build-time apt needs network; the install-time system does not.
+SQUASHFS="$(ls "$EXTRACT/casper/"*.squashfs 2>/dev/null | head -1)"
+if [ -z "$SQUASHFS" ]; then
+    echo "ERROR: no squashfs found in casper/:"; ls -la "$EXTRACT/casper/"; exit 1
+fi
+echo "[edex] live rootfs: $(basename "$SQUASHFS")"
 mkdir -p "$WORK/rootfs"
 echo "[edex] unsquashfs..."
-sudo unsquashfs -d "$WORK/rootfs" "$EXTRACT/casper/filesystem.squashfs"
+sudo unsquashfs -d "$WORK/rootfs" "$SQUASHFS"
 sudo cp /etc/resolv.conf "$WORK/rootfs/etc/resolv.conf"
 # Give the chroot apt the build host's proxy config (CI needs it) and clear the
 # live image's cdrom-only sources.
@@ -113,10 +118,14 @@ fi
 sudo mkdir -p "$WORK/rootfs/opt/edex"
 sudo cp "$EDEX_APPIMAGE" "$WORK/rootfs/opt/edex/eDEX-UI.AppImage"
 sudo chmod 755 "$WORK/rootfs/opt/edex/eDEX-UI.AppImage"
-sudo umount "$WORK/rootfs/dev"; sudo umount "$WORK/rootfs/proc"; sudo umount "$WORK/rootfs/sys"
-sudo rm -f "$EXTRACT/casper/filesystem.squashfs"
-sudo mksquashfs "$WORK/rootfs" "$EXTRACT/casper/filesystem.squashfs" -comp zstd -b 256K -noappend >/dev/null
+for m in /proc /sys /dev; do sudo umount "$WORK/rootfs$m" 2>/dev/null || true; done
+sudo rm -f "$SQUASHFS"
+sudo mksquashfs "$WORK/rootfs" "$SQUASHFS" -comp zstd -b 256K -noappend >/dev/null
 sudo rm -rf "$WORK/rootfs"
+# casper keeps the (uncompressed) size for the installer — refresh it if present
+if [ -f "$EXTRACT/casper/filesystem.size" ]; then
+    du -sk "$SQUASHFS" | cut -f1 | sudo tee "$EXTRACT/casper/filesystem.size" >/dev/null
+fi
 
 echo "[edex] injecting nocloud datasource + payload"
 mkdir -p "$EXTRACT/nocloud"
