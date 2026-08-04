@@ -395,6 +395,26 @@ async function initUI() {
         container: "cyber_panel"
     });
 
+    // Virtual keyboard (touch screens): replaces the bottom DATA panel with the
+    // on-screen keyboard; the radar stays. Toggled via settings.showKeyboard.
+    if (window.settings.showKeyboard) {
+        let cyberInner = document.getElementById("cyber_panel_inner");
+        if (cyberInner) cyberInner.style.display = "none";
+        let keyEl = document.createElement("section");
+        keyEl.id = "keyboard";
+        keyEl.style.cssText = "width:82.9vw;margin:0 auto;";
+        document.getElementById("bottom_row").appendChild(keyEl);
+        try {
+            window.keyboard = new Keyboard({
+                layout: path.join(keyboardsDir, (window.settings.keyboard || "en-US") + ".json"),
+                container: "keyboard"
+            });
+            window.keyboard.attach();
+        } catch (e) {
+            require("electron").ipcRenderer.send("log", "error", "Keyboard init failed: " + (e && e.message));
+        }
+    }
+
     await _delay(10);
 
     document.getElementById("main_shell").setAttribute("style", "");
@@ -1020,6 +1040,14 @@ window.openSettings = async () => {
                             <option>${window.settings.lockOnIdle === false}</option>
                         </select></td>
                     </tr>
+                    <tr>
+                        <td>虚拟键盘</td>
+                        <td>触屏用。开启后底部 DATA 框变为虚拟键盘（雷达保留），重启 eDEX 生效</td>
+                        <td><select id="settingsEditor-showKeyboard">
+                            <option>${window.settings.showKeyboard === true}</option>
+                            <option>${window.settings.showKeyboard !== true}</option>
+                        </select></td>
+                    </tr>
                     <tr><td colspan="3" class="settingsEditor_section">Claude Code</td></tr>
                     <tr>
                         <td>启用 Claude 配置</td>
@@ -1201,6 +1229,7 @@ window.writeSettingsFile = () => {
         screensaverStyle: document.getElementById("settingsEditor-screensaverStyle").value,
         lockCode: document.getElementById("settingsEditor-lockCode").value,
         lockOnIdle: (document.getElementById("settingsEditor-lockOnIdle").value === "true"),
+        showKeyboard: (document.getElementById("settingsEditor-showKeyboard").value === "true"),
         claude: {
             enabled: (document.getElementById("settingsEditor-claude-enabled").value === "true"),
             baseUrl: document.getElementById("settingsEditor-claude-baseUrl").value,
