@@ -271,7 +271,12 @@ class Netstat {
         document.addEventListener("click", e => {
             let inWeather = e.target.closest && e.target.closest("#mod_netstat_weather_loc");
             if (inWeather) {
-                if (e.target.closest(".mod_loc_auto")) { this._enableAuto(); return; }
+                if (e.target.closest(".mod_loc_auto")) {
+                    // AUTO is a toggle: press again to leave AUTO and go back
+                    // to the manual province/city/district pickers.
+                    if (this._auto) { this._disableAuto(); } else { this._enableAuto(); }
+                    return;
+                }
                 let btn = e.target.closest(".mod_loc_btn");
                 if (btn) { this._toggleField(btn.dataset.field); return; }
                 let opt = e.target.closest(".mod_loc_opt");
@@ -348,6 +353,16 @@ class Netstat {
         }
     }
 
+    // Leave explicit AUTO mode again: stop any pending auto-location retry,
+    // restore the manual CN pickers and re-apply the last manual selection.
+    _disableAuto() {
+        this._auto = false;
+        this._userPicked = true;
+        clearInterval(this._autoRetry);
+        this._renderPicker();
+        this._applyLocation();
+    }
+
     // Applies the geo-detected location to the weather. Returns true once done.
     _applyAuto() {
         let geo = this.ipinfo && this.ipinfo.geo;
@@ -376,16 +391,15 @@ class Netstat {
         let dds = document.querySelectorAll("#mod_netstat_weather_loc .mod_loc_dd");
 
         if (this._auto) {
-            // AUTO mode: show the detected place, hide the CN pickers.
+            // AUTO mode highlights the button and shows the detected place,
+            // but the CN pickers stay available so a manual pick can always
+            // take over (picking a division exits AUTO via _selectOption).
             if (autoBtn) autoBtn.classList.add("mod_loc_auto_active");
             if (status) status.textContent = (this._weatherSaved && this._weatherSaved.name) || "detecting…";
-            dds.forEach(d => { d.style.display = "none"; });
-            if (cityBtn) cityBtn.textContent = "";
-            if (distBtn) distBtn.textContent = "";
-            return;
+        } else {
+            if (autoBtn) autoBtn.classList.remove("mod_loc_auto_active");
+            if (status) status.textContent = "";
         }
-        if (autoBtn) autoBtn.classList.remove("mod_loc_auto_active");
-        if (status) status.textContent = "";
         dds.forEach(d => { d.style.display = ""; });
 
         provBtn.textContent = this._en("province", this._loc.province);
@@ -429,6 +443,7 @@ class Netstat {
     _selectOption(field, value) {
         this._userPicked = true;
         this._auto = false;   // manual pick leaves AUTO mode
+        clearInterval(this._autoRetry);
         if (field === "province") {
             this._loc.province = value;
             let cities = this._cnAdmin[value] || {};
