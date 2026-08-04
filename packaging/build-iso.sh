@@ -46,9 +46,13 @@ xorriso -osirrox on -indev "$SRC_ISO" -extract / "$EXTRACT"
 chmod -R u+w "$EXTRACT"
 rm -rf "$EXTRACT/[BOOT]"
 
-echo "[edex] verifying boot layout (24.04 server: GRUB2, no isolinux)"
-[[ -f "$EXTRACT/boot/grub/i386-pc/eltorito.img" ]] || { echo "ERROR: eltorito.img missing — not a 24.04 server ISO?"; exit 1; }
-[[ -f "$EXTRACT/boot/grub/efi.img" ]]            || { echo "ERROR: boot/grub/efi.img missing"; exit 1; }
+echo "[edex] replaying the stock ISO's boot flags (authoritative)"
+# -report_el_torito as_mkisofs prints the exact El Torito / GPT-partition flags
+# the stock ISO was built with (UEFI may be a file or an appended partition —
+# this handles both). The GRUB2 MBR boot code is captured separately below.
+BOOTFLAGS="$(xorriso -indev "$SRC_ISO" -report_el_torito as_mkisofs 2>/dev/null | grep -E '^-[a-z]|^--' || true)"
+[[ -n "$BOOTFLAGS" ]] || { echo "ERROR: could not read boot flags from $SRC_ISO"; exit 1; }
+echo "[edex] boot flags: $BOOTFLAGS"
 
 echo "[edex] injecting nocloud datasource + payload"
 mkdir -p "$EXTRACT/nocloud"
@@ -77,17 +81,8 @@ dd if="$SRC_ISO" bs=1 count=432 of="$WORK/isohdpfx.bin" 2>/dev/null
 xorriso -as mkisofs \
   -r -V "$VOL_LABEL" -J -l -iso-level 3 \
   --grub2-mbr "$WORK/isohdpfx.bin" \
-  --protective-msdos-label \
-  -partition_offset 16 \
-  --mbr-force-bootable \
-  -append_partition 2 0xef "$EXTRACT/boot/grub/efi.img" \
-  -appended_part_as_gpt \
-  -iso_mbr_part_type 0x00 \
-  -c boot/boot.cat \
-  -b boot/grub/i386-pc/eltorito.img \
-  -no-emul-boot -boot-load-size 4 -boot-info-table --grub2-boot-info \
-  -eltorito-alt-boot -e boot/grub/efi.img -no-emul-boot \
   -dir-mode 0755 \
+  $BOOTFLAGS \
   -o "$OUT_ISO" "$EXTRACT"
 
 echo "[edex] done: $OUT_ISO"
