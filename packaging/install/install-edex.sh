@@ -71,6 +71,30 @@ echo "[edex] creating the ~/Applications folder (drop .AppImage files here)"
 mkdir -p "/home/$U/Applications"
 chown "$U":"$U" "/home/$U/Applications"
 
+# House rules for the built-in Claude Code assistant (~/CLAUDE.md is read
+# automatically): how to install apps, where AppImages go, wifi, updates.
+cat > "/home/$U/CLAUDE.md" <<'RULES'
+# eDEX-OS 系统约定(Claude Code 请遵守)
+
+这是一台 eDEX-OS 演示机(改装 Ubuntu 24.04),单用户,自动登录用户有**免密 sudo**。用户说中文。
+
+## 安装应用
+- AppImage → 下载到 `~/Applications/` 并 `chmod +x`(会自动出现在终端 tab 4/5 的 app 列表)。
+- .deb → `sudo apt install ./xxx.deb`。
+- 其它包 → `sudo apt install <包名>`(需已联网)。
+
+## 联网
+- NetworkManager:`nmcli dev wifi connect <ssid> password <pw>`;或提示用户点右下角 WIFI 按钮。
+
+## 系统更新
+- `sudo apt update && sudo apt full-upgrade`;或提示用户用齿轮菜单的"系统更新"按钮。
+
+## 其它
+- 系统自带 Firefox(/opt/firefox)与 eDEX 终端(tab 1/2)与虚拟显示器(tab 4/5)。
+- 交互时用中文,简洁说明你做了什么。
+RULES
+chown "$U":"$U" "/home/$U/CLAUDE.md"
+
 # Let the autologin user update the baked-in Firefox and Claude CLI in place
 # (their updaters write into /opt/firefox and the npm global dir).
 chown -R "$U":"$U" /opt/firefox /usr/local/lib/node_modules /usr/local/bin 2>/dev/null || true
