@@ -36,7 +36,8 @@ bash packaging/build-iso-local.sh            # 自动下载官方 ISO 并构建
 - **终端 tab 1/2/3**:前两个是终端,第 3 个是内嵌 Claude(需自行 `claude` CLI + 配置 API Key)。
 - **tab 4 / 5(虚拟显示器)**:点 tab 标签旁的 ▾ 下拉,选一个已安装应用(xterm 等)/ 网页(已预置 Google/Bing)/ 手动添加 AppImage 或网址。原生应用显示在终端框内(noVNC 流式),网页直接加载。
 - **原生全屏**:tab 内点右上角全屏按钮 → 应用**直接接管整块屏幕原生运行**(不再流式);屏幕角落有一个不显眼的 `◀ EDEX` 小按钮,点击回到 eDEX;`Ctrl+Shift+Q` 是兜底热键。
-- **装应用**:就是普通 Ubuntu——`sudo apt install <app>` 或双击 AppImage。
+- **装应用**:就是普通 Ubuntu——`sudo apt install <app>` 或 AppImage。
+- **像 macOS 一样放 AppImage**:把 `.AppImage` 文件丢进主目录的 `~/Applications`(装机时已自动创建),tab 4/5 的 ▾ 下拉就会直接列出它,选中即可显示。点开下拉菜单会自动重新扫描,新放的文件无需重启。
 - **锁屏/屏保**:闲置自动进入 eDEX 风格纯代码屏保(可在设置里改)。
 
 ## 四、常见问题
