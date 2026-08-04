@@ -54,7 +54,7 @@ chmod -R u+w "$EXTRACT"
 # volume label (we set our own) and fix the interval's ISO path.
 BOOTFLAGS="$(xorriso -indev "$SRC_ISO" -report_el_torito as_mkisofs 2>/dev/null \
     | grep -E '^-' \
-    | grep -vE "^-V[[:space:]]" \
+    | grep -vE "^-V[[:space:]]|^-volume_date|^--modification-date" \
     | sed "s|'/tmp/ubuntu-stock.iso'|'$SRC_ISO'|")"
 [[ -n "$BOOTFLAGS" ]] || { echo "ERROR: could not read boot flags from $SRC_ISO"; exit 1; }
 echo "[edex] replaying boot flags:"
