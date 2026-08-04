@@ -3,8 +3,8 @@ name: Build packaged binaries
 on: [push, pull_request, workflow_dispatch]
 
 # Primary target is the Linux x64 AppImage (used by the eDEX-OS ISO and the
-# x86_64 laptop). The ARM / Windows / macOS jobs are kept but allowed to fail
-# without red-marking the push (they were stale on node 14).
+# x86_64 laptop). Electron dropped ia32 Linux builds, so only x64 is built;
+# Windows / macOS builds are kept for the other platforms.
 jobs:
   build-linux:
     runs-on: ubuntu-latest
@@ -20,61 +20,19 @@ jobs:
     - uses: actions/setup-node@v4
       with:
         node-version: 22
-    - name: Install system deps for x64 -> ia32 cross-build
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libc6-dev-i386 gcc-multilib g++-multilib
     - name: Install build deps
       run: |
         npm install
         (cd src && npm install) || (npm install-scripts approve node-pty ffmpeg-static && (cd src && npm install))
     - name: Prebuild
       run: npm run prebuild-linux
-    - name: Build for x64 / ia32
-      run: ./node_modules/.bin/electron-builder build -l --x64 --ia32
+    - name: Build x64 AppImage
+      run: ./node_modules/.bin/electron-builder build -l --x64
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - uses: actions/upload-artifact@v4
       with:
         name: Linux-AppImages
-        path: dist/*.AppImage
-        if-no-files-found: error
-
-  build-linux-arm32:
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-    - uses: actions/checkout@v4
-    - name: Setup QEMU
-      uses: docker/setup-qemu-action@v3
-      with:
-        platforms: arm
-    - name: Build armv7l in emulated container
-      uses: docker://arm32v7/node:22
-      with:
-        args: bash -c "npm install && (cd src && npm install) && npm run prebuild-linux && ./node_modules/.bin/electron-builder build -l --armv7l"
-    - uses: actions/upload-artifact@v4
-      with:
-        name: Linux-armv7l-AppImage
-        path: dist/*.AppImage
-        if-no-files-found: error
-
-  build-linux-arm64:
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-    - uses: actions/checkout@v4
-    - name: Setup QEMU
-      uses: docker/setup-qemu-action@v3
-      with:
-        platforms: arm64
-    - name: Build arm64 in emulated container
-      uses: docker://arm64v8/node:22
-      with:
-        args: bash -c "npm install && (cd src && npm install) && npm run prebuild-linux && ./node_modules/.bin/electron-builder build -l --arm64"
-    - uses: actions/upload-artifact@v4
-      with:
-        name: Linux-arm64-AppImage
         path: dist/*.AppImage
         if-no-files-found: error
 
