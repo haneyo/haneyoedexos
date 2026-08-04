@@ -44,19 +44,29 @@ echo "[edex] extracting stock ISO"
 mkdir -p "$EXTRACT"
 xorriso -osirrox on -indev "$SRC_ISO" -extract / "$EXTRACT"
 chmod -R u+w "$EXTRACT"
-rm -rf "$EXTRACT/[BOOT]"
+# keep [BOOT]/ — it may hold the appended UEFI partition image
 
-echo "[edex] replaying the stock ISO's boot flags (authoritative)"
-# -report_el_torito as_mkisofs prints the exact El Torito / GPT-partition flags
-# the stock ISO was built with (UEFI may be a file or an appended partition —
-# this handles both). The GRUB2 MBR boot code is captured separately below.
-# Drop the flags that don't replay under `-as mkisofs`: the original volume
-# label (-V, we set our own) and the volume-date keyword.
-BOOTFLAGS="$(xorriso -indev "$SRC_ISO" -report_el_torito as_mkisofs 2>/dev/null \
-    | grep -E '^-[a-z]|^--' \
-    | grep -vE '^-V[[:space:]]|^-volume_date' || true)"
-[[ -n "$BOOTFLAGS" ]] || { echo "ERROR: could not read boot flags from $SRC_ISO"; exit 1; }
-echo "[edex] boot flags: $BOOTFLAGS"
+echo "[edex] inspecting stock ISO boot layout (diagnostics)"
+echo "--- boot/grub ---"
+ls "$EXTRACT/boot/grub/" 2>/dev/null || echo "(none)"
+echo "--- [BOOT] ---"
+ls -la "$EXTRACT/[BOOT]/" 2>/dev/null || echo "(none)"
+echo "--- el-torito report ---"
+xorriso -indev "$SRC_ISO" -report_el_torito as_mkisofs 2>&1 | grep -E '^[^-]|^-(b|c|e|V|volume|modification|no|boot|eltorito|append|appended|iso|prot)' || true
+
+# Locate the UEFI ESP image. 24.04.x server puts it either as a regular file
+# (boot/grub/efi.img) or as an appended GPT partition extracted under [BOOT]/.
+ESP=""
+for cand in \
+    "$EXTRACT/boot/grub/efi.img" \
+    "$EXTRACT/[BOOT]"/EFI/*.img \
+    "$EXTRACT/[BOOT]"/*.img \
+    "$EXTRACT/[BOOT]"/Isolinux/*.img; do
+    if [ -f "$cand" ]; then ESP="$cand"; break; fi
+done
+echo "[edex] ESP image: ${ESP:-NOT FOUND}"
+[ -n "$ESP" ] || { echo "ERROR: cannot locate the UEFI ESP image"; exit 1; }
+ESP_NAME="$(basename "$ESP")"
 
 echo "[edex] injecting nocloud datasource + payload"
 mkdir -p "$EXTRACT/nocloud"
@@ -82,11 +92,21 @@ echo "[edex] rebuilding bootable ISO"
 # MBR boot code template comes from the stock ISO itself (GRUB2 hybrid layout).
 dd if="$SRC_ISO" bs=1 count=432 of="$WORK/isohdpfx.bin" 2>/dev/null
 
+# Explicit 24.04 recipe (GRUB2 BIOS via eltorito.img, UEFI via the ESP image).
 xorriso -as mkisofs \
   -r -V "$VOL_LABEL" -J -l -iso-level 3 \
   --grub2-mbr "$WORK/isohdpfx.bin" \
+  --protective-msdos-label \
+  -partition_offset 16 \
+  --mbr-force-bootable \
   -dir-mode 0755 \
-  $BOOTFLAGS \
+  -c boot/boot.cat \
+  -b boot/grub/i386-pc/eltorito.img \
+  -no-emul-boot -boot-load-size 4 -boot-info-table --grub2-boot-info \
+  -eltorito-alt-boot -e "${ESP#$EXTRACT/}" -no-emul-boot \
+  -append_partition 2 0xef "$ESP" \
+  -isohybrid-gpt-basdat \
+  -iso_mbr_part_type 0x00 \
   -o "$OUT_ISO" "$EXTRACT"
 
 echo "[edex] done: $OUT_ISO"
