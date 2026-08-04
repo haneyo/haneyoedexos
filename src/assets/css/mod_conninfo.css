@@ -4,6 +4,7 @@ div#mod_conninfo {
     letter-spacing: 0.092vh;
     padding: 0.645vh 0vh;
     display: flex;
+    /* Keep the bottom module clear of the cyber radar below the column. */
 }
 
 div#mod_conninfo::before {

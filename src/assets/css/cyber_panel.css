@@ -221,7 +221,7 @@
     left: 84.1vw; /* left edge aligns with the network column modules above */
     bottom: 1.1vh; /* bottom aligns with the file manager's bottom edge */
     width: 27vh;
-    height: 19vh;
+    height: 17vh; /* 19vh overlapped the right column's last module; 17vh clears it */
     display: flex;
     flex-direction: row;
     align-items: center;

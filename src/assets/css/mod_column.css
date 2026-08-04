@@ -53,9 +53,6 @@ section#mod_column_left > h3.title {
 section#mod_column_right {
     right: -0.555vh;
     align-items: flex-start;
-    /* Reserve space for the cyber radar below, so content growth (e.g. the
-       weather block loading) never pushes the last module into the radar. */
-    padding-bottom: 20.5vh;
 }
 
 section#mod_column_right > h3.title {
