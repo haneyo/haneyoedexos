@@ -11,13 +11,16 @@ autoinstall:
   # Fully OFFLINE install: the GUI stack + eDEX are baked into the squashfs, so
   # no network and no update download is needed. The network step is optional —
   # connect WiFi during install if you like (it just writes the config), skip it
-  # to stay fully offline.
+  # to stay fully offline. Subiquity's "updates" key only accepts security|all
+  # (there is no valid "none"), so leave it at the default and let apt fall back
+  # to an offline install when no mirror is usable.
   interactive-sections:
     - locale
     - network
     - storage
     - identity
-  updates: none
+  apt:
+    fallback: offline-install
   late-commands:
     - cp /cdrom/nocloud/install-edex.sh /target/root/install-edex.sh
     - curtin in-target --target=/target -- bash /root/install-edex.sh
