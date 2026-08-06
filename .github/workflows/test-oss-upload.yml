@@ -32,7 +32,10 @@ jobs:
       - name: Upload probe file
         run: |
           echo "edex-os oss probe $(date -u +%Y-%m-%dT%H:%M:%SZ)" > /tmp/probe.txt
-          echo "PROBE=edex-os/_probe-$(date +%s).txt" >> "$GITHUB_ENV"
+          # GITHUB_ENV only reaches LATER steps, so assign the shell var first
+          # and use it here; write it to GITHUB_ENV for the steps below.
+          PROBE="edex-os/_probe-$(date +%s).txt"
+          echo "PROBE=$PROBE" >> "$GITHUB_ENV"
           "$OSSUTIL" cp /tmp/probe.txt "oss://$OSS_BUCKET/$PROBE" \
             -e "$OSS_ENDPOINT" --region "$OSS_REGION" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET"
 
@@ -64,4 +67,7 @@ jobs:
         if: always()
         run: |
           "$OSSUTIL" rm "oss://$OSS_BUCKET/$PROBE" \
+            -e "$OSS_ENDPOINT" --region "$OSS_REGION" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET" || true
+          # Remove the stray probe.txt that earlier buggy runs left at the bucket root
+          "$OSSUTIL" rm "oss://$OSS_BUCKET/probe.txt" \
             -e "$OSS_ENDPOINT" --region "$OSS_REGION" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET" || true
