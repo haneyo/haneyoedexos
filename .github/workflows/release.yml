@@ -170,17 +170,19 @@ jobs:
           unzip -o /tmp/ossutil.zip -d /tmp/ossutil >/dev/null
           OSSUTIL=$(find /tmp/ossutil -type f -name ossutil | head -1)
           chmod +x "$OSSUTIL"
-          "$OSSUTIL" --version
+          "$OSSUTIL" version
 
+          # ossutil v2 flags only: `--version` is invalid (use `version`), and
+          # the v1 `--checkpoint-dir`/`--part-size` flags don't exist here — v2
+          # retries + multiparts automatically via the SDK. Keep AUTH only.
           AUTH=(-e "$OSS_ENDPOINT" --region "$OSS_REGION" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET")
-          RETRY=(--checkpoint-dir /tmp/ossutil-cp --part-size 128m)
 
           echo "Uploading $ISO (per-version path) ..."
-          "$OSSUTIL" cp "$ISO" "oss://$OSS_BUCKET/edex-os/$TAG/" "${AUTH[@]}" "${RETRY[@]}"
+          "$OSSUTIL" cp "$ISO" "oss://$OSS_BUCKET/edex-os/$TAG/" "${AUTH[@]}"
           "$OSSUTIL" cp "$ISO.sha256" "oss://$OSS_BUCKET/edex-os/$TAG/" "${AUTH[@]}"
 
           echo "Copying to stable 'latest' path ..."
-          "$OSSUTIL" cp "$ISO" "oss://$OSS_BUCKET/edex-os/latest/eDEX-OS-latest.iso" "${AUTH[@]}" "${RETRY[@]}"
+          "$OSSUTIL" cp "$ISO" "oss://$OSS_BUCKET/edex-os/latest/eDEX-OS-latest.iso" "${AUTH[@]}"
           "$OSSUTIL" cp "$ISO.sha256" "oss://$OSS_BUCKET/edex-os/latest/eDEX-OS-latest.iso.sha256" "${AUTH[@]}"
 
           # Log only the object paths — never the full public URL (bucket +
