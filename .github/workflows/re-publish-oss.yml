@@ -2,8 +2,9 @@
 #
 # The real release run (31106514428) failed ONLY in the final OSS step
 # (ossutil `--version` / `--part-size` flag bugs, now fixed in release.yml),
-# so the ISO artifact already exists on that run. Download it here and upload
-# with the fixed command set — no 30-40 min rebuild needed.
+# so the ISO artifact already exists on that run. Download it here (via the
+# REST API — actions/download-artifact can't see cross-run artifacts reliably)
+# and upload with the fixed command set. No 30-40 min rebuild needed.
 #
 # DELETE THIS FILE after the upload is verified.
 name: Re-publish ISO to OSS (temporary)
@@ -19,10 +20,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download built ISO artifact (run 31106514428)
-        uses: actions/download-artifact@v7
-        with:
-          name: eDEX-OS-ISO
-          run-id: 31106514428
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUN=31106514428
+          echo "--- artifact list on run $RUN ---"
+          curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/$RUN/artifacts" \
+            | jq -r '.artifacts[] | .name + "  " + ((.size_in_bytes/1024/1024)|floor|tostring) + " MB"'
+          URL=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/$RUN/artifacts" \
+            | jq -r '.artifacts[] | select(.name=="eDEX-OS-ISO") | .archive_download_url')
+          [ -n "$URL" ] && [ "$URL" != "null" ] || { echo "::error::artifact eDEX-OS-ISO not found via API"; exit 1; }
+          echo "--- downloading artifact ---"
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -o /tmp/iso.zip "$URL"
+          ls -lh /tmp/iso.zip
+          unzip -o /tmp/iso.zip -d .
+          ls -lh
 
       - name: Install ossutil
         run: |
