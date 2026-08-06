@@ -147,11 +147,12 @@ jobs:
       # per-version path and a stable `latest/` path are published; the latter
       # backs the README download link. Skipped when the secrets are unset.
       - name: Publish ISO to Aliyun OSS (China mirror)
-        if: ${{ secrets.ALIYUN_OSS_BUCKET != '' }}
+        if: ${{ secrets.ALIYUN_OSS_BUCKET != '' && secrets.ALIYUN_OSS_REGION != '' }}
         env:
           OSS_AK_ID: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_ID }}
           OSS_AK_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
           OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
+          OSS_REGION: ${{ secrets.ALIYUN_OSS_REGION }}
           OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
         run: |
           set -euo pipefail
@@ -165,7 +166,7 @@ jobs:
           chmod +x "$OSSUTIL"
           "$OSSUTIL" --version
 
-          AUTH=(-e "$OSS_ENDPOINT" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET")
+          AUTH=(-e "$OSS_ENDPOINT" --region "$OSS_REGION" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET")
           RETRY=(--checkpoint-dir /tmp/ossutil-cp --part-size 128m)
 
           echo "Uploading $ISO (per-version path) ..."

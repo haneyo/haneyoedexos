@@ -18,6 +18,7 @@ jobs:
       OSS_AK_ID: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_ID }}
       OSS_AK_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
       OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
+      OSS_REGION: ${{ secrets.ALIYUN_OSS_REGION }}
       OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
     steps:
       - name: Install ossutil
@@ -33,7 +34,7 @@ jobs:
           echo "edex-os oss probe $(date -u +%Y-%m-%dT%H:%M:%SZ)" > /tmp/probe.txt
           echo "PROBE=edex-os/_probe-$(date +%s).txt" >> "$GITHUB_ENV"
           "$OSSUTIL" cp /tmp/probe.txt "oss://$OSS_BUCKET/$PROBE" \
-            -e "$OSS_ENDPOINT" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET"
+            -e "$OSS_ENDPOINT" --region "$OSS_REGION" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET"
           echo "Uploaded oss://$OSS_BUCKET/$PROBE"
 
       - name: Download it back anonymously (verifies public read)
@@ -51,4 +52,4 @@ jobs:
         if: always()
         run: |
           "$OSSUTIL" rm "oss://$OSS_BUCKET/$PROBE" \
-            -e "$OSS_ENDPOINT" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET" || true
+            -e "$OSS_ENDPOINT" --region "$OSS_REGION" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET" || true
