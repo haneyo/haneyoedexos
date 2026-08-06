@@ -32,7 +32,10 @@ fi
 [[ -f "$EDEX_APPIMAGE" ]] || { echo "missing AppImage: $EDEX_APPIMAGE"; exit 1; }
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+# Rootfs files are created by sudo (unsquashfs/chroot), so the plain rm below
+# would fail with "Permission denied" — and with `set -e` that failure flips the
+# whole build red even when the ISO succeeded. Clean up as root.
+trap 'sudo rm -rf "$WORK"' EXIT
 EXTRACT="$WORK/iso-extract"
 
 echo "[edex] installing build tools"
@@ -72,6 +75,7 @@ if [ -z "$SQUASHFS" ]; then
 fi
 echo "[edex] live rootfs: $(basename "$SQUASHFS")"
 mkdir -p "$WORK/rootfs"
+df -h "$WORK" | tail -1
 echo "[edex] unsquashfs..."
 sudo unsquashfs -d "$WORK/rootfs" "$SQUASHFS"
 sudo cp /etc/resolv.conf "$WORK/rootfs/etc/resolv.conf"
@@ -88,7 +92,7 @@ EOF
 APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     xvfb x11vnc novnc websockify dbus-x11 wmctrl xterm curl \
     fonts-dejavu-core fontconfig libfuse2 \
-    libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 libasound2 libgbm1 libdrm2 \
+    libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 libasound2t64 libgbm1 libdrm2 \
     libxkbcommon0 xdg-utils libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 \
     libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 \
     linux-firmware network-manager \
@@ -97,8 +101,8 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     flatpak xdg-desktop-portal xdg-desktop-portal-gtk \
     playerctl \
     gvfs gvfs-backends libglib2.0-bin \
-    fcitx5 fcitx5-rime fcitx5-config-qt \
-    fcitx5-frontend-gtk3 fcitx5-frontend-qt5 rime-data"
+    fcitx5 fcitx5-chinese-addons fcitx5-config-qt \
+    fcitx5-frontend-gtk3 fcitx5-frontend-qt5"
 
 # Bind-mount /proc,/sys,/dev for the chroot. If the runner forbids mounts
 # (GitHub containers), fall back to proot (userspace chroot, no mounts).
@@ -115,15 +119,18 @@ INSTALL_CLAUDE='(npm install -g @anthropic-ai/claude-code 2>/dev/null || echo "[
 
 if [ "$MOUNTS_OK" = "1" ]; then
     echo "[edex] chroot apt preinstall (mounted)"
+    # `set -e` inside the chroot so a failing apt-get actually propagates: the
+    # claude CLI install is the last command and without it the chroot would
+    # return 0 even when the GUI stack failed to install (masked breakage).
     sudo -E chroot "$WORK/rootfs" /bin/bash -c \
-        "export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean; $INSTALL_CLAUDE" \
+        "set -e; export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean; $INSTALL_CLAUDE" \
         || { echo "ERROR: chroot apt install failed"; exit 1; }
     for m in /proc /sys /dev; do sudo umount "$WORK/rootfs$m" 2>/dev/null || true; done
 else
     echo "[edex] installing proot and using userspace chroot"
     sudo apt-get install -y proot >/dev/null 2>&1 || true
     proot -S "$WORK/rootfs" /bin/bash -c \
-        "export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean; $INSTALL_CLAUDE" \
+        "set -e; export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean; $INSTALL_CLAUDE" \
         || { echo "ERROR: proot apt install failed"; exit 1; }
 fi
 
@@ -153,7 +160,8 @@ fi
 # Bake in the offline speech-recognition model (sherpa-onnx, streaming Chinese
 # zipformer, int8) so voice input works with zero network at run time.
 echo "[edex] baking in offline ASR model (sherpa-onnx, Chinese streaming)"
-mkdir -p "$WORK/rootfs/opt/edex/models"
+# rootfs is root-owned (unsquashfs ran via sudo) — a plain mkdir trips set -e.
+sudo mkdir -p "$WORK/rootfs/opt/edex/models"
 curl -fsSL -o "$WORK/zh-asr.tar.bz2" \
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-multi-zh-hans-2023-12-12.tar.bz2" \
     || echo "[edex] WARN: ASR model download failed (best-effort)"
@@ -168,8 +176,12 @@ sudo cp "$EDEX_APPIMAGE" "$WORK/rootfs/opt/edex/eDEX-UI.AppImage"
 sudo chmod 755 "$WORK/rootfs/opt/edex/eDEX-UI.AppImage"
 for m in /proc /sys /dev; do sudo umount "$WORK/rootfs$m" 2>/dev/null || true; done
 sudo rm -f "$SQUASHFS"
-sudo mksquashfs "$WORK/rootfs" "$SQUASHFS" -comp zstd -b 256K -noappend >/dev/null
+df -h "$WORK" | tail -1
+# Keep the last few lines of mksquashfs output so a failure (e.g. disk full) is
+# visible in CI instead of swallowed by /dev/null. pipefail propagates the error.
+sudo mksquashfs "$WORK/rootfs" "$SQUASHFS" -comp zstd -b 256K -noappend 2>&1 | tail -4
 sudo rm -rf "$WORK/rootfs"
+df -h "$WORK" | tail -1
 # casper keeps the (uncompressed) size for the installer — refresh it if present
 if [ -f "$EXTRACT/casper/filesystem.size" ]; then
     du -sk "$SQUASHFS" | cut -f1 | sudo tee "$EXTRACT/casper/filesystem.size" >/dev/null
