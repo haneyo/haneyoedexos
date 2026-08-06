@@ -22,16 +22,24 @@ eDEX-OS is built on a heavily customized [eDEX-UI](https://github.com/GitSquared
 | **Native fullscreen** | Hit the fullscreen button and the app takes over the real screen **completely natively** (no more streaming). A subtle `◀ EDEX` button in the corner — or `Ctrl+Shift+Q` — drops you back to eDEX. |
 | **Embedded Claude Code (tab 3)** | The 3rd terminal tab is a dedicated Claude Code workspace. |
 | **Terminal + system monitoring** | Full-featured terminal emulator (tabs, colors, mouse, `curses`), live CPU/RAM/process/network monitoring, and a directory viewer that follows the terminal's CWD. |
-| **Deeply customized modules** | CyberPanel radar, mini music controller, media player, ENCOM-style globe, web-app panel, and a pure-code-drawn sci-fi screensaver / lock screen. |
+| **Deeply customized modules** | CyberPanel radar, mini music controller, media player, ENCOM-style globe, web-app panel, and a pure-code-drawn sci-fi lock screen (terminal vault + matrix-rain keypad). |
 | **Keyboard-operable UI** | Settings and panels navigate with arrow keys — designed for keyboard / gamepad-first operation. |
 
 ## 📸 Screenshots
+
+**Themes**
 
 ![Default theme](media/screenshot_default.png)
 
 ![Blade theme](media/screenshot_blade.png)
 
 ![Matrix theme](media/screenshot_matrix.png)
+
+**Lock screen** — two sci-fi modes: a terminal passcode vault and a fullscreen matrix-rain keypad
+
+![Terminal lock](media/screenshot_lock_code.png)
+
+![Matrix-rain lock](media/screenshot_lock_matrix.png)
 
 <details>
 <summary>Demo animation</summary>
