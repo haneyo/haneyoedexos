@@ -141,8 +141,8 @@ div.modal_popup table td {
    sidebar + scrollable pane hold their shape; flex column keeps the title,
    body, status line and the action-button row stacked. */
 div.modal_popup:has(#settingsEditor) {
-    width: 78vw;
-    max-width: 94vw;
+    width: 60vw;
+    max-width: 88vw;
     height: 64vh;
     max-height: 90vh;
     justify-content: flex-start;

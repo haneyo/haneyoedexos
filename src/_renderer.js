@@ -1370,6 +1370,7 @@ window.openSettings = async () => {
                 ${themes}
             </select>`, "settings.theme.help"),
             settingsRow("settings.termFontSize", `<input type="text" id="settingsEditor-termFontSize" value="${window.settings.termFontSize}">`, "settings.termFontSize.help"),
+            settingsRow("settings.shell", `<input type="text" id="settingsEditor-shell" value="${window.settings.shell}">`, "settings.shell.help"),
             settingsRow("settings.clockHours", `<select id="settingsEditor-clockHours">
                 <option>${(window.settings.clockHours === 12) ? "12" : "24"}</option>
                 <option>${(window.settings.clockHours === 12) ? "24" : "12"}</option>
@@ -1378,9 +1379,6 @@ window.openSettings = async () => {
                 <option>${window.settings.showKeyboard === true}</option>
                 <option>${window.settings.showKeyboard !== true}</option>
             </select>`, "settings.showKeyboard.help"),
-        ].join("") },
-        { id: "terminal", titleKey: "settings.cat.terminal", html: () => [
-            settingsRow("settings.shell", `<input type="text" id="settingsEditor-shell" value="${window.settings.shell}">`, "settings.shell.help"),
         ].join("") },
         { id: "sound", titleKey: "settings.cat.sound", html: () => [
             settingsRow("settings.audio", `<select id="settingsEditor-audio">
@@ -1394,10 +1392,6 @@ window.openSettings = async () => {
             </select>`, "settings.disableFeedbackAudio.help"),
         ].join("") },
         { id: "display", titleKey: "settings.cat.display", html: () => [
-            settingsRow("settings.allowWindowed", `<select id="settingsEditor-allowWindowed">
-                <option>${window.settings.allowWindowed}</option>
-                <option>${!window.settings.allowWindowed}</option>
-            </select>`, "settings.allowWindowed.help"),
             settingsRow("settings.nointro", `<select id="settingsEditor-nointro">
                 <option>${window.settings.nointro}</option>
                 <option>${!window.settings.nointro}</option>
@@ -1458,7 +1452,6 @@ window.openSettings = async () => {
             settingsRow("settings.appMonitor.appImageDirs", `<input type="text" id="settingsEditor-appMonitor-appImageDirs" value="${(window.settings.appMonitor || {}).appImageDirs || ''}">`, "settings.appMonitor.appImageDirs.help"),
         ].join("") },
         { id: "claude", titleKey: "settings.cat.claude", html: () => [
-            section("settings.section.claude"),
             settingsRow("settings.claude.enabled", `<select id="settingsEditor-claude-enabled">
                 <option>${(window.settings.claude || {}).enabled}</option>
                 <option>${!(window.settings.claude || {}).enabled}</option>
@@ -1668,7 +1661,6 @@ window.writeSettingsFile = () => {
     s.clockHours = Number(document.getElementById("settingsEditor-clockHours").value);
     s.nointro = (document.getElementById("settingsEditor-nointro").value === "true");
     s.nocursor = (document.getElementById("settingsEditor-nocursor").value === "true");
-    s.allowWindowed = (document.getElementById("settingsEditor-allowWindowed").value === "true");
     s.hideDotfiles = (document.getElementById("settingsEditor-hideDotfiles").value === "true");
     s.fsListView = (document.getElementById("settingsEditor-fsListView").value === "true");
     s.screensaverEnabled = (document.getElementById("settingsEditor-screensaverEnabled").value === "true");
