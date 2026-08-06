@@ -147,7 +147,6 @@ jobs:
       # per-version path and a stable `latest/` path are published; the latter
       # backs the README download link. Skipped when the secrets are unset.
       - name: Publish ISO to Aliyun OSS (China mirror)
-        if: ${{ secrets.ALIYUN_OSS_BUCKET != '' && secrets.ALIYUN_OSS_REGION != '' }}
         env:
           OSS_AK_ID: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_ID }}
           OSS_AK_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
@@ -156,6 +155,13 @@ jobs:
           OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
         run: |
           set -euo pipefail
+          # `secrets` cannot be read in an `if:` condition (invalid workflow),
+          # so guard in shell instead: unset secrets are empty and just skip.
+          if [ -z "$OSS_AK_ID" ] || [ -z "$OSS_AK_SECRET" ] || \
+             [ -z "$OSS_ENDPOINT" ] || [ -z "$OSS_REGION" ] || [ -z "$OSS_BUCKET" ]; then
+            echo "ALIYUN_OSS_* secrets not configured — skipping China mirror."
+            exit 0
+          fi
           TAG="${{ github.ref_name }}"
           ISO="eDEX-OS-$TAG.iso"
 
