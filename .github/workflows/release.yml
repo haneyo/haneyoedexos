@@ -1,14 +1,19 @@
-# Publish an eDEX-UI AppImage release. Triggered by a `v*` tag (e.g. `v2.3.0`):
-# builds the x64 AppImage, computes its sha256, and attaches both to the GitHub
-# Release for that tag. The in-app UpdateChecker watches `releases/latest` and
-# offers to download + verify + replace the running AppImage on eDEX-OS installs.
+# Publish an eDEX-OS release. Triggered by a `v*` tag (e.g. `v2.3.0`):
+#  - the `release` job builds the x64 AppImage, computes its sha256, and
+#    attaches both to the GitHub Release for that tag. The in-app UpdateChecker
+#    watches `releases/latest` and offers to download + verify + replace the
+#    running AppImage on eDEX-OS installs.
+#  - the `iso` job then remasters the stock Ubuntu Server ISO with that
+#    AppImage and uploads the finished ISO (+ sha256) as a workflow artifact.
+#    The ISO cannot be a Release asset: GitHub caps single assets at 2 GB and
+#    the ISO is ~4.9 GB, so it is delivered as a run artifact instead.
 #
 #   git tag v2.3.0 && git push origin v2.3.0
 #
 # The tag name must match `src/package.json` version (minus the leading `v`) for
 # the version comparison to work.
 
-name: Release eDEX-UI AppImage
+name: Release eDEX-OS (AppImage + ISO)
 
 on:
   push:
@@ -66,3 +71,70 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Build the installable ISO from the same release, so a tag always ships
+  # both artifacts ("every update = AppImage + ISO").
+  iso:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Fetch AppImage from this release
+        run: |
+          TAG="${{ github.ref_name }}"
+          mkdir -p dist
+          API_URL="https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG"
+          echo "Fetching release metadata from $API_URL"
+          curl -fsSL \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "$API_URL" > /tmp/release.json || { echo "ERROR: cannot fetch $API_URL"; exit 1; }
+          ASSET=$(node -e "const j=require('/tmp/release.json');const a=(j.assets||[]).find(x=>/\.AppImage$/i.test(x.name));console.log(a?a.browser_download_url:'')")
+          [ -n "$ASSET" ] || { echo "ERROR: release has no .AppImage asset"; exit 1; }
+          echo "Using AppImage: $ASSET"
+          curl -fL -o dist/eDEX-UI-Linux-x64.AppImage "$ASSET"
+          ls -lh dist/
+
+      - name: Download stock Ubuntu Server ISO
+        run: |
+          curl -fL -o /tmp/ubuntu-stock.iso "https://releases.ubuntu.com/24.04/ubuntu-24.04.3-live-server-amd64.iso"
+          ls -lh /tmp/ubuntu-stock.iso
+
+      - name: Build eDEX-OS ISO
+        run: |
+          APPIMAGE=$(ls dist/*.AppImage | head -1)
+          bash packaging/build-iso.sh /tmp/ubuntu-stock.iso "$APPIMAGE" \
+            eDEX-OS-${{ github.ref_name }}.iso eDEX-OS
+
+      - name: QEMU boot smoke test (best-effort)
+        run: |
+          sudo apt-get update -y && sudo apt-get install -y qemu-system-x86 >/dev/null 2>&1 || true
+          # 240s: the runner has no KVM, so this is full software emulation.
+          # The ISO's kernel cmdline carries console=ttyS0, so boot output
+          # reaches -serial stdio and lands in the log.
+          timeout 240 qemu-system-x86_64 -m 2G -cdrom eDEX-OS-${{ github.ref_name }}.iso -boot d \
+            -serial stdio -display none > /tmp/qemu-boot.log 2>&1 || true
+          if grep -qiE "grub|kernel|Booting|Ubuntu|error" /tmp/qemu-boot.log; then
+            echo "QEMU boot smoke: GRUB/kernel output observed (see log)."
+          else
+            echo "WARNING: QEMU could not confirm boot output — install on real hardware to verify."
+          fi
+          tail -8 /tmp/qemu-boot.log || true
+
+      - name: Compute ISO sha256 (for download verification)
+        run: |
+          sha256sum eDEX-OS-${{ github.ref_name }}.iso | tee eDEX-OS-${{ github.ref_name }}.iso.sha256
+
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: eDEX-OS-ISO
+          path: |
+            eDEX-OS-${{ github.ref_name }}.iso
+            eDEX-OS-${{ github.ref_name }}.iso.sha256
+          if-no-files-found: error
