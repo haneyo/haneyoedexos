@@ -183,6 +183,8 @@ jobs:
           "$OSSUTIL" cp "$ISO" "oss://$OSS_BUCKET/edex-os/latest/eDEX-OS-latest.iso" "${AUTH[@]}" "${RETRY[@]}"
           "$OSSUTIL" cp "$ISO.sha256" "oss://$OSS_BUCKET/edex-os/latest/eDEX-OS-latest.iso.sha256" "${AUTH[@]}"
 
-          echo "China mirror ready:"
-          echo "  ISO   https://$OSS_BUCKET.$OSS_ENDPOINT/edex-os/latest/eDEX-OS-latest.iso"
-          echo "  SHA   https://$OSS_BUCKET.$OSS_ENDPOINT/edex-os/latest/eDEX-OS-latest.iso.sha256"
+          # Log only the object paths — never the full public URL (bucket +
+          # endpoint would let anyone reconstruct the download link).
+          echo "China mirror upload complete:"
+          echo "  per-version:  edex-os/$TAG/eDEX-OS-$TAG.iso (+ .sha256)"
+          echo "  latest:       edex-os/latest/eDEX-OS-latest.iso (+ .sha256)"
