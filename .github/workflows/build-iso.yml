@@ -106,14 +106,17 @@ jobs:
       - name: QEMU boot smoke test (best-effort)
         run: |
           sudo apt-get update -y && sudo apt-get install -y qemu-system-x86 >/dev/null 2>&1 || true
-          timeout 90 qemu-system-x86_64 -m 2G -cdrom eDEX-OS-${{ github.ref_name }}.iso -boot d \
+          # 240s: the runner has no KVM, so this is full software emulation.
+          # The ISO's kernel cmdline carries console=ttyS0, so boot output
+          # reaches -serial stdio and lands in the log.
+          timeout 240 qemu-system-x86_64 -m 2G -cdrom eDEX-OS-${{ github.ref_name }}.iso -boot d \
             -serial stdio -display none > /tmp/qemu-boot.log 2>&1 || true
           if grep -qiE "grub|kernel|Booting|Ubuntu|error" /tmp/qemu-boot.log; then
             echo "QEMU boot smoke: GRUB/kernel output observed (see log)."
           else
             echo "WARNING: QEMU could not confirm boot output — install on real hardware to verify."
           fi
-          tail -5 /tmp/qemu-boot.log || true
+          tail -8 /tmp/qemu-boot.log || true
 
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4

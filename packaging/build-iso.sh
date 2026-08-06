@@ -195,10 +195,12 @@ cp "$REPO_DIR/packaging/install/install-edex.sh"   "$EXTRACT/nocloud/install-ede
 
 echo "[edex] enabling autoinstall on the kernel command line"
 # Append  autoinstall ds=nocloud\;s=/cdrom/nocloud/  just before the '---'
-# separator on every /casper/vmlinuz line of the GRUB configs.
+# separator on every /casper/vmlinuz line of the GRUB configs. console=ttyS0 is
+# added too so the installer's kernel output reaches the serial port — needed
+# for headless installs and for the CI QEMU boot smoke test.
 for cfg in boot/grub/grub.cfg boot/grub/loopback.cfg; do
     if [[ -f "$EXTRACT/$cfg" ]]; then
-        sed -i '/casper\/vmlinuz/ s/ ---/ autoinstall ds=nocloud\\;s=\/cdrom\/nocloud\/ ---/' "$EXTRACT/$cfg"
+        sed -i '/casper\/vmlinuz/ s/ ---/ autoinstall ds=nocloud\\;s=\/cdrom\/nocloud\/ console=ttyS0,115200n8 ---/' "$EXTRACT/$cfg"
     fi
 done
 grep -q "autoinstall" "$EXTRACT/boot/grub/grub.cfg" || { echo "ERROR: autoinstall not injected into grub.cfg"; exit 1; }
