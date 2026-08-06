@@ -1,0 +1,54 @@
+# One-shot connectivity test for the Aliyun OSS mirror.
+#
+# Run manually from the Actions tab ("Run workflow"): it installs ossutil,
+# uploads a tiny probe file to the bucket, then downloads it back with an
+# anonymous GET. Success proves the 4 ALIYUN_OSS_* secrets are correct, the
+# endpoint matches the bucket's region, and the bucket ACL is 公共读 (public
+# read). Delete this file once the mirror is proven — it is not part of the
+# release pipeline.
+name: Test OSS upload
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      OSS_AK_ID: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_ID }}
+      OSS_AK_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
+      OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
+      OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
+    steps:
+      - name: Install ossutil
+        run: |
+          curl -fsSL -o /tmp/ossutil.zip https://gosspublic.alicdn.com/ossutil/v2/2.3.0/ossutil-2.3.0-linux-amd64.zip
+          unzip -o /tmp/ossutil.zip -d /tmp/ossutil >/dev/null
+          OSSUTIL=$(find /tmp/ossutil -type f -name ossutil | head -1)
+          chmod +x "$OSSUTIL"
+          echo "OSSUTIL=$OSSUTIL" >> "$GITHUB_ENV"
+
+      - name: Upload probe file
+        run: |
+          echo "edex-os oss probe $(date -u +%Y-%m-%dT%H:%M:%SZ)" > /tmp/probe.txt
+          echo "PROBE=edex-os/_probe-$(date +%s).txt" >> "$GITHUB_ENV"
+          "$OSSUTIL" cp /tmp/probe.txt "oss://$OSS_BUCKET/$PROBE" \
+            -e "$OSS_ENDPOINT" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET"
+          echo "Uploaded oss://$OSS_BUCKET/$PROBE"
+
+      - name: Download it back anonymously (verifies public read)
+        run: |
+          URL="https://$OSS_BUCKET.$OSS_ENDPOINT/$PROBE"
+          echo "Anonymous GET $URL"
+          curl -fsSL -o /tmp/probe-back.txt "$URL" || {
+            echo "::error::Anonymous download failed (got HTTP 403?) — check that bucket '$OSS_BUCKET' ACL is set to 公共读 (public read)."
+            exit 1
+          }
+          diff /tmp/probe.txt /tmp/probe-back.txt
+          echo "✅ OK: OSS upload + public download verified"
+
+      - name: Clean up probe file
+        if: always()
+        run: |
+          "$OSSUTIL" rm "oss://$OSS_BUCKET/$PROBE" \
+            -e "$OSS_ENDPOINT" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET" || true

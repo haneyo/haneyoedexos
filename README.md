@@ -75,9 +75,24 @@ npm run prebuild-linux
 bash packaging/build-iso-local.sh
 ```
 
+## ⬇️ Downloads
+
+The installable ISO is ~4.9 GB. Pick whichever link is faster for you:
+
+- **China mirror (Aliyun OSS)** — fast direct link in mainland China:
+  `https://***REMOVED***/edex-os/latest/eDEX-OS-latest.iso`
+  (plus its `.sha256` next to it)
+- **GitHub Actions artifact** — the `eDEX-OS-ISO` artifact on the [release run](https://github.com/haneyo/haneyoedexos/actions/workflows/release.yml) for the version you want. Works everywhere but can be slow from China, and artifacts expire after 90 days.
+
+Verify the download matches the checksum:
+
+```bash
+sha256sum -c eDEX-OS-latest.iso.sha256
+```
+
 ## 💽 Installing on a laptop
 
-1. Download the `eDEX-OS-ISO` artifact from GitHub Actions, or build locally with `build-iso-local.sh`.
+1. Grab the ISO from the [Downloads](#-downloads) section above, or build locally with `build-iso-local.sh`.
 2. Flash a USB stick: `dd if=eDEX-OS-*.iso of=/dev/sdX bs=4M status=progress` (or balenaEtcher / Rufus).
 3. Boot the laptop from USB and run through the Ubuntu-style installer (pick language / partition / create a user — everything else is automated).
 4. Reboot → **auto-login straight into fullscreen eDEX**.
