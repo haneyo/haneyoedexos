@@ -28,17 +28,17 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Cache npm + Electron
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.npm
             ~/.cache/electron
           key: ${{ runner.os }}-edex-${{ hashFiles('**/package-lock.json') }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -63,14 +63,13 @@ jobs:
           cat "$APPIMAGE.sha256"
 
       - name: Attach assets to the release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/*.AppImage
             dist/*.AppImage.sha256
           generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
   # Build the installable ISO from the same release, so a tag always ships
   # both artifacts ("every update = AppImage + ISO").
@@ -78,9 +77,9 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -131,7 +130,7 @@ jobs:
           sha256sum eDEX-OS-${{ github.ref_name }}.iso | tee eDEX-OS-${{ github.ref_name }}.iso.sha256
 
       - name: Upload ISO artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: eDEX-OS-ISO
           path: |

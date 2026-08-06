@@ -39,19 +39,19 @@ jobs:
   build-iso:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Only the `source` branch compiles anything; the release branches just
       # download an asset, so the npm cache is cheap to keep unconditional.
       - name: Cache npm + Electron
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.npm
             ~/.cache/electron
           key: ${{ runner.os }}-edex-${{ hashFiles('**/package-lock.json') }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -119,7 +119,7 @@ jobs:
           tail -8 /tmp/qemu-boot.log || true
 
       - name: Upload ISO artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: eDEX-OS-ISO
           path: eDEX-OS-${{ github.ref_name }}.iso
