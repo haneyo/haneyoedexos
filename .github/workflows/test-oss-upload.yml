@@ -2,10 +2,10 @@
 #
 # Run manually from the Actions tab ("Run workflow"): it installs ossutil,
 # uploads a tiny probe file to the bucket, then downloads it back with an
-# anonymous GET. Success proves the 4 ALIYUN_OSS_* secrets are correct, the
-# endpoint matches the bucket's region, and the bucket ACL is 公共读 (public
-# read). Delete this file once the mirror is proven — it is not part of the
-# release pipeline.
+# anonymous GET. The "Diagnose" step prints the endpoint/bucket (base64, so
+# the secret masking doesn't hide it) plus the bucket listing and the raw
+# anonymous GET response, so a 404/403 can be told apart (NoSuchBucket vs
+# NoSuchKey vs AccessDenied). Delete this file once the mirror is proven.
 name: Test OSS upload
 
 on:
@@ -35,14 +35,26 @@ jobs:
           echo "PROBE=edex-os/_probe-$(date +%s).txt" >> "$GITHUB_ENV"
           "$OSSUTIL" cp /tmp/probe.txt "oss://$OSS_BUCKET/$PROBE" \
             -e "$OSS_ENDPOINT" --region "$OSS_REGION" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET"
-          echo "Uploaded oss://$OSS_BUCKET/$PROBE"
 
-      - name: Download it back anonymously (verifies public read)
+      - name: Diagnose (endpoint / listing / raw GET)
+        run: |
+          echo "endpoint_b64=$(printf %s "$OSS_ENDPOINT" | base64)"
+          echo "bucket_b64=$(printf %s "$OSS_BUCKET" | base64)"
+          echo "region=$OSS_REGION"
+          URL="https://$OSS_BUCKET.$OSS_ENDPOINT/$PROBE"
+          echo "url_b64=$(printf %s "$URL" | base64)"
+          echo "--- ossutil ls oss://$OSS_BUCKET/edex-os/ ---"
+          "$OSSUTIL" ls "oss://$OSS_BUCKET/edex-os/" \
+            -e "$OSS_ENDPOINT" --region "$OSS_REGION" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET" || true
+          echo "--- raw anonymous GET (status + body) ---"
+          curl -s -i --max-time 15 "$URL" | head -30 || true
+
+      - name: Verify public download
         run: |
           URL="https://$OSS_BUCKET.$OSS_ENDPOINT/$PROBE"
           echo "Anonymous GET $URL"
           curl -fsSL -o /tmp/probe-back.txt "$URL" || {
-            echo "::error::Anonymous download failed (got HTTP 403?) — check that bucket '$OSS_BUCKET' ACL is set to 公共读 (public read)."
+            echo "::error::Anonymous download failed — see the 'Diagnose' step for the raw OSS error code (NoSuchBucket / NoSuchKey / AccessDenied)."
             exit 1
           }
           diff /tmp/probe.txt /tmp/probe-back.txt
