@@ -49,17 +49,8 @@ class LocationGlobe {
             placeholder.remove();
             container.append(this.globe.domElement);
 
-            // Clicking the globe opens the default browser (map of the current
-            // network location when known, otherwise the browser home).
-            this.globe.domElement.addEventListener("click", () => {
-                let url = "https://www.google.com";
-                if (this.lastgeo && this.lastgeo.latitude && this.lastgeo.longitude) {
-                    url = `https://www.google.com/maps?q=${this.lastgeo.latitude},${this.lastgeo.longitude}`;
-                }
-                try {
-                    require("electron").shell.openExternal(url);
-                } catch (e) { /* non-fatal */ }
-            });
+            // The globe's click now opens the network-connections detail (wired in
+            // _renderer.js), so the old jump-to-Google-Maps is removed.
 
             // Init animations
             this._animate = () => {

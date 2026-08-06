@@ -1,4 +1,5 @@
 div#mod_netstat {
+    position: relative;
     border-top: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
     font-family: var(--font_main_light);
     letter-spacing: 0.092vh;
@@ -11,8 +12,9 @@ div#mod_netstat {
 div#mod_netstat::before {
     content: "";
     border-left: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
-    align-self: flex-start;
-    position: relative;
+    /* Absolute so the corner ticks don't participate in the flex row (they'd
+       otherwise shrink #mod_netstat_inner and pull its borders off the edge). */
+    position: absolute;
     left: -0.092vh;
     top: -1.111vh;
     height: 0.833vh;
@@ -21,10 +23,17 @@ div#mod_netstat::before {
 div#mod_netstat::after {
     content: "";
     border-right: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
-    position: relative;
+    position: absolute;
     right: -0.092vh;
     top: -1.111vh;
     height: 0.833vh;
+}
+
+/* The inner wrapper is a flex item of #mod_netstat; without an explicit
+   width it shrinks to its content, so its horizontal borders (location row,
+   forecast divider) stop short of the module's right edge. Force it to fill. */
+div#mod_netstat_inner {
+    width: 100%;
 }
 
 div#mod_netstat_inner > h1:first-child {
@@ -35,8 +44,9 @@ div#mod_netstat_inner > h1:first-child {
 }
 
 /* Header subtitle (the location) - keep it on the header line, right-aligned */
-/* ---- Manual location picker (province / city / district, theme dropdowns) ---- */
+/* ---- Location: AUTO + current place (click to open the search editor) ---- */
 div#mod_netstat_weather_loc {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 0.4vh;
@@ -105,7 +115,7 @@ div.mod_loc_opt.mod_loc_opt_active {
     color: var(--color_light_black);
 }
 
-div#mod_netstat_weather_loc_status {
+span#mod_netstat_weather_loc_status {
     font-size: 0.75vh;
     opacity: 0.5;
     white-space: nowrap;
@@ -131,13 +141,13 @@ div#mod_netstat_weather_main_temp {
 }
 
 #mod_netstat_weather_icon {
-    /* Fixed box so the "—" placeholder and the 5.4vh SVG occupy the same
-       height - the module must not grow when the weather icon arrives. */
+    /* Fixed box so the "—" placeholder and the SVG occupy the same height -
+       the module must not grow when the weather icon arrives. */
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 5.4vh;
-    height: 5.4vh;
+    width: 3.6vh;
+    height: 3.6vh;
     line-height: 1;
     opacity: 0.92;
 }
@@ -145,12 +155,12 @@ div#mod_netstat_weather_main_temp {
 /* Theme-colored stroke SVG icons (drawn with currentColor) */
 #mod_netstat_weather_icon svg {
     display: block;
-    width: 5.4vh;
-    height: 5.4vh;
+    width: 3.6vh;
+    height: 3.6vh;
 }
 
-div#mod_netstat_weather_temp {
-    font-size: 6.4vh;
+span#mod_netstat_weather_temp {
+    font-size: 4.4vh;
     line-height: 1;
     font-family: var(--font_main_light);
     letter-spacing: 0;
@@ -158,9 +168,13 @@ div#mod_netstat_weather_temp {
 
 div.mod_netstat_fx span.mod_weather_icon svg {
     display: block;
-    width: 1.5vh;
-    height: 1.5vh;
+    width: 2vh;
+    height: 2vh;
     margin: 0 auto;
+    /* The SVGs are authored for a 5.4vh hero icon; at 2vh the 1.5 stroke
+       shrinks to a ~1px hairline and tiny details (e.g. the sun in the
+       partly-cloudy glyph) vanish. A thicker stroke keeps the glyph legible. */
+    stroke-width: 2.2;
 }
 
 div#mod_netstat_weather_meta {
@@ -175,20 +189,20 @@ div#mod_netstat_weather_meta h2 {
     margin: 0vh;
 }
 
-div#mod_netstat_weather_cond {
-    font-size: 1.35vh;
+h2#mod_netstat_weather_cond {
+    font-size: 1.7vh;
     opacity: 0.85;
     white-space: nowrap;
 }
 
-div#mod_netstat_weather_detail {
-    font-size: 0.9vh;
+h2#mod_netstat_weather_detail {
+    font-size: 1.15vh;
     opacity: 0.5;
     white-space: nowrap;
 }
 
-div#mod_netstat_weather_range {
-    font-size: 0.9vh;
+h2#mod_netstat_weather_range {
+    font-size: 1.15vh;
     opacity: 0.6;
     white-space: nowrap;
 }
@@ -291,4 +305,74 @@ button.mod_loc_auto.mod_loc_auto_active {
     color: rgb(var(--color_r), var(--color_g), var(--color_b));
     font-weight: bold;
     box-shadow: 0 0 0.8vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.6);
+}
+
+/* Current-place button: clicking opens the search editor */
+button.mod_loc_cur {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.06);
+    color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.85);
+    border: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+    border-radius: 0;
+    font-family: var(--font_main_light);
+    font-size: 0.92vh;
+    letter-spacing: 0.04vh;
+    padding: 0.22vh 0.35vh;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+button.mod_loc_cur:hover { background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.16); }
+
+/* Search editor: input + result list, dropped below the location row */
+.mod_loc_editor {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 300;
+    background: #0a0f14;
+    border: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    box-shadow: 0 0 1.5vh rgba(0, 0, 0, 0.6);
+    padding: 0.4vh;
+}
+#mod_netstat_weather_search {
+    width: 100%;
+    box-sizing: border-box;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.07);
+    border: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 1vh;
+    letter-spacing: 0.05vh;
+    padding: 0.3vh 0.4vh;
+    outline: none;
+}
+#mod_netstat_weather_search:focus { border-color: rgb(var(--color_r), var(--color_g), var(--color_b)); }
+.mod_loc_results { margin-top: 0.3vh; max-height: 16vh; overflow-y: auto; }
+.mod_loc_status_line {
+    color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    font-size: 0.9vh;
+    letter-spacing: 0.1vh;
+    padding: 0.3vh 0.2vh;
+}
+.mod_loc_result {
+    padding: 0.35vh 0.4vh;
+    cursor: pointer;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    display: flex;
+    flex-direction: column;
+    gap: 0.1vh;
+}
+.mod_loc_result:hover { background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.15); }
+.mod_loc_result b { font-weight: normal; font-size: 1.05vh; }
+.mod_loc_result span {
+    font-size: 0.85vh;
+    opacity: 0.55;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }

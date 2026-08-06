@@ -21,13 +21,32 @@ DESKTOP
 cat > /usr/local/sbin/edex-session.sh <<'SESH'
 #!/bin/bash
 # Runs inside the lightdm X session. openbox is the WM (no decorations — kiosk
-# look), then eDEX takes the whole screen.
+# look), Fcitx5 + Rime (小狼毫) are started for Chinese input, then eDEX takes
+# the whole screen. On the FIRST boot the one-time setup wizard runs first
+# (root password + unlock PIN); the marker file skips it on later boots.
 export DISPLAY=:0
+export GTK_IM_MODULE=fcitx
+export QT_IM_MODULE=fcitx
+export XMODIFIERS=@im=fcitx
 openbox --replace >/dev/null 2>&1 &
+fcitx5 -d >/dev/null 2>&1 &
 sleep 1
+if [ ! -f /etc/edex-setup-done ]; then
+    xterm -geometry 96x28 -T "eDEX-OS · SYSTEM INITIALIZATION" -e /usr/local/sbin/edex-first-setup.sh
+fi
 exec /opt/edex/eDEX-UI.AppImage --no-sandbox
 SESH
 chmod +x /usr/local/sbin/edex-session.sh
+
+# Fcitx5 as the system input-method framework (Rime/小狼毫 engine), so any
+# GTK/Qt app (including the ones in the nested virtual displays) can type
+# Chinese. The IM env is exported globally so Xvfb-launched apps inherit it.
+echo "[edex] Fcitx5 input method (Rime engine) + global IM env"
+cat > /etc/environment <<'IMENV'
+GTK_IM_MODULE=fcitx
+QT_IM_MODULE=fcitx
+XMODIFIERS=@im=fcitx
+IMENV
 
 echo "[edex] openbox config (undecorated everywhere)"
 mkdir -p /etc/xdg/openbox
@@ -163,5 +182,79 @@ SETTINGS
 # fix the seeded cwd to the real home dir
 sed -i "s|/home/edex|/home/$U|" "/home/$U/.config/eDEX-UI/settings.json"
 chown -R "$U":"$U" "/home/$U/.config"
+
+# First-boot setup wizard. The autoinstall's late-commands run in the chroot
+# with no interactive stdin, so the root password + unlock PIN cannot be asked
+# for here — edex-session.sh launches this wizard once (in an xterm) on the
+# first boot, before eDEX starts. It sets the root password and writes the
+# numeric PIN into settings.json's lockCode, then marks the system configured.
+echo "[edex] first-boot setup wizard (root password + unlock PIN)"
+cat > /usr/local/sbin/edex-first-setup.sh <<'WIZARD'
+#!/usr/bin/env bash
+# eDEX-OS first-boot setup — runs once (before eDEX) in the autologin X session.
+# Sets the root password and the numeric unlock PIN (4-8 digits), writes the PIN
+# into eDEX's settings.json as lockCode so the idle lock/screensaver unlocks
+# with it, then marks the system configured. A later boot skips straight to eDEX.
+set -euo pipefail
+
+if [ -f /etc/edex-setup-done ]; then
+    exit 0
+fi
+
+echo
+echo "================================================================"
+echo "    eDEX-OS · SYSTEM INITIALIZATION"
+echo "    设置 root 密码 和 解锁 PIN(两者都输入两次以确认)"
+echo "================================================================"
+echo
+
+# --- root password (any non-empty value, entered twice) ---
+while :; do
+    read -sp "设置 root 密码: " R1; echo
+    read -sp "再次输入确认:   " R2; echo
+    if [ -n "$R1" ] && [ "$R1" = "$R2" ]; then
+        break
+    fi
+    echo "  两次输入不一致或为空,请重试。"
+done
+echo "root:$R1" | sudo chpasswd
+unset R1 R2
+
+# --- unlock PIN (4-8 digits, entered twice) ---
+while :; do
+    read -sp "设置解锁 PIN(4-8 位数字): " P1; echo
+    read -sp "再次输入确认:               " P2; echo
+    if [[ "$P1" =~ ^[0-9]{4,8}$ ]] && [ "$P1" = "$P2" ]; then
+        break
+    fi
+    if ! [[ "$P1" =~ ^[0-9]{4,8}$ ]]; then
+        echo "  PIN 必须是 4-8 位数字,请重试。"
+    else
+        echo "  两次输入不一致,请重试。"
+    fi
+done
+
+# --- write the PIN into eDEX's settings.json, keeping everything else ---
+SET="$HOME/.config/eDEX-UI/settings.json"
+mkdir -p "$(dirname "$SET")"
+[ -f "$SET" ] || echo '{}' > "$SET"
+python3 - "$SET" "$P1" <<'PY'
+import json, sys
+p, pin = sys.argv[1], sys.argv[2]
+d = json.load(open(p))
+d["lockCode"] = pin
+d["lockOnIdle"] = True
+json.dump(d, open(p, "w"), indent=4, ensure_ascii=False)
+PY
+unset P1 P2
+
+sudo touch /etc/edex-setup-done
+
+echo
+echo "  ✓ 系统初始化完成。即将启动 eDEX。"
+read -rp "  按回车继续…" _ || true
+exit 0
+WIZARD
+chmod +x /usr/local/sbin/edex-first-setup.sh
 
 echo "[edex] done"

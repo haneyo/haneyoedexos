@@ -662,6 +662,118 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
 }
 .browser_webview,
 .webapp_webview,
+/* Corner button stack (mic + IME) pinned flush to the terminal/content area's
+   bottom-right corner, visible on every tab */
+#edex_corner_btns {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    z-index: 4;
+    display: flex;
+    flex-direction: row;
+    gap: 0.4vh;
+    align-items: center;
+}
+.appmonitor_ime_btn {
+    min-width: 3.4vh;
+    height: 2.8vh;
+    padding: 0 0.6vh;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(5, 8, 13, 0.75);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 1.2vh;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity .2s, background .2s;
+}
+.appmonitor_ime_btn:hover {
+    opacity: 1;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.25);
+}
+.appmonitor_voice_btn .voice_icon { width: 1.5vh; height: 1.5vh; display: block; }
+.appmonitor_voice_btn.voice_recording {
+    background: rgba(224, 27, 36, 0.3);
+    color: #ff6b6b;
+    border-color: #e01b24;
+    opacity: 1;
+    animation: voice_rec_pulse 1s ease-in-out infinite;
+}
+/* During recording the mic icon is replaced by an animated equalizer (five
+   bars), a small sci-fi "listening" readout. */
+.appmonitor_voice_btn .voice_eq { display: none; }
+.appmonitor_voice_btn.voice_recording .voice_icon { display: none; }
+.appmonitor_voice_btn.voice_recording .voice_eq {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 0.18vh;
+    height: 1.6vh;
+}
+.appmonitor_voice_btn .voice_eq i {
+    width: 0.35vh;
+    background: currentColor;
+    border-radius: 0.1vh;
+    animation: voice_bar 0.8s ease-in-out infinite;
+}
+.appmonitor_voice_btn .voice_eq i:nth-child(1) { animation-delay: 0s; }
+.appmonitor_voice_btn .voice_eq i:nth-child(2) { animation-delay: 0.15s; }
+.appmonitor_voice_btn .voice_eq i:nth-child(3) { animation-delay: 0.3s; }
+.appmonitor_voice_btn .voice_eq i:nth-child(4) { animation-delay: 0.45s; }
+.appmonitor_voice_btn .voice_eq i:nth-child(5) { animation-delay: 0.6s; }
+@keyframes voice_bar {
+    0%, 100% { height: 0.6vh; }
+    50% { height: 1.6vh; }
+}
+.appmonitor_voice_btn.voice_disabled { opacity: 0.3; cursor: not-allowed; }
+
+/* ---- Module detail/action modals (CLI output + action menus) ---- */
+.mod_cmd_out {
+    max-height: 34vh;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    font-size: 1.05vh;
+    line-height: 1.5;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    background: rgba(5, 8, 13, 0.5);
+    border: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.25);
+    padding: 0.8vh;
+    /* CLI output (df / lsblk / ps / free …) is column-aligned with spaces, so
+       it must render in a monospace font or the columns fall out of line. */
+    font-family: var(--font_mono), var(--font_main_light);
+}
+.mod_menu { display: flex; flex-direction: column; gap: 0.5vh; }
+.mod_menu button {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.08);
+    border: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 1.15vh;
+    letter-spacing: 0.1em;
+    padding: 0.6vh 1vh;
+    cursor: pointer;
+    text-align: left;
+}
+.mod_menu button:hover { background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.2); }
+.mod_menu button.mod_menu_danger { border-color: #e01b24; color: #ff6b6b; }
+.mod_menu button.mod_menu_danger:hover { background: rgba(224, 27, 36, 0.3); }
+.mod_cmd_warn { color: #ff6b6b; font-size: 1vh; margin: 0 0 0.8vh; }
+.mod_menu input, .mod_menu select {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.07);
+    border: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 1.1vh;
+    padding: 0.4vh 0.6vh;
+}
+@keyframes voice_rec_pulse {
+    0%, 100% { box-shadow: 0 0 0.4vh rgba(224, 27, 36, 0.6); }
+    50% { box-shadow: 0 0 1.2vh rgba(224, 27, 36, 0.9); }
+}
+
 .appmonitor_webview {
     position: absolute;
     /* Bleed out past the shell's padding so the page fills the whole frame... */
@@ -723,6 +835,11 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
     align-items: center;
     gap: 0.8vh;
     padding: 0.6vh 1vh;
+    /* fixed row height so CJK names (taller glyphs) and Latin names render at
+       the same row height */
+    height: 3.6vh;
+    box-sizing: border-box;
+    overflow: hidden;
     color: rgb(var(--color_r), var(--color_g), var(--color_b));
     cursor: pointer;
     font-size: 1.2vh;
@@ -777,6 +894,57 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
     padding: 0.2vh 0.4vh;
     border-radius: 0.2vh;
     opacity: 0.75;
+}
+/* Fixed-width icon column so app names line up whether or not a row has an
+   icon, plus the reserved running-dot slot so names never shift when a dot
+   appears or disappears. */
+.appmonitor_icon_slot {
+    flex: 0 0 auto;
+    width: 2.6vh;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.appmonitor_icon_ph {
+    width: 2.2vh;
+    height: 2.2vh;
+    opacity: 0.65;
+}
+.appmonitor_name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.appmonitor_dot_slot {
+    flex: 0 0 auto;
+    width: 1.6vh;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.appmonitor_dot {
+    flex: 0 0 auto;
+    width: 1.1vh;
+    height: 1.1vh;
+    border-radius: 50%;
+    background: #57e389;                       /* running = green */
+    box-shadow: 0 0 0.6vh rgba(87, 227, 137, 0.7);
+    animation: appmonitor_dot_pulse 1.6s ease-in-out infinite;
+}
+.appmonitor_dot.appmonitor_dot_starting {
+    background: #f6d32d;                       /* starting = amber, faster pulse */
+    box-shadow: 0 0 0.6vh rgba(246, 211, 45, 0.7);
+    animation-duration: 0.8s;
+}
+.appmonitor_dot.appmonitor_dot_exited {
+    background: #e01b24;                       /* exited / crashed = red, solid */
+    box-shadow: 0 0 0.6vh rgba(224, 27, 36, 0.7);
+    animation: none;
+}
+@keyframes appmonitor_dot_pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
 }
 .appmonitor_add {
     display: flex;
@@ -962,6 +1130,48 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
     display: flex; align-items: center; justify-content: center;
 }
 #lock_canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+/* code-mode terminal lock: full-screen blocking overlay + command-line panel.
+   Only the passcode terminal, the clock and the on-screen keyboard (all raised
+   above the block) stay interactive while locked. */
+#lock_block {
+    position: fixed; inset: 0; z-index: 3000;
+    /* slight dim over everything else; the terminal (z 3001), the DATA panel
+       + keyboard (z 3005, lifted in JS) and the clock (z 3100) are raised
+       above this overlay so they stay fully visible */
+    background: rgba(5, 8, 13, 0.42);
+}
+.lock_terminal {
+    position: fixed;
+    left: 50%; top: 30%;
+    transform: translateX(-50%);
+    z-index: 3001;
+    width: 72vh; max-width: 80vw;
+    background: #05080d;
+    border: 0.19vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.7);
+    box-shadow: 0 0 3vh rgba(0, 0, 0, 0.7), 0 0 1vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
+    padding: 1.6vh 2vh;
+    font-family: var(--font_main);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    display: flex; flex-direction: column; gap: 1vh;
+}
+.lock_term_header { font-size: 1.3vh; letter-spacing: 0.15em; opacity: 0.85; color: #ff6b6b; }
+.lock_term_line { font-size: 1.25vh; letter-spacing: 0.05em; }
+.lock_term_prompt { color: #57e389; }
+.lock_term_cmd { opacity: 0.7; }
+.lock_terminal input {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.06);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.4);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main);
+    font-size: 1.3vh;
+    letter-spacing: 0.2em;
+    padding: 0.4vh 0.7vh;
+    outline: none;
+    width: 100%;
+    box-sizing: border-box;
+}
+.lock_terminal input:focus { border-color: rgb(var(--color_r), var(--color_g), var(--color_b)); }
 .lock_panel {
     position: relative; z-index: 2;
     display: flex; flex-direction: column; align-items: center; gap: 1.6vh;

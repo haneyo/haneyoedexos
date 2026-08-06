@@ -53,6 +53,10 @@ section#mod_column_left > h3.title {
 section#mod_column_right {
     right: -0.555vh;
     align-items: flex-start;
+    /* The right column overshoots the screen edge by 0.555vh; its content
+       should still reach the right edge, so drop the right padding down from
+       the base 1.39vh to leave the content flush with the screen border. */
+    padding-right: 0.55vh;
 }
 
 section#mod_column_right > h3.title {

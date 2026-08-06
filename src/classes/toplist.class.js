@@ -23,7 +23,32 @@ class Toplist {
         if (this.currentlyUpdating) return;
 
         this.currentlyUpdating = true;
+        // Cover mode (lock / screensaver): show fabricated launch-systems
+        // processes instead of the real process table.
+        if (window.cover && window.cover.isActive()) {
+            const rows = window.cover.fakeProcesses();
+            document.querySelectorAll("#mod_toplist_table > tr").forEach(el => {
+                el.remove();
+            });
+            rows.forEach(proc => {
+                let el = document.createElement("tr");
+                el.innerHTML = `<td>${proc.pid}</td>
+                                <td><strong>${proc.name}</strong></td>
+                                <td>${proc.cpu}%</td>
+                                <td>${proc.mem}%</td>`;
+                document.getElementById("mod_toplist_table").append(el);
+            });
+            this.currentlyUpdating = false;
+            return;
+        }
         window.si.processes().then(data => {
+            // Cover mode engaged while this read was in flight (a lock just
+            // happened) — the fake list already took over, so real process
+            // names must not overwrite it.
+            if (window.cover && window.cover.isActive()) {
+                this.currentlyUpdating = false;
+                return;
+            }
             if (window.settings.excludeThreadsFromToplist === true) {
                 data.list = data.list.sort((a, b) => {
                     return (a.pid-b.pid);

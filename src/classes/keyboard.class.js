@@ -22,6 +22,10 @@ class Keyboard {
         this.container.dataset.isFnOn = false;
 
         this.container.dataset.passwordMode = false;
+        // Echo physical key presses on the virtual keys (default on). Turned off
+        // during the code-mode lock screen so typing the passcode on a physical
+        // keyboard does not reveal it on the on-screen keyboard.
+        this.echoPhysical = true;
 
         // Build arrays for enabling keyboard shortcuts
         this._shortcuts = {
@@ -288,6 +292,7 @@ class Keyboard {
         };
 
         this.keydownHandler = e => {
+            if (!this.echoPhysical) return;
             // See #330
             if (e.getModifierState("AltGraph") && e.code === "AltRight") {
                 document.querySelector('div.keyboard_key[data-cmd="ESCAPED|-- CTRL: LEFT"]').setAttribute("class", "keyboard_key");
@@ -320,6 +325,7 @@ class Keyboard {
         document.onkeydown = this.keydownHandler;
 
         document.onkeyup = e => {
+            if (!this.echoPhysical) return;
             // See #330
             if (e.key === "Control" && e.getModifierState("AltGraph")) return;
 

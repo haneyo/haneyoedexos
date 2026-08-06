@@ -95,7 +95,10 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     pulseaudio alsa-utils \
     nodejs npm \
     flatpak xdg-desktop-portal xdg-desktop-portal-gtk \
-    playerctl"
+    playerctl \
+    gvfs gvfs-backends libglib2.0-bin \
+    fcitx5 fcitx5-rime fcitx5-config-qt \
+    fcitx5-frontend-gtk3 fcitx5-frontend-qt5 rime-data"
 
 # Bind-mount /proc,/sys,/dev for the chroot. If the runner forbids mounts
 # (GitHub containers), fall back to proot (userspace chroot, no mounts).
@@ -145,6 +148,18 @@ Type=Application
 Terminal=false
 Categories=Network;WebBrowser;
 DESK
+fi
+
+# Bake in the offline speech-recognition model (sherpa-onnx, streaming Chinese
+# zipformer, int8) so voice input works with zero network at run time.
+echo "[edex] baking in offline ASR model (sherpa-onnx, Chinese streaming)"
+mkdir -p "$WORK/rootfs/opt/edex/models"
+curl -fsSL -o "$WORK/zh-asr.tar.bz2" \
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-multi-zh-hans-2023-12-12.tar.bz2" \
+    || echo "[edex] WARN: ASR model download failed (best-effort)"
+if [ -s "$WORK/zh-asr.tar.bz2" ]; then
+    tar -xjf "$WORK/zh-asr.tar.bz2" -C "$WORK/rootfs/opt/edex/models" \
+        || echo "[edex] WARN: ASR model extract failed"
 fi
 
 # Bake the eDEX AppImage straight into the image.

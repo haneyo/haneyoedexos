@@ -43,6 +43,174 @@ window._isHotReload = () => {
     return false;
 };
 
+// ---- Cover mode ----
+// While the screensaver or the lock screen is up, eDEX presents itself as a
+// strategic nuclear launch terminal: terminal tab labels, the file browser,
+// the public IP and the process list all show fabricated data; everything else
+// stays real. `window.cover` is the single switch every consumer checks. All
+// DOM access happens at call time (set()), never at module load.
+window.cover = (() => {
+    const FAKE_TABS = { 0: "MAIN - LAUNCHCTRL", 1: "#2 - GUIDANCE", 2: "KEYHOLDER", 3: "WARHEAD A", 4: "WARHEAD B" };
+    const FALLBACK_TABS = { 0: "MAIN SHELL", 1: "EMPTY", 2: "CLAUDE", 3: "MONITOR A", 4: "MONITOR B" };
+    const FAKE_PROCS = ["launch_seq", "targeting_core", "guidance_fuse", "key_custodian",
+        "threat_eval", "silo_monitor", "telemetry_relay", "auth_gate",
+        "warhead_diag", "perim_alarm"];
+    const R = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo));
+    const j = (dir, name) => (dir + "/" + name).replace(/\/+/g, "/");
+
+    let active = false;
+    // Real process names seen by the terminal tabs while NOT covered, so they
+    // can be restored verbatim when the cover is released.
+    const realProc = { 0: null, 1: null };
+    let prevFsDir = null; // directory the file browser showed before covering
+
+    // ---- fake filesystem ----
+    const fakeFile = (dir, name, maxSize) => ({
+        name, type: "file",
+        size: R(512, (maxSize || (1 << 20))),
+        lastAccessed: Date.now() - R(60000, 60 * 86400000),
+        path: j(dir, name)
+    });
+    const fakeFolder = (dir, name) => ({
+        name, type: "dir", size: 4096,
+        lastAccessed: Date.now() - R(60000, 90 * 86400000),
+        path: j(dir, name)
+    });
+    const fakeDir = dir => {
+        dir = String(dir || "/").replace(/\/+$/, "") || "/";
+        const out = [];
+        if (dir === "/") {
+            ["bin", "launch", "warheads", "targets", "keys", "logs", "telemetry", "systems"]
+                .forEach(n => out.push(fakeFolder("/", n)));
+            out.push(fakeFile("/", "launch_auth.sig"));
+            out.push(fakeFile("/", "boot_checksum.bin", 1 << 10));
+        } else if (dir === "/bin") {
+            ["diag", "redundancy"].forEach(n => out.push(fakeFolder("/bin", n)));
+            ["bootstrap.elf", "watchdog"].forEach(n => out.push(fakeFile("/bin", n, 1 << 16)));
+        } else if (dir === "/launch") {
+            ["sequence.dat", "arm_switch.ctl", "auth_checksum.sig", "two_person_rule.log"]
+                .forEach(n => out.push(fakeFile("/launch", n)));
+        } else if (dir === "/warheads") {
+            for (let i = 1; i <= 6; i++) out.push(fakeFolder("/warheads", "warhead_0" + i));
+        } else if (/^\/warheads\/warhead_\d+$/.test(dir)) {
+            ["state.bin", "yield.cfg", "arming_cert.sig"].forEach(n => out.push(fakeFile(dir, n)));
+        } else if (dir === "/targets") {
+            ["target_list.enc", "coordinates.bin", "reentry_schedule.dat", "priority_matrix.cfg"]
+                .forEach(n => out.push(fakeFile("/targets", n)));
+        } else if (dir === "/keys") {
+            out.push(fakeFile("/keys", "launch_keys.enc"));
+            out.push(fakeFolder("/keys", "key_fragments"));
+        } else if (dir === "/keys/key_fragments") {
+            for (let i = 1; i <= 4; i++) out.push(fakeFile("/keys/key_fragments", "frag_0" + i + ".key", 1 << 8));
+        } else if (dir === "/logs") {
+            ["access_audit.log", "telemetry.log", "handshake_trail.log"].forEach(n => out.push(fakeFile("/logs", n)));
+        } else if (dir === "/telemetry") {
+            ["downlink_stream.buf", "silo_state.snapshot"].forEach(n => out.push(fakeFile("/telemetry", n)));
+        } else if (dir === "/systems") {
+            ["integrity_scan.cfg", "failover.ctl", "mesh_topology.json"].forEach(n => out.push(fakeFile("/systems", n)));
+        } else {
+            // Fallback for any path the cover didn't plan: sparse generic dir.
+            out.push(fakeFile(dir, "state.bin"));
+            out.push(fakeFolder(dir, "subsystem"));
+        }
+        return out;
+    };
+    // Map a real path to a plausible fake display path (safety net for real
+    // reads that were already in flight when the cover turned on).
+    const fakePath = dir => {
+        dir = String(dir || "/");
+        if (dir === "/" || dir.startsWith("/launch") || dir.startsWith("/warheads") ||
+            dir.startsWith("/targets") || dir.startsWith("/keys") || dir.startsWith("/logs") ||
+            dir.startsWith("/telemetry") || dir.startsWith("/systems") || dir.startsWith("/bin")) return dir;
+        return "/operations";
+    };
+
+    const fakeProcesses = () => {
+        const names = FAKE_PROCS.slice().sort(() => Math.random() - 0.5).slice(0, 5);
+        return names.map(name => ({ pid: R(1024, 4096), name, cpu: R(0, 90), mem: R(1, 38) }));
+    };
+
+    const fakeMonitorLabel = monitorId => monitorId === "a" ? "WARHEAD A" : "WARHEAD B";
+
+    // ---- tab labels ----
+    const tabEl = num => document.getElementById("shell_tab" + num);
+    // Real app-monitor labels (tabs 3/4) captured when the cover turns on, so
+    // they can be restored verbatim instead of reverting to the placeholder.
+    const realMonitor = { 3: null, 4: null };
+    const tabLabel = (num, realP) => {
+        if (active) return FAKE_TABS[num] != null ? FAKE_TABS[num] : "";
+        if (num === 0) return realP ? "MAIN - " + realP : FALLBACK_TABS[num];
+        if (num === 1) return realP ? "#2 - " + realP : FALLBACK_TABS[num];
+        if (num === 3 || num === 4) return realMonitor[num] || FALLBACK_TABS[num];
+        return FALLBACK_TABS[num] != null ? FALLBACK_TABS[num] : "";
+    };
+    const renderTab = num => {
+        if (num <= 2) {
+            const t = tabEl(num);
+            if (t) t.innerHTML = `<p>${tabLabel(num, realProc[num])}</p>`;
+        } else {
+            const s = document.getElementById("shell_tab" + num + "_label");
+            if (s) s.textContent = tabLabel(num, null);
+        }
+    };
+    const rememberProc = (num, p) => {
+        if (num === 0 || num === 1) realProc[num] = p;
+    };
+
+    // A path is "fake" if it belongs to the fabricated tree; we must never
+    // treat one as the real directory to restore after the cover lifts.
+    const isFakePath = p => {
+        p = String(p || "");
+        return p === "/" || p === "/operations" || p.startsWith("/launch") || p.startsWith("/warheads")
+            || p.startsWith("/targets") || p.startsWith("/keys") || p.startsWith("/logs")
+            || p.startsWith("/telemetry") || p.startsWith("/systems") || p.startsWith("/bin");
+    };
+
+    const set = on => {
+        on = !!on;
+        if (on === active) return;
+        active = on;
+        try {
+            if (on) {
+                // Remember the real directory the file browser was showing so it
+                // can be restored on release. Guard against capturing a stale
+                // fake path (e.g. when dismiss→lock re-engages cover before the
+                // previous real read has finished navigating back).
+                if (window.fsDisp && window.fsDisp.dirpath && !isFakePath(window.fsDisp.dirpath)) {
+                    prevFsDir = window.fsDisp.dirpath;
+                }
+                // Remember the real app-monitor tab labels before overwriting.
+                [3, 4].forEach(n => {
+                    const s = document.getElementById("shell_tab" + n + "_label");
+                    if (s && s.textContent) realMonitor[n] = s.textContent;
+                });
+                for (let n = 0; n <= 4; n++) renderTab(n);
+                if (window.fsDisp && typeof window.fsDisp.readFS === "function") window.fsDisp.readFS("/");
+                if (window.mods && window.mods.toplist) window.mods.toplist.updateList();
+                if (window.mods && window.mods.netstat) window.mods.netstat.updateInfo();
+            } else {
+                for (let n = 0; n <= 4; n++) renderTab(n);
+                if (window.fsDisp && typeof window.fsDisp.readFS === "function") {
+                    window.fsDisp.readFS(prevFsDir || (window.settings && window.settings.cwd) || "/");
+                }
+                if (window.mods && window.mods.toplist) window.mods.toplist.updateList();
+                if (window.mods && window.mods.netstat) window.mods.netstat.updateInfo();
+            }
+        } catch (e) {}
+    };
+
+    return {
+        isActive: () => active,
+        set,
+        rememberProc,
+        tabLabel,
+        fakeDir,
+        fakePath,
+        fakeProcesses,
+        fakeMonitorLabel
+    };
+})();
+
 // Initiate basic error handling
 window.onerror = (msg, path, line, col, error) => {
     document.getElementById("boot_screen").innerHTML += `${error} :  ${msg}<br/>==> at ${path}  ${line}:${col}`;
@@ -395,60 +563,53 @@ async function initUI() {
         container: "cyber_panel"
     });
 
-    // Virtual keyboard (settings.showKeyboard): overlay the ORIGINAL eDEX
-    // keyboard, scaled to fit the DATA box; the waveform/data stays visible in
-    // the leftover space. The radar is unaffected.
-    if (window.settings.showKeyboard) {
+    // Virtual keyboard (settings.showKeyboard, or forced during the code-mode
+    // lock screen): overlay the ORIGINAL eDEX keyboard, scaled to fit the DATA
+    // box; the waveform/data stays visible in the leftover space.
+    window.ensureKeyboard = () => {
+        if (document.getElementById("keyboard_layer")) return window.keyboard;
         let cyberPanel = document.getElementById("cyber_panel");
-        if (cyberPanel) {
-            let kbLayer = document.createElement("div");
-            kbLayer.id = "keyboard_layer";
-            cyberPanel.appendChild(kbLayer);
-            let kbEl = document.createElement("section");
-            kbEl.id = "keyboard";
-            kbLayer.appendChild(kbEl);
-            try {
-                window.keyboard = new Keyboard({
-                    layout: path.join(keyboardsDir, (window.settings.keyboard || "en-US") + ".json"),
-                    container: "keyboard"
-                });
-                window.keyboard.attach();
-            } catch (e) {
-                require("electron").ipcRenderer.send("log", "error", "Keyboard init failed: " + (e && e.message));
-            }
-
-            // Fit the keyboard edge-to-edge inside the keyboard layer (the
-            // bottom band of the DATA box, below the compact metric strip):
-            // reset zoom, force a reflow, measure the natural size, then apply
-            // a 0.99 safety factor so it fills the width yet never clips.
-            const fitKeyboard = () => {
-                const kb = document.getElementById("keyboard");
-                if (!kb) return;
-                const lr = kbLayer.getBoundingClientRect();
-                if (!lr.width || !lr.height) return;
-                kb.style.zoom = "1";
-                void kb.offsetWidth;
-                const nw = kb.getBoundingClientRect().width;
-                const nh = kb.getBoundingClientRect().height;
-                if (!nw || !nh) return;
-                kb.style.zoom = 0.99 * Math.min(lr.width / nw, lr.height / nh);
-            };
-
-            // Initial fit once the keyboard's DOM has been laid out, plus a late
-            // re-fit after the boot welcome settles (the file manager starts at
-            // 0px wide, which temporarily stretches this panel and would lock in
-            // a too-big zoom once the layout settles to its real width).
-            setTimeout(fitKeyboard, 200);
-            setTimeout(fitKeyboard, 2600);
-
-            // Re-fit whenever the panel resizes (window resize, file-manager
-            // expansion) so it never gets clipped. Keep the observer referenced
-            // so it cannot be garbage-collected.
-            const fitRO = window.ResizeObserver ? new ResizeObserver(fitKeyboard) : null;
-            if (fitRO) fitRO.observe(cyberPanel);
-            window.addEventListener("resize", fitKeyboard);
+        if (!cyberPanel) return null;
+        let kbLayer = document.createElement("div");
+        kbLayer.id = "keyboard_layer";
+        cyberPanel.appendChild(kbLayer);
+        let kbEl = document.createElement("section");
+        kbEl.id = "keyboard";
+        kbLayer.appendChild(kbEl);
+        try {
+            window.keyboard = new Keyboard({
+                layout: path.join(keyboardsDir, (window.settings.keyboard || "en-US") + ".json"),
+                container: "keyboard"
+            });
+            window.keyboard.attach();
+        } catch (e) {
+            require("electron").ipcRenderer.send("log", "error", "Keyboard init failed: " + (e && e.message));
         }
-    }
+        const fitKeyboard = () => {
+            const kb = document.getElementById("keyboard");
+            if (!kb) return;
+            const lr = kbLayer.getBoundingClientRect();
+            if (!lr.width || !lr.height) return;
+            kb.style.zoom = "1";
+            void kb.offsetWidth;
+            const nw = kb.getBoundingClientRect().width;
+            const nh = kb.getBoundingClientRect().height;
+            if (!nw || !nh) return;
+            kb.style.zoom = 0.99 * Math.min(lr.width / nw, lr.height / nh);
+        };
+        setTimeout(fitKeyboard, 200);
+        setTimeout(fitKeyboard, 2600);
+        const fitRO = window.ResizeObserver ? new ResizeObserver(fitKeyboard) : null;
+        if (fitRO) fitRO.observe(cyberPanel);
+        window.addEventListener("resize", fitKeyboard);
+        return window.keyboard;
+    };
+    window.destroyKeyboard = () => {
+        const layer = document.getElementById("keyboard_layer");
+        if (layer) layer.remove();
+        window.keyboard = null;
+    };
+    if (window.settings.showKeyboard) window.ensureKeyboard();
 
     await _delay(10);
 
@@ -534,8 +695,8 @@ async function initUI() {
             <li id="shell_tab0" onclick="window.focusShellTab(0);" class="active"><p>MAIN SHELL</p></li>
             <li id="shell_tab1" onclick="window.focusShellTab(1);"><p>EMPTY</p></li>
             <li id="shell_tab2" onclick="window.focusShellTab(2);"><p>CLAUDE</p></li>
-            <li id="shell_tab3" onclick="window.focusShellTab(3);"><p><span id="shell_tab3_label">MONITOR A</span> <span class="webapp_chevron" title="Switch app" onclick="event.stopPropagation();window.appmonitorA.toggleMenu(event);">${Icons.chevronDown}</span></p></li>
-            <li id="shell_tab4" onclick="window.focusShellTab(4);"><p><span id="shell_tab4_label">MONITOR B</span> <span class="webapp_chevron" title="Switch app" onclick="event.stopPropagation();window.appmonitorB.toggleMenu(event);">${Icons.chevronDown}</span></p></li>
+            <li id="shell_tab3" onclick="window.focusShellTab(3);"><button class="appmonitor_fs_tab" title="Fullscreen" onclick="event.stopPropagation();window.appmonitorA.fullscreenButton()"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M1 1h22L1 23z"/></svg></button><p><span id="shell_tab3_label">MONITOR A</span> <span class="webapp_chevron" title="Switch app" onclick="event.stopPropagation();window.appmonitorA.toggleMenu(event);">${Icons.chevronDown}</span></p></li>
+            <li id="shell_tab4" onclick="window.focusShellTab(4);"><button class="appmonitor_fs_tab" title="Fullscreen" onclick="event.stopPropagation();window.appmonitorB.fullscreenButton()"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M1 1h22L1 23z"/></svg></button><p><span id="shell_tab4_label">MONITOR B</span> <span class="webapp_chevron" title="Switch app" onclick="event.stopPropagation();window.appmonitorB.toggleMenu(event);">${Icons.chevronDown}</span></p></li>
         </ul>
         <div id="main_shell_innercontainer">
             <pre id="terminal0" class="active"></pre>
@@ -556,8 +717,273 @@ async function initUI() {
     // (MONITOR A / MONITOR B). Everything below that reads window.term[] is
     // made safe for slots 3/4 via a terminal-shaped shim.
     window.shellSlotKinds = { 0: "term", 1: "term", 2: "term", 3: "appmonitor", 4: "appmonitor" };
+
+    // Global IME (Chinese input / Rime) toggle button pinned to the shell's
+    // bottom-right corner — visible on every tab (terminals, Claude, monitors).
+    window.edexIME = {
+        refresh() {
+            try {
+                require("child_process").exec("fcitx5-remote -n 2>/dev/null", (err, stdout) => {
+                    const name = String(stdout || "").trim().toLowerCase();
+                    const btn = document.getElementById("edex_ime_btn");
+                    if (btn) btn.textContent = /rime|pinyin|chinese/.test(name) ? "中" : "EN";
+                });
+            } catch (e) {}
+        },
+        toggle() {
+            try {
+                require("child_process").exec("fcitx5-remote -t 2>/dev/null");
+                setTimeout(() => this.refresh(), 350);
+            } catch (e) {}
+        }
+    };
+    const imeBtn = document.createElement("button");
+    imeBtn.id = "edex_ime_btn";
+    imeBtn.className = "appmonitor_ime_btn";
+    imeBtn.textContent = "EN";
+    imeBtn.title = "Toggle input method (中/EN)";
+    imeBtn.onclick = e => { e.stopPropagation(); window.edexIME.toggle(); };
+
+    // ---- Offline voice input (mic → sherpa-onnx → text into the terminal) ----
+    window.voiceInput = {
+        _stream: null, _ctx: null, _source: null, _processor: null, _recording: false,
+        async init() {
+            try {
+                const r = await ipc.invoke("voice:init");
+                this._ready = !!(r && r.ok);
+            } catch (e) { this._ready = false; }
+            const b = document.getElementById("edex_voice_btn");
+            if (b) b.classList.toggle("voice_disabled", !this._ready);
+            return this._ready;
+        },
+        _resample(input, from, to) {
+            if (from === to) return new Float32Array(input);
+            const ratio = to / from;
+            const out = new Float32Array(Math.round(input.length * ratio));
+            for (let i = 0; i < out.length; i++) {
+                const idx = i / ratio;
+                const i0 = Math.floor(idx), i1 = Math.min(i0 + 1, input.length - 1);
+                const f = idx - i0;
+                out[i] = input[i0] * (1 - f) + input[i1] * f;
+            }
+            return out;
+        },
+        async start() {
+            if (this._recording) return;
+            if (!this._ready && !(await this.init())) return;
+            try {
+                if (!this._stream) {
+                    this._stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    const Ctx = window.AudioContext || window.webkitAudioContext;
+                    this._ctx = new Ctx({ sampleRate: 16000 });
+                    this._source = this._ctx.createMediaStreamSource(this._stream);
+                    this._processor = this._ctx.createScriptProcessor(4096, 1, 1);
+                    this._source.connect(this._processor);
+                    this._processor.connect(this._ctx.destination);
+                    this._processor.onaudioprocess = e => {
+                        if (!this._recording) return;
+                        const ch = e.inputBuffer.getChannelData(0);
+                        ipc.send("voice:chunk", this._resample(ch, this._ctx.sampleRate, 16000));
+                    };
+                }
+                await this._ctx.resume();
+                this._recording = true;
+                await ipc.invoke("voice:start");
+            } catch (e) { console.warn("voice start failed:", e && e.message); }
+            this._setUi(true);
+        },
+        async stop() {
+            if (!this._recording) return;
+            this._recording = false;
+            this._setUi(false);
+            try {
+                const r = await ipc.invoke("voice:stop");
+                const text = String((r && r.text) || "").trim();
+                if (text) this._insert(text);
+                return text;
+            } catch (e) { return ""; }
+        },
+        _insert(text) {
+            // write the recognized text into the focused terminal (term shim for
+            // the app-monitor tabs is a no-op, so this targets the real terminals)
+            try {
+                const t = window.term[window.currentTerm];
+                if (t && typeof t.write === "function") t.write(text);
+            } catch (e) {}
+        },
+        _setUi(recording) {
+            const b = document.getElementById("edex_voice_btn");
+            if (!b) return;
+            b.classList.toggle("voice_recording", recording);
+            b.title = recording ? "Listening… (click to stop)" : "Voice input (click to talk)";
+        },
+        toggle() {
+            if (this._recording) this.stop();
+            else this.start();
+        }
+    };
+    const micBtn = document.createElement("button");
+    micBtn.id = "edex_voice_btn";
+    micBtn.className = "appmonitor_ime_btn appmonitor_voice_btn";
+    micBtn.innerHTML = '<svg class="voice_icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><span class="voice_eq"><i></i><i></i><i></i><i></i><i></i></span>';
+    micBtn.title = "Voice input (click to talk, or hold F9)";
+    micBtn.addEventListener("click", e => { e.stopPropagation(); window.voiceInput.toggle(); });
+
+    // Corner button stack pinned flush to the terminal/content area's bottom-right.
+    const corner = document.createElement("div");
+    corner.id = "edex_corner_btns";
+    corner.appendChild(micBtn);
+    corner.appendChild(imeBtn);
+    document.getElementById("main_shell_innercontainer").appendChild(corner);
+    window.edexIME.refresh();
+    setInterval(() => window.edexIME.refresh(), 5000);
+
+    // F9 (hold) = voice input, mirroring the mic button. Only when a real
+    // terminal is focused (not a browser/app monitor), and the key is swallowed
+    // so it never reaches the terminal's app or a webview (F5 would clash with
+    // browser refresh, so the less-used F9 was chosen).
+    const termFocused = () => (window.shellSlotKinds[window.currentTerm] === "term");
+    document.addEventListener("keydown", e => {
+        if (e.key === "F9" && !e.repeat && termFocused()) {
+            e.preventDefault(); e.stopPropagation();
+            window.voiceInput.start();
+        }
+    });
+    document.addEventListener("keyup", e => {
+        if (e.key === "F9" && termFocused()) {
+            e.preventDefault(); e.stopPropagation();
+            window.voiceInput.stop();
+        }
+    });
+
+    // ---- Module click → detail/action modals (all CLI-backed) ----
+    window.sysCmd = {
+        run(cmd) {
+            return new Promise(resolve => {
+                require("child_process").exec(cmd, { timeout: 30000, maxBuffer: 8 * 1024 * 1024 }, (e, so, se) => resolve({ out: so || "", err: se || "", ok: !e }));
+            });
+        },
+        // Run a one-shot command and close the open modal (restart / shutdown / mkfs).
+        act(cmd) {
+            this.run(cmd);
+            const ks = Object.keys(window.modals);
+            if (ks.length) { try { window.modals[ks[ks.length - 1]].close(); } catch (e) {} }
+        },
+        // Open a modal that runs a command and shows its output; Refresh re-runs it.
+        open(title, cmd) {
+            const id = "mod_" + require("nanoid").nanoid().slice(0, 6);
+            this._last = { id, cmd };
+            new Modal({
+                type: "custom", title,
+                html: `<pre class="mod_cmd_out" id="mco_${id}">LOADING…</pre>`,
+                // Only the Refresh button: the Modal class appends its own Close
+                // button, so including one here produced two "Close" buttons.
+                buttons: [
+                    { label: "Refresh", action: `window.sysCmd.refresh('${id}')` }
+                ]
+            });
+            this._render(id, cmd);
+        },
+        _render(id, cmd) {
+            const el = document.getElementById("mco_" + id);
+            if (el) el.textContent = "RUNNING…";
+            this.run(cmd).then(r => {
+                const e2 = document.getElementById("mco_" + id);
+                if (e2) e2.textContent = (r.out || r.err || "(no output)").trim();
+            });
+        },
+        refresh(id) { if (this._last && this._last.id === id) this._render(id, this._last.cmd); },
+        _closeTop() { const ks = Object.keys(window.modals); if (ks.length) { try { window.modals[ks[ks.length - 1]].close(); } catch (e) {} } },
+        // Toggle 12/24-hour in place on the existing clock — re-creating the
+        // module would re-parse the whole left column and break every other
+        // module's DOM/instance references.
+        setClockFormat(hours) {
+            window.settings.clockHours = hours;
+            const c = window.mods.clock;
+            if (c) {
+                c.twelveHours = (hours === 12);
+                const el = document.getElementById("mod_clock");
+                if (el) el.className = (hours === 12) ? "mod_clock_twelve" : "";
+                c.updateClock();
+            }
+            this._closeTop();
+        },
+        formatDialog() {
+            new Modal({
+                type: "custom", title: "FORMAT DISK",
+                html: `<p class="mod_cmd_warn">⚠ Destroys ALL data on the device!</p>
+                       <p style="margin:0 0 0.4vh">Device</p>
+                       <input id="sysfmt_dev" placeholder="/dev/sdb">
+                       <p style="margin:0.6vh 0 0.4vh">Filesystem</p>
+                       <select id="sysfmt_fs"><option>vfat</option><option>ext4</option><option>ntfs</option></select>`,
+                buttons: [
+                    { label: "Format", action: "window.sysCmd.doFormat()" }
+                    // Close is auto-appended by the Modal class (an explicit
+                    // Cancel here produced two close-behaving buttons).
+                ]
+            });
+        },
+        doFormat() {
+            const dev = ((document.getElementById("sysfmt_dev") || {}).value || "").trim();
+            const fs = ((document.getElementById("sysfmt_fs") || {}).value || "vfat");
+            if (!/^\/dev\/(sd|vd|nvme|mmcblk)/.test(dev)) return;
+            this.act("sudo mkfs." + fs + " " + dev);
+        }
+    };
+
+    // One delegated click handler for all modules (their DOM is rebuilt by later
+    // modules, so direct listeners would be lost). The weather's location editor
+    // is handled separately in netstat.class.js.
+    document.addEventListener("click", e => {
+        const t = e.target;
+        if (!t || !t.closest) return;
+        if (t.closest("button") || t.closest("#keyboard_layer")) return; // interactive children
+
+        if (t.closest("#mod_clock")) {
+            new Modal({ type: "custom", title: "CLOCK & POWER",
+                html: `<div class="mod_menu">
+                    <button onclick="window.sysCmd.setClockFormat(0)">24-hour clock</button>
+                    <button onclick="window.sysCmd.setClockFormat(12)">12-hour clock</button>
+                    <button onclick="window.sysCmd.act('sudo systemctl reboot')">Restart</button>
+                    <button onclick="window.lockScreen && window.lockScreen.show()">Lock Screen</button>
+                    <button onclick="window.sysCmd.act('sudo systemctl suspend')">Suspend</button>
+                    <button class="mod_menu_danger" onclick="window.sysCmd.act('sudo poweroff')">Shutdown</button>
+                </div>`, closeLabel: "Close" });
+        } else if (t.closest("#mod_cpuinfo")) {
+            window.sysCmd.open("CPU INFO", "lscpu 2>/dev/null | head -25; echo; echo '--- LOAD ---'; uptime");
+        } else if (t.closest("#mod_ramwatcher_inner")) {
+            window.sysCmd.open("MEMORY", "free -h; echo; echo '--- SWAP ---'; swapon --show 2>/dev/null; echo; echo '--- VMSTAT ---'; vmstat 1 2 | tail -2");
+        } else if (t.closest("#cyber_panel")) {
+            new Modal({ type: "custom", title: "DISK MANAGEMENT",
+                html: `<div class="mod_menu">
+                    <button onclick="window.sysCmd.open('Disks', 'lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE')">List Disks</button>
+                    <button onclick="window.sysCmd.open('Disk Space', 'df -h')">Disk Space</button>
+                    <button onclick="window.sysCmd.open('Mount', 'lsblk -o NAME,SIZE,MOUNTPOINT,FSTYPE; echo; echo Use: udisksctl mount -b /dev/XXX')">Mount / Unmount</button>
+                    <button class="mod_menu_danger" onclick="window.sysCmd.formatDialog()">Format USB / Disk…</button>
+                </div>`, closeLabel: "Close" });
+        } else if (t.closest("#cyber_radar")) {
+            window.sysCmd.open("PROCESSES", "ps -eo pid,comm,%cpu,%mem --sort=-%cpu | head -20");
+        } else if (t.closest("#mod_globe")) {
+            window.sysCmd.open("NETWORK CONNECTIONS", "ss -tunp 2>/dev/null | head -20");
+        } else if (t.closest("#mod_netstat_netfooter")) {
+            new Modal({ type: "custom", title: "NETWORK",
+                html: `<div class="mod_menu">
+                    <button onclick="window.sysCmd.open('Interfaces', 'ip -brief addr')">Interfaces</button>
+                    <button onclick="window.sysCmd.open('WiFi', 'nmcli -t -f IN-USE,SSID,SIGNAL device wifi list 2>/dev/null | head -15')">WiFi</button>
+                    <button onclick="window.sysCmd.open('Routing / Ping', 'ip route; echo; echo ---; ping -c 2 1.1.1.1 2>&1 | tail -3')">Routing / Ping</button>
+                </div>`, closeLabel: "Close" });
+        } else if (t.closest("#mod_conninfo")) {
+            // Network traffic charts (below the globe) → per-interface traffic
+            window.sysCmd.open("NETWORK TRAFFIC", "echo '--- Interface stats ---'; awk 'NR>2 {print $1, \"RX:\"$2\"B  TX:\"$10\"B\"}' /proc/net/dev 2>/dev/null; echo; echo '--- Connection summary ---'; ss -s 2>/dev/null | head -6");
+        } else if (t.closest("#mod_hardwareInspector_inner")) {
+            // The MODEL panel → full machine info
+            window.sysCmd.open("MACHINE INFO", "hostnamectl 2>/dev/null; echo; lscpu 2>/dev/null | head -15; echo; free -h 2>/dev/null | head -2");
+        }
+    });
+
     window.term[0].onprocesschange = p => {
-        document.getElementById("shell_tab0").innerHTML = `<p>MAIN - ${p}</p>`;
+        if (window.cover) window.cover.rememberProc(0, p);
+        document.getElementById("shell_tab0").innerHTML = `<p>${window.cover ? window.cover.tabLabel(0, p) : "MAIN - " + p}</p>`;
     };
     // Keep hardware keyboard focus on the terminal, but never steal it back
     // from things that need their own keyboard focus: the embedded browser's
@@ -612,6 +1038,8 @@ async function initUI() {
         nativeList: () => ipc.invoke("appmonitor:native-list"),
         launch: (monitorId, appId) => ipc.invoke("appmonitor:launch", { monitorId, appId }),
         kill: (monitorId) => ipc.invoke("appmonitor:kill", { monitorId }),
+        status: () => ipc.invoke("appmonitor:status"),
+        close: (appId) => ipc.invoke("appmonitor:close", { appId }),
         addNative: (entry) => ipc.invoke("appmonitor:add-native", entry),
         removeNative: (id) => ipc.invoke("appmonitor:remove-native", id),
         fullscreen: (monitorId, appId) => ipc.invoke("appmonitor:fullscreen", { monitorId, appId }),
@@ -652,8 +1080,9 @@ async function initUI() {
                 title: "SYSTEM UPDATE",
                 html: `<pre class="sysup_out" id="sysup_out">Needs network + passwordless sudo.\nPress Start to check for & install updates…</pre>`,
                 buttons: [
-                    { label: "Start", action: "window.systemUpdate.start()" },
-                    { label: "Close", action: "window.systemUpdate.close()" }
+                    { label: "Start", action: "window.systemUpdate.start()" }
+                    // Close is auto-appended by the Modal class (the explicit
+                    // one used to double the Close button).
                 ]
             }, () => { this.modal = null; });
         },
@@ -673,6 +1102,53 @@ async function initUI() {
     };
     ipc.on("system-update-output", (e, line) => {
         const pre = document.getElementById("sysup_out");
+        if (pre && line) pre.textContent += line + "\n";
+    });
+
+    // GitHub self-update of the eDEX-UI AppImage (eDEX-OS install). Downloads
+    // the new AppImage from a release asset, verifies its sha256 and atomically
+    // replaces /opt/edex/eDEX-UI.AppImage in the main process, then relaunches.
+    // Only meaningful when running from an AppImage — from src/ during dev it
+    // falls back to opening the release page in the browser.
+    window.edexUpdate = {
+        isAppImage: false,
+        modal: null,
+        init() {
+            ipc.invoke("app:env").then(env => {
+                if (env) this.isAppImage = !!env.isAppImage;
+            }).catch(() => {});
+        },
+        start(url, sha256Url, releaseUrl) {
+            if (!this.isAppImage) {
+                require("electron").shell.openExternal(releaseUrl || url);
+                return;
+            }
+            if (this.modal) return;
+            this.modal = new Modal({
+                type: "custom",
+                title: "UPDATE",
+                html: `<pre id="edexup_out" style="max-height:55vh;overflow:auto;white-space:pre-wrap">Preparing update…</pre>`,
+                buttons: []
+                // Close is auto-appended; success auto-restarts below.
+            }, () => { this.modal = null; });
+            const pre = document.getElementById("edexup_out");
+            ipc.invoke("system:edex-update", { url, sha256Url }).then(r => {
+                if (!pre) return;
+                if (r && r.ok) {
+                    pre.textContent += "\n✓ Update ready. Restarting eDEX…";
+                    setTimeout(() => { remote.app.relaunch(); remote.app.quit(); }, 600);
+                } else {
+                    let msg = (r && r.error) || "unknown error";
+                    if (msg === "NOT_APPIMAGE") msg = "not running from an AppImage — open the release page instead.";
+                    if (msg === "SHA256_MISMATCH") msg = "checksum mismatch — the download is corrupt. Try again.";
+                    pre.textContent += "\n✗ Update failed: " + msg + ".";
+                }
+            });
+        }
+    };
+    window.edexUpdate.init();
+    ipc.on("edex-update-output", (e, line) => {
+        const pre = document.getElementById("edexup_out");
         if (pre && line) pre.textContent += line + "\n";
     });
 
@@ -752,6 +1228,9 @@ async function initUI() {
     });
 
     window.updateCheck = new UpdateChecker();
+
+    // First launch: ask for the UI language once, once the interface is up.
+    if (!window.settings.language) setTimeout(() => window.showLanguagePicker(), 800);
 }
 
 window.themeChanger = theme => {
@@ -834,7 +1313,8 @@ window.focusShellTab = number => {
                 };
 
                 window.term[number].onprocesschange = p => {
-                    document.getElementById("shell_tab"+number).innerHTML = `<p>#${number+1} - ${p}</p>`;
+                    if (window.cover) window.cover.rememberProc(number, p);
+                    document.getElementById("shell_tab"+number).innerHTML = `<p>${window.cover ? window.cover.tabLabel(number, p) : `#${number+1} - ${p}`}</p>`;
                 };
 
                 document.getElementById("shell_tab"+number).innerHTML = `<p>::${port}</p>`;
@@ -850,314 +1330,247 @@ window.focusShellTab = number => {
 window.openSettings = async () => {
     if (document.getElementById("settingsEditor")) return;
 
-    // Build lists of available themes, monitors, ifaces
-    let themes, monitors, ifaces;
+    // Build the list of available themes (the only remaining dropdown that needs
+    // a dynamic option list; monitor/iface rows were removed in the cleanup).
+    let themes;
     fs.readdirSync(themesDir).forEach(th => {
         if (!th.endsWith(".json")) return;
         th = th.replace(".json", "");
         if (th === window.settings.theme) return;
         themes += `<option>${th}</option>`;
     });
-    for (let i = 0; i < remote.screen.getAllDisplays().length; i++) {
-        if (i !== window.settings.monitor) monitors += `<option>${i}</option>`;
-    }
-    let nets = await window.si.networkInterfaces();
-    nets.forEach(net => {
-        if (net.iface !== window.mods.netstat.iface) ifaces += `<option>${net.iface}</option>`;
-    });
 
-    new Modal({
+    // A settings row: label + optional "i" info button (with a hidden help
+    // popover) on the left, control on the right. The verbose descriptions used
+    // to take a full table column; they are now hidden behind the "i" button.
+    const settingsRow = (labelKey, controlHtml, helpKey) => `
+        <div class="settings_row">
+            <div class="settings_row_label">
+                <span>${t(labelKey)}</span>
+                ${helpKey ? `<button type="button" class="settings_info_btn" title="${t(helpKey)}">i</button>
+                <div class="settings_info_pop">${t(helpKey)}</div>` : ""}
+            </div>
+            <div class="settings_row_ctl">${controlHtml}</div>
+        </div>`;
+    const section = key => `<div class="settingsEditor_section">${t(key)}</div>`;
+
+    // Two-pane categories. Every control lives in the DOM at all times (hidden
+    // panes are display:none), so setupSettingsDropdowns converts all <select>s
+    // exactly once and writeSettingsFile can read every field regardless of
+    // which category is visible.
+    const CATS = [
+        { id: "general", titleKey: "settings.cat.general", html: () => [
+            settingsRow("settings.lang.label", `<select id="settingsEditor-language">
+                <option value="zh" ${window.settings.language === "zh" ? "selected" : ""}>中文</option>
+                <option value="en" ${window.settings.language !== "zh" ? "selected" : ""}>English</option>
+            </select>`, "settings.lang.help"),
+            settingsRow("settings.username", `<input type="text" id="settingsEditor-username" value="${window.settings.username}">`, "settings.username.help"),
+            settingsRow("settings.theme", `<select id="settingsEditor-theme">
+                <option>${window.settings.theme}</option>
+                ${themes}
+            </select>`, "settings.theme.help"),
+            settingsRow("settings.termFontSize", `<input type="text" id="settingsEditor-termFontSize" value="${window.settings.termFontSize}">`, "settings.termFontSize.help"),
+            settingsRow("settings.clockHours", `<select id="settingsEditor-clockHours">
+                <option>${(window.settings.clockHours === 12) ? "12" : "24"}</option>
+                <option>${(window.settings.clockHours === 12) ? "24" : "12"}</option>
+            </select>`, "settings.clockHours.help"),
+            settingsRow("settings.showKeyboard", `<select id="settingsEditor-showKeyboard">
+                <option>${window.settings.showKeyboard === true}</option>
+                <option>${window.settings.showKeyboard !== true}</option>
+            </select>`, "settings.showKeyboard.help"),
+        ].join("") },
+        { id: "terminal", titleKey: "settings.cat.terminal", html: () => [
+            settingsRow("settings.shell", `<input type="text" id="settingsEditor-shell" value="${window.settings.shell}">`, "settings.shell.help"),
+        ].join("") },
+        { id: "sound", titleKey: "settings.cat.sound", html: () => [
+            settingsRow("settings.audio", `<select id="settingsEditor-audio">
+                <option>${window.settings.audio}</option>
+                <option>${!window.settings.audio}</option>
+            </select>`, "settings.audio.help"),
+            settingsRow("settings.audioVolume", `<input type="text" id="settingsEditor-audioVolume" value="${window.settings.audioVolume || '1.0'}">`, "settings.audioVolume.help"),
+            settingsRow("settings.disableFeedbackAudio", `<select id="settingsEditor-disableFeedbackAudio">
+                <option>${window.settings.disableFeedbackAudio}</option>
+                <option>${!window.settings.disableFeedbackAudio}</option>
+            </select>`, "settings.disableFeedbackAudio.help"),
+        ].join("") },
+        { id: "display", titleKey: "settings.cat.display", html: () => [
+            settingsRow("settings.allowWindowed", `<select id="settingsEditor-allowWindowed">
+                <option>${window.settings.allowWindowed}</option>
+                <option>${!window.settings.allowWindowed}</option>
+            </select>`, "settings.allowWindowed.help"),
+            settingsRow("settings.nointro", `<select id="settingsEditor-nointro">
+                <option>${window.settings.nointro}</option>
+                <option>${!window.settings.nointro}</option>
+            </select>`, "settings.nointro.help" + (window.settings.nointroOverride ? t("settings.overridden") : "")),
+            settingsRow("settings.nocursor", `<select id="settingsEditor-nocursor">
+                <option>${window.settings.nocursor}</option>
+                <option>${!window.settings.nocursor}</option>
+            </select>`, "settings.nocursor.help" + (window.settings.nocursorOverride ? t("settings.overridden") : "")),
+        ].join("") },
+        { id: "lock", titleKey: "settings.cat.lock", html: () => [
+            settingsRow("settings.screensaverEnabled", `<select id="settingsEditor-screensaverEnabled">
+                <option>${window.settings.screensaverEnabled}</option>
+                <option>${!window.settings.screensaverEnabled}</option>
+            </select>`, "settings.screensaverEnabled.help"),
+            settingsRow("settings.screensaverIdle", `<input type="text" id="settingsEditor-screensaverIdle" value="${window.settings.screensaverIdle || 300}">`, "settings.screensaverIdle.help"),
+            settingsRow("settings.screensaverStyle", `<select id="settingsEditor-screensaverStyle">
+                <option>${window.settings.screensaverStyle || "code"}</option>
+                <option>${(window.settings.screensaverStyle === "matrix") ? "code" : "matrix"}</option>
+            </select>`, "settings.screensaverStyle.help"),
+            section("settings.section.lock"),
+            settingsRow("settings.lockCode", `<input type="password" id="settingsEditor-lockCode" autocomplete="off" value="${window.settings.lockCode || '0000'}">`, "settings.lockCode.help"),
+            settingsRow("settings.lockOnIdle", `<select id="settingsEditor-lockOnIdle">
+                <option>${window.settings.lockOnIdle !== false}</option>
+                <option>${window.settings.lockOnIdle === false}</option>
+            </select>`, "settings.lockOnIdle.help"),
+            settingsRow("settings.bootAnimAfterUnlock", `<select id="settingsEditor-bootAnimAfterUnlock">
+                <option>${window.settings.bootAnimAfterUnlock !== false}</option>
+                <option>${window.settings.bootAnimAfterUnlock === false}</option>
+            </select>`, "settings.bootAnimAfterUnlock.help"),
+        ].join("") },
+        { id: "apps", titleKey: "settings.cat.apps", html: () => [
+            settingsRow("settings.appSort", `<select id="settingsEditor-appSort">
+                <option value="name-asc" ${window.settings.appSort === "name-asc" ? "selected" : ""}>${t("settings.appSort.nameAsc")}</option>
+                <option value="name-desc" ${window.settings.appSort === "name-desc" ? "selected" : ""}>${t("settings.appSort.nameDesc")}</option>
+                <option value="install-asc" ${window.settings.appSort === "install-asc" ? "selected" : ""}>${t("settings.appSort.installAsc")}</option>
+                <option value="install-desc" ${window.settings.appSort === "install-desc" ? "selected" : ""}>${t("settings.appSort.installDesc")}</option>
+                <option value="freq-asc" ${window.settings.appSort === "freq-asc" ? "selected" : ""}>${t("settings.appSort.freqAsc")}</option>
+                <option value="freq-desc" ${window.settings.appSort === "freq-desc" ? "selected" : ""}>${t("settings.appSort.freqDesc")}</option>
+            </select>`, "settings.appSort.help"),
+            settingsRow("settings.hideDotfiles", `<select id="settingsEditor-hideDotfiles">
+                <option>${window.settings.hideDotfiles}</option>
+                <option>${!window.settings.hideDotfiles}</option>
+            </select>`, "settings.hideDotfiles.help"),
+            settingsRow("settings.fsListView", `<select id="settingsEditor-fsListView">
+                <option>${window.settings.fsListView}</option>
+                <option>${!window.settings.fsListView}</option>
+            </select>`, "settings.fsListView.help"),
+            section("settings.section.appMonitor"),
+            settingsRow("settings.appMonitor.enabled", `<select id="settingsEditor-appMonitor-enabled">
+                <option>${(window.settings.appMonitor || {}).enabled !== false}</option>
+                <option>${(window.settings.appMonitor || {}).enabled === false}</option>
+            </select>`, "settings.appMonitor.enabled.help"),
+            settingsRow("settings.appMonitor.mock", `<select id="settingsEditor-appMonitor-mock">
+                <option value="auto" ${(window.settings.appMonitor || {}).mock == null ? "selected" : ""}>${t("settings.appMonitor.mock.auto")}</option>
+                <option value="true" ${(window.settings.appMonitor || {}).mock === true ? "selected" : ""}>${t("settings.appMonitor.mock.mock")}</option>
+                <option value="false" ${(window.settings.appMonitor || {}).mock === false ? "selected" : ""}>${t("settings.appMonitor.mock.real")}</option>
+            </select>`, "settings.appMonitor.mock.help"),
+            settingsRow("settings.appMonitor.appImageDirs", `<input type="text" id="settingsEditor-appMonitor-appImageDirs" value="${(window.settings.appMonitor || {}).appImageDirs || ''}">`, "settings.appMonitor.appImageDirs.help"),
+        ].join("") },
+        { id: "claude", titleKey: "settings.cat.claude", html: () => [
+            section("settings.section.claude"),
+            settingsRow("settings.claude.enabled", `<select id="settingsEditor-claude-enabled">
+                <option>${(window.settings.claude || {}).enabled}</option>
+                <option>${!(window.settings.claude || {}).enabled}</option>
+            </select>`, "settings.claude.enabled.help"),
+            settingsRow("settings.claude.baseUrl", `<input type="text" id="settingsEditor-claude-baseUrl" value="${(window.settings.claude || {}).baseUrl || ''}">`, "settings.claude.baseUrl.help"),
+            settingsRow("settings.claude.apiKey", `<input type="password" id="settingsEditor-claude-apiKey" autocomplete="off" value="${(window.settings.claude || {}).apiKey || ''}">`, "settings.claude.apiKey.help"),
+            settingsRow("settings.claude.model", `<input type="text" id="settingsEditor-claude-model" value="${(window.settings.claude || {}).model || ''}">`, "settings.claude.model.help"),
+            settingsRow("settings.claude.haikuModel", `<input type="text" id="settingsEditor-claude-haikuModel" value="${(window.settings.claude || {}).haikuModel || ''}">`, "settings.claude.haikuModel.help"),
+            section("settings.section.claudeNote"),
+        ].join("") },
+    ];
+
+    // Remember the language the editor was opened in, so a change can re-open
+    // the dialog in the new language (see writeSettingsFile). Note: `new Modal`
+    // returns the Modal INSTANCE (class constructors ignore `return this.id`),
+    // so keep the instance and address window.modals via its `.id`.
+    window._settingsOpenLang = window.settings.language;
+    const settingsModal = new Modal({
         type: "custom",
-        closeLabel: "关闭", // the settings menu stays in Chinese
-        title: `设置 <i>(v${remote.app.getVersion()})</i>`,
-        html: `<table id="settingsEditor">
-                    <tr>
-                        <th>项目</th>
-                        <th>说明</th>
-                        <th>值</th>
-                    </tr>
-                    <tr>
-                        <td>Shell 程序</td>
-                        <td>作为终端模拟器运行的程序</td>
-                        <td><input type="text" id="settingsEditor-shell" value="${window.settings.shell}"></td>
-                    </tr>
-                    <tr>
-                        <td>Shell 参数</td>
-                        <td>传递给 shell 的命令行参数</td>
-                        <td><input type="text" id="settingsEditor-shellArgs" value="${window.settings.shellArgs || ''}"></td>
-                    </tr>
-                    <tr>
-                        <td>工作目录</td>
-                        <td>启动时所在的初始工作目录</td>
-                        <td><input type="text" id="settingsEditor-cwd" value="${window.settings.cwd}"></td>
-                    </tr>
-                    <tr>
-                        <td>环境变量</td>
-                        <td>自定义 shell 环境变量覆盖</td>
-                        <td><input type="text" id="settingsEditor-env" value="${window.settings.env}"></td>
-                    </tr>
-                    <tr>
-                        <td>用户名</td>
-                        <td>启动时显示的自定义用户名</td>
-                        <td><input type="text" id="settingsEditor-username" value="${window.settings.username}"></td>
-                    </tr>
-                    <tr>
-                        <td>主题</td>
-                        <td>要加载的主题名称</td>
-                        <td><select id="settingsEditor-theme">
-                            <option>${window.settings.theme}</option>
-                            ${themes}
-                        </select></td>
-                    </tr>
-                    <tr>
-                        <td>终端字号</td>
-                        <td>终端文字的像素大小</td>
-                        <td><input type="text" id="settingsEditor-termFontSize" value="${window.settings.termFontSize}"></td>
-                    </tr>
-                    <tr>
-                        <td>音效</td>
-                        <td>启用界面音效</td>
-                        <td><select id="settingsEditor-audio">
-                            <option>${window.settings.audio}</option>
-                            <option>${!window.settings.audio}</option>
-                        </select></td>
-                    </tr>
-                    <tr>
-                        <td>音量</td>
-                        <td>音效的默认音量（0.0 - 1.0）</td>
-                        <td><input type="text" id="settingsEditor-audioVolume" value="${window.settings.audioVolume || '1.0'}"></td>
-                    </tr>
-                    <tr>
-                        <td>关闭反馈音效</td>
-                        <td>关闭循环反馈音效（主要为输入/输出提示音）</td>
-                        <td><select id="settingsEditor-disableFeedbackAudio">
-                            <option>${window.settings.disableFeedbackAudio}</option>
-                            <option>${!window.settings.disableFeedbackAudio}</option>
-                        </select></td>
-                    </tr>
-                    <tr>
-                        <td>端口</td>
-                        <td>UI 与 shell 连接所使用的本地端口</td>
-                        <td><input type="text" id="settingsEditor-port" value="${window.settings.port}"></td>
-                    </tr>
-                    <tr>
-                        <td>Ping 地址</td>
-                        <td>用于测试互联网连通性的 IPv4 地址</td>
-                        <td><input type="text" id="settingsEditor-pingAddr" value="${window.settings.pingAddr || "223.5.5.5"}"></td>
-                    </tr>
-                    <tr>
-                        <td>时钟制式</td>
-                        <td>时钟格式（12 / 24 小时）</td>
-                        <td><select id="settingsEditor-clockHours">
-                            <option>${(window.settings.clockHours === 12) ? "12" : "24"}</option>
-                            <option>${(window.settings.clockHours === 12) ? "24" : "12"}</option>
-                        </select></td>
-                    <tr>
-                        <td>显示器</td>
-                        <td>在此显示器上生成 UI（默认为主显示器）</td>
-                        <td><select id="settingsEditor-monitor">
-                            ${(typeof window.settings.monitor !== "undefined") ? "<option>"+window.settings.monitor+"</option>" : ""}
-                            ${monitors}
-                        </select></td>
-                    </tr>
-                    <tr>
-                        <td>跳过启动动画</td>
-                        <td>跳过启动日志与 Logo 动画${(window.settings.nointroOverride) ? "（当前已被命令行参数覆盖）" : ""}</td>
-                        <td><select id="settingsEditor-nointro">
-                            <option>${window.settings.nointro}</option>
-                            <option>${!window.settings.nointro}</option>
-                        </select></td>
-                    </tr>
-                    <tr>
-                        <td>隐藏鼠标</td>
-                        <td>隐藏鼠标光标${(window.settings.nocursorOverride) ? "（当前已被命令行参数覆盖）" : ""}</td>
-                        <td><select id="settingsEditor-nocursor">
-                            <option>${window.settings.nocursor}</option>
-                            <option>${!window.settings.nocursor}</option>
-                        </select></td>
-                    </tr>
-                    <tr>
-                        <td>网络接口</td>
-                        <td>覆盖用于网络监控的网卡接口</td>
-                        <td><select id="settingsEditor-iface">
-                            <option>${window.mods.netstat.iface}</option>
-                            ${ifaces}
-                        </select></td>
-                    </tr>
-                    <tr>
-                        <td>允许窗口化</td>
-                        <td>允许按 F11 键将界面切换到窗口模式</td>
-                        <td><select id="settingsEditor-allowWindowed">
-                            <option>${window.settings.allowWindowed}</option>
-                            <option>${!window.settings.allowWindowed}</option>
-                        </select></td>
-                    </tr>
-                    <tr>
-                        <td>保持宽高比</td>
-                        <td>窗口模式下尽量保持 16:9 的宽高比</td>
-                        <td><select id="settingsEditor-keepGeometry">
-                            <option>${(window.settings.keepGeometry === false) ? 'false' : 'true'}</option>
-                            <option>${(window.settings.keepGeometry === false) ? 'true' : 'false'}</option>
-                        </select></td>
-                    </tr>
-                    <tr>
-                        <td>合并进程线程</td>
-                        <td>在进程列表中合并同名的线程</td>
-                        <td><select id="settingsEditor-excludeThreadsFromToplist">
-                            <option>${window.settings.excludeThreadsFromToplist}</option>
-                            <option>${!window.settings.excludeThreadsFromToplist}</option>
-                        </select></td>
-                    </tr>
-                    <tr>
-                        <td>隐藏点文件</td>
-                        <td>在文件显示中隐藏以点（.）开头的文件与目录</td>
-                        <td><select id="settingsEditor-hideDotfiles">
-                            <option>${window.settings.hideDotfiles}</option>
-                            <option>${!window.settings.hideDotfiles}</option>
-                        </select></td>
-                    </tr>
-                    <tr>
-                        <td>列表视图</td>
-                        <td>以更详细的列表而非图标网格来显示文件</td>
-                        <td><select id="settingsEditor-fsListView">
-                            <option>${window.settings.fsListView}</option>
-                            <option>${!window.settings.fsListView}</option>
-                        </select></td>
-                    </tr>
-                    <tr>
-                        <td>地球实验功能</td>
-                        <td>切换网络地球的实验性功能</td>
-                        <td><select id="settingsEditor-experimentalGlobeFeatures">
-                            <option>${window.settings.experimentalGlobeFeatures}</option>
-                            <option>${!window.settings.experimentalGlobeFeatures}</option>
-                        </select></td>
-                    </tr>
-                    <tr>
-                        <td>实验功能</td>
-                        <td>开启 Chrome 的实验性网页功能（危险！）</td>
-                        <td><select id="settingsEditor-experimentalFeatures">
-                            <option>${window.settings.experimentalFeatures}</option>
-                            <option>${!window.settings.experimentalFeatures}</option>
-                        </select></td>
-                    </tr>
-                    <tr>
-                        <td>屏保</td>
-                        <td>空闲一段时间后显示黑客风格屏保，移动鼠标或按键返回</td>
-                        <td><select id="settingsEditor-screensaverEnabled">
-                            <option>${window.settings.screensaverEnabled}</option>
-                            <option>${!window.settings.screensaverEnabled}</option>
-                        </select></td>
-                    </tr>
-                    <tr>
-                        <td>屏保启动时间</td>
-                        <td>无操作多少秒后启动屏保</td>
-                        <td><input type="text" id="settingsEditor-screensaverIdle" value="${window.settings.screensaverIdle || 300}"></td>
-                    </tr>
-                    <tr>
-                        <td>屏保风格</td>
-                        <td>代码（终端内滚动代码）或黑客帝国（全屏字符雨）</td>
-                        <td><select id="settingsEditor-screensaverStyle">
-                            <option>${window.settings.screensaverStyle || "code"}</option>
-                            <option>${(window.settings.screensaverStyle === "matrix") ? "code" : "matrix"}</option>
-                        </select></td>
-                    </tr>
-                    <tr><td colspan="3" class="settingsEditor_section">锁屏</td></tr>
-                    <tr>
-                        <td>锁屏密码</td>
-                        <td>全屏锁屏的解锁密码（演示用密码，非系统密码）</td>
-                        <td><input type="text" id="settingsEditor-lockCode" value="${window.settings.lockCode || '0000'}"></td>
-                    </tr>
-                    <tr>
-                        <td>空闲自动锁定</td>
-                        <td>空闲达到屏保时间后直接进入锁屏（而不是普通屏保）</td>
-                        <td><select id="settingsEditor-lockOnIdle">
-                            <option>${window.settings.lockOnIdle !== false}</option>
-                            <option>${window.settings.lockOnIdle === false}</option>
-                        </select></td>
-                    </tr>
-                    <tr>
-                        <td>虚拟键盘</td>
-                        <td>触屏用。开启后底部 DATA 框变为触屏键盘（雷达保留），重启 eDEX 生效</td>
-                        <td><select id="settingsEditor-showKeyboard">
-                            <option>${window.settings.showKeyboard === true}</option>
-                            <option>${window.settings.showKeyboard !== true}</option>
-                        </select></td>
-                    </tr>
-                    <tr><td colspan="3" class="settingsEditor_section">Claude Code</td></tr>
-                    <tr>
-                        <td>启用 Claude 配置</td>
-                        <td>将下列 AI 服务配置注入终端环境变量（ANTHROPIC_*），重启 eDEX 后生效</td>
-                        <td><select id="settingsEditor-claude-enabled">
-                            <option>${(window.settings.claude || {}).enabled}</option>
-                            <option>${!(window.settings.claude || {}).enabled}</option>
-                        </select></td>
-                    </tr>
-                    <tr>
-                        <td>AI 服务地址</td>
-                        <td>API Base URL；留空使用 Anthropic 官方，可填代理 / 网关</td>
-                        <td><input type="text" id="settingsEditor-claude-baseUrl" value="${(window.settings.claude || {}).baseUrl || ''}"></td>
-                    </tr>
-                    <tr>
-                        <td>API Key</td>
-                        <td>ANTHROPIC_API_KEY（明文存于 settings.json）</td>
-                        <td><input type="password" id="settingsEditor-claude-apiKey" value="${(window.settings.claude || {}).apiKey || ''}"></td>
-                    </tr>
-                    <tr>
-                        <td>模型</td>
-                        <td>ANTHROPIC_MODEL，留空使用默认</td>
-                        <td><input type="text" id="settingsEditor-claude-model" value="${(window.settings.claude || {}).model || ''}"></td>
-                    </tr>
-                    <tr>
-                        <td>快速小模型</td>
-                        <td>ANTHROPIC_DEFAULT_HAIKU_MODEL（背景 / 快速任务），留空使用默认</td>
-                        <td><input type="text" id="settingsEditor-claude-haikuModel" value="${(window.settings.claude || {}).haikuModel || ''}"></td>
-                    </tr>
-                    <tr><td colspan="3" class="settingsEditor_section">第 3 个终端标签为 Claude 专用标签；claude 由官方独立更新（claude update），不影响 eDEX</td></tr>
-                    <tr><td colspan="3" class="settingsEditor_section">应用监视器（终端标签 4 / 5）</td></tr>
-                    <tr>
-                        <td>启用监视器</td>
-                        <td>标签 4/5 作为虚拟显示器显示已安装应用</td>
-                        <td><select id="settingsEditor-appMonitor-enabled">
-                            <option>${(window.settings.appMonitor || {}).enabled !== false}</option>
-                            <option>${(window.settings.appMonitor || {}).enabled === false}</option>
-                        </select></td>
-                    </tr>
-                    <tr>
-                        <td>Mock 后端</td>
-                        <td>Mock=内置演示画面（无需真实应用）；真实=Linux 上的 Xvfb 应用；自动=macOS 用 Mock / Linux 用真实</td>
-                        <td><select id="settingsEditor-appMonitor-mock">
-                            <option value="auto" ${(window.settings.appMonitor || {}).mock == null ? "selected" : ""}>自动</option>
-                            <option value="true" ${(window.settings.appMonitor || {}).mock === true ? "selected" : ""}>Mock</option>
-                            <option value="false" ${(window.settings.appMonitor || {}).mock === false ? "selected" : ""}>真实</option>
-                        </select></td>
-                    </tr>
-                    <tr>
-                        <td>AppImage 目录</td>
-                        <td>逗号分隔，扫描 .AppImage（如 ~/Applications,~/AppImages）</td>
-                        <td><input type="text" id="settingsEditor-appMonitor-appImageDirs" value="${(window.settings.appMonitor || {}).appImageDirs || ''}"></td>
-                    </tr>
-                </table>
-                <h6 id="settingsEditorStatus">已从内存加载当前设置</h6>
-                <br>`,
+        closeLabel: t("settings.close"),
+        title: `${t("settings.title")} <i>(v${remote.app.getVersion()})</i>`,
+        html: `<div id="settingsBody">
+                    <div id="settingsSide">
+                        ${CATS.map((c, i) => `<button type="button" class="settings_cat_btn${i === 0 ? " active" : ""}" data-cat="${c.id}">${t(c.titleKey)}</button>`).join("")}
+                    </div>
+                    <div id="settingsEditor">
+                        ${CATS.map((c, i) => `<div class="settings_cat${i === 0 ? " active" : ""}" data-cat="${c.id}">${c.html()}</div>`).join("")}
+                    </div>
+                </div>
+                <h6 id="settingsEditorStatus">${t("settings.loadedStatus")}</h6>`,
         buttons: [
-            {label: "用外部编辑器打开", action:`electron.shell.openPath('${settingsFile}');electronWin.minimize();`},
-            {label: "保存到磁盘", action: "window.writeSettingsFile()"},
-            {label: "快捷键", action: "window.openShortcutsHelp()"},
-            {label: "WiFi", action: "window.wifiPanel.open()"},
-            {label: "锁屏", action: "window.lockScreen.show()"},
-            {label: "系统更新", action: "window.systemUpdate.open()"},
-            {label: "启动屏保", action: "window.modals[Object.keys(window.modals).pop()].close(); setTimeout(() => window.screensaver.show(), 150);"},
-            {label: "重载界面", action: "window.location.reload(true);"},
-            {label: "重启 eDEX", action: "remote.app.relaunch();remote.app.quit();"}
+            {label: t("settings.btn.openExternal"), action:`electron.shell.openPath('${settingsFile}');electronWin.minimize();`},
+            {label: t("settings.btn.save"), action: "window.writeSettingsFile()"},
+            {label: t("settings.btn.shortcuts"), action: "window.openShortcutsHelp()"},
+            {label: t("settings.btn.wifi"), action: "window.wifiPanel.open()"},
+            {label: t("settings.btn.lock"), action: "window.lockScreen.show()"},
+            {label: t("settings.btn.update"), action: "window.systemUpdate.open()"},
+            {label: t("settings.btn.screensaver"), action: "window.modals[Object.keys(window.modals).pop()].close(); setTimeout(() => window.screensaver.show(), 150);"},
+            {label: t("settings.btn.reload"), action: "window.location.reload(true);"},
+            {label: t("settings.btn.restart"), action: "remote.app.relaunch();remote.app.quit();"}
         ]
     }, () => {
-        // Focus back on the term
+        // Modal closed: drop the key listener, then focus back on the term.
+        if (window._settingsKeyHandler) {
+            document.removeEventListener("keydown", window._settingsKeyHandler);
+            window._settingsKeyHandler = null;
+        }
         window.term[window.currentTerm].term.focus();
     });
+    window._settingsModal = settingsModal;
+
+    // Sidebar category switching: clicking a button shows its pane and hides the
+    // others (the panes themselves stay in the DOM, see the CATS comment above).
+    const activateCategory = btn => {
+        const cat = btn.dataset.cat;
+        document.querySelectorAll("#settingsSide .settings_cat_btn").forEach(b => b.classList.toggle("active", b === btn));
+        document.querySelectorAll("#settingsEditor .settings_cat").forEach(p => p.classList.toggle("active", p.dataset.cat === cat));
+    };
+    document.querySelectorAll("#settingsSide .settings_cat_btn").forEach(btn => {
+        btn.addEventListener("click", () => activateCategory(btn));
+    });
+
+    // "i" info buttons toggle their sibling help popover (bound once per page).
+    if (!window._settingsInfoBound) {
+        window._settingsInfoBound = true;
+        document.addEventListener("click", e => {
+            const btn = e.target.closest ? e.target.closest(".settings_info_btn") : null;
+            if (btn) {
+                const pop = btn.parentElement.querySelector(".settings_info_pop");
+                if (pop) pop.classList.toggle("open");
+            } else if (!(e.target.closest && e.target.closest(".settings_info_pop"))) {
+                document.querySelectorAll("#settingsEditor .settings_info_pop.open").forEach(p => p.classList.remove("open"));
+            }
+        });
+    }
+
+    // The Modal class has no built-in Esc handling, so add our own keydown
+    // listener (removed in the close callback above). ↑/↓ move the category
+    // highlight, Enter opens it, Esc closes the dialog — but never hijack
+    // arrows while an input/dropdown has focus.
+    window._settingsKeyHandler = e => {
+        const m = window._settingsModal;
+        if (!m || !m.id || !window.modals[m.id]) return;
+        if (e.key === "Escape") { e.preventDefault(); window.modals[m.id].close(); return; }
+        const ae = document.activeElement;
+        const editable = ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT"
+            || (ae.closest && ae.closest(".mod_loc_dd, .settings_dd")));
+        if (editable && (e.key === "ArrowUp" || e.key === "ArrowDown")) return;
+        if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+            e.preventDefault();
+            const btns = Array.from(document.querySelectorAll("#settingsSide .settings_cat_btn"));
+            if (!btns.length) return;
+            const cur = btns.indexOf(document.activeElement);
+            const next = e.key === "ArrowDown"
+                ? (cur < 0 ? 0 : (cur + 1) % btns.length)
+                : (cur < 0 ? btns.length - 1 : (cur - 1 + btns.length) % btns.length);
+            btns[next].focus();
+        } else if (e.key === "Enter") {
+            const btn = ae && ae.closest ? ae.closest(".settings_cat_btn") : null;
+            if (btn) { e.preventDefault(); activateCategory(btn); }
+        }
+    };
+    document.addEventListener("keydown", window._settingsKeyHandler);
 
     // Native <select> popups do not render well in this fullscreen HUD, so swap
-    // them for theme-styled custom dropdowns once the modal is in the DOM.
-    setTimeout(window.setupSettingsDropdowns, 50);
+    // them for theme-styled custom dropdowns once the modal is in the DOM. Focus
+    // the active category button so the keyboard can drive the sidebar.
+    setTimeout(() => {
+        window.setupSettingsDropdowns();
+        const active = document.querySelector("#settingsSide .settings_cat_btn.active");
+        if (active) active.focus();
+    }, 50);
 };
 
 // Convert every native <select> in the settings editor into a theme-styled
@@ -1176,19 +1589,25 @@ window.setupSettingsDropdowns = () => {
         let input = wrap.querySelector("input");
         let btn = wrap.querySelector("button");
         let list = wrap.querySelector(".mod_loc_list");
-        let options = Array.from(sel.options).map(o => o.text);
-        let isBool = options.length === 2 && options.includes("true") && options.includes("false");
+        // Each option keeps its VALUE (the persisted string) and displays its
+        // TEXT. Value-attribute selects (language, appSort, appMonitor-mock)
+        // must persist the `value`, not the visible label — e.g. the language
+        // dropdown shows "中文" but saves "zh".
+        let options = Array.from(sel.options).map(o => ({ value: o.value, text: o.text }));
+        let isBool = options.length === 2 && options.every(o => o.value === "true" || o.value === "false");
         let label = v => (isBool ? (v === "true" ? "TRUE" : "FALSE") : v);
+        let show = o => (isBool ? label(o.value) : o.text);
         let value = sel.value;
 
         let render = () => {
-            btn.textContent = label(value);
+            let cur = options.find(o => o.value === value) || { value, text: value };
+            btn.textContent = show(cur);
             list.innerHTML = "";
-            options.forEach(opt => {
+            options.forEach(o => {
                 let d = document.createElement("div");
-                d.className = "mod_loc_opt" + (opt === value ? " mod_loc_opt_active" : "");
-                d.dataset.value = opt;
-                d.textContent = label(opt);
+                d.className = "mod_loc_opt" + (o.value === value ? " mod_loc_opt_active" : "");
+                d.dataset.value = o.value;
+                d.textContent = show(o);
                 list.appendChild(d);
             });
         };
@@ -1233,62 +1652,96 @@ window.writeFile = (path) => {
 };
 
 window.writeSettingsFile = () => {
-    window.settings = {
-        shell: document.getElementById("settingsEditor-shell").value,
-        shellArgs: document.getElementById("settingsEditor-shellArgs").value,
-        cwd: document.getElementById("settingsEditor-cwd").value,
-        env: document.getElementById("settingsEditor-env").value,
-        username: document.getElementById("settingsEditor-username").value,
-        theme: document.getElementById("settingsEditor-theme").value,
-        termFontSize: Number(document.getElementById("settingsEditor-termFontSize").value),
-        audio: (document.getElementById("settingsEditor-audio").value === "true"),
-        audioVolume: Number(document.getElementById("settingsEditor-audioVolume").value),
-        disableFeedbackAudio: (document.getElementById("settingsEditor-disableFeedbackAudio").value === "true"),
-        pingAddr: document.getElementById("settingsEditor-pingAddr").value,
-        clockHours: Number(document.getElementById("settingsEditor-clockHours").value),
-        port: Number(document.getElementById("settingsEditor-port").value),
-        monitor: Number(document.getElementById("settingsEditor-monitor").value),
-        nointro: (document.getElementById("settingsEditor-nointro").value === "true"),
-        nocursor: (document.getElementById("settingsEditor-nocursor").value === "true"),
-        iface: document.getElementById("settingsEditor-iface").value,
-        allowWindowed: (document.getElementById("settingsEditor-allowWindowed").value === "true"),
-        forceFullscreen: window.settings.forceFullscreen,
-        keepGeometry: (document.getElementById("settingsEditor-keepGeometry").value === "true"),
-        excludeThreadsFromToplist: (document.getElementById("settingsEditor-excludeThreadsFromToplist").value === "true"),
-        hideDotfiles: (document.getElementById("settingsEditor-hideDotfiles").value === "true"),
-        fsListView: (document.getElementById("settingsEditor-fsListView").value === "true"),
-        experimentalGlobeFeatures: (document.getElementById("settingsEditor-experimentalGlobeFeatures").value === "true"),
-        experimentalFeatures: (document.getElementById("settingsEditor-experimentalFeatures").value === "true"),
-        screensaverEnabled: (document.getElementById("settingsEditor-screensaverEnabled").value === "true"),
-        screensaverIdle: Number(document.getElementById("settingsEditor-screensaverIdle").value),
-        screensaverStyle: document.getElementById("settingsEditor-screensaverStyle").value,
-        lockCode: document.getElementById("settingsEditor-lockCode").value,
-        lockOnIdle: (document.getElementById("settingsEditor-lockOnIdle").value === "true"),
-        showKeyboard: (document.getElementById("settingsEditor-showKeyboard").value === "true"),
-        claude: {
-            enabled: (document.getElementById("settingsEditor-claude-enabled").value === "true"),
-            baseUrl: document.getElementById("settingsEditor-claude-baseUrl").value,
-            apiKey: document.getElementById("settingsEditor-claude-apiKey").value,
-            model: document.getElementById("settingsEditor-claude-model").value,
-            haikuModel: document.getElementById("settingsEditor-claude-haikuModel").value
-        },
-        appMonitor: {
-            enabled: (document.getElementById("settingsEditor-appMonitor-enabled").value === "true"),
-            mock: document.getElementById("settingsEditor-appMonitor-mock").value === "auto"
-                ? null
-                : (document.getElementById("settingsEditor-appMonitor-mock").value === "true"),
-            appImageDirs: document.getElementById("settingsEditor-appMonitor-appImageDirs").value
-        }
+    // MERGE into the in-memory settings instead of rebuilding them from the form:
+    // rebuilding used to silently drop every key without a form control (webapps,
+    // weatherLocation, and the settings removed from the UI: port, pingAddr,
+    // iface, monitor, keepGeometry, …). Those are still editable via the "open
+    // in external editor" button, so they must survive a save.
+    const s = Object.assign({}, window.settings);
+    s.shell = document.getElementById("settingsEditor-shell").value;
+    s.username = document.getElementById("settingsEditor-username").value;
+    s.theme = document.getElementById("settingsEditor-theme").value;
+    s.termFontSize = Number(document.getElementById("settingsEditor-termFontSize").value);
+    s.audio = (document.getElementById("settingsEditor-audio").value === "true");
+    s.audioVolume = Number(document.getElementById("settingsEditor-audioVolume").value);
+    s.disableFeedbackAudio = (document.getElementById("settingsEditor-disableFeedbackAudio").value === "true");
+    s.clockHours = Number(document.getElementById("settingsEditor-clockHours").value);
+    s.nointro = (document.getElementById("settingsEditor-nointro").value === "true");
+    s.nocursor = (document.getElementById("settingsEditor-nocursor").value === "true");
+    s.allowWindowed = (document.getElementById("settingsEditor-allowWindowed").value === "true");
+    s.hideDotfiles = (document.getElementById("settingsEditor-hideDotfiles").value === "true");
+    s.fsListView = (document.getElementById("settingsEditor-fsListView").value === "true");
+    s.screensaverEnabled = (document.getElementById("settingsEditor-screensaverEnabled").value === "true");
+    s.screensaverIdle = Number(document.getElementById("settingsEditor-screensaverIdle").value);
+    s.screensaverStyle = document.getElementById("settingsEditor-screensaverStyle").value;
+    s.lockCode = document.getElementById("settingsEditor-lockCode").value;
+    s.lockOnIdle = (document.getElementById("settingsEditor-lockOnIdle").value === "true");
+    s.showKeyboard = (document.getElementById("settingsEditor-showKeyboard").value === "true");
+    s.bootAnimAfterUnlock = (document.getElementById("settingsEditor-bootAnimAfterUnlock").value === "true");
+    s.appSort = document.getElementById("settingsEditor-appSort").value;
+    s.language = document.getElementById("settingsEditor-language").value;
+    s.claude = {
+        enabled: (document.getElementById("settingsEditor-claude-enabled").value === "true"),
+        baseUrl: document.getElementById("settingsEditor-claude-baseUrl").value,
+        apiKey: document.getElementById("settingsEditor-claude-apiKey").value,
+        model: document.getElementById("settingsEditor-claude-model").value,
+        haikuModel: document.getElementById("settingsEditor-claude-haikuModel").value
+    };
+    s.appMonitor = {
+        enabled: (document.getElementById("settingsEditor-appMonitor-enabled").value === "true"),
+        mock: document.getElementById("settingsEditor-appMonitor-mock").value === "auto"
+            ? null
+            : (document.getElementById("settingsEditor-appMonitor-mock").value === "true"),
+        appImageDirs: document.getElementById("settingsEditor-appMonitor-appImageDirs").value
     };
 
-    Object.keys(window.settings).forEach(key => {
-        if (window.settings[key] === "undefined") {
-            delete window.settings[key];
+    Object.keys(s).forEach(key => {
+        if (s[key] === "undefined") {
+            delete s[key];
         }
     });
 
+    window.settings = s;
+    fs.writeFileSync(settingsFile, JSON.stringify(s, "", 4));
+    document.getElementById("settingsEditorStatus").innerText = t("settings.savedStatus")+new Date().toTimeString();
+
+    // A language change re-opens the dialog in the new language (no full reload,
+    // so the boot animation does not replay).
+    if (window._settingsOpenLang && window._settingsOpenLang !== window.settings.language) {
+        const m = window._settingsModal;
+        if (m && m.id && window.modals[m.id]) {
+            window.modals[m.id].close();
+            setTimeout(() => window.openSettings(), 160);
+        }
+    }
+};
+
+// First-launch language choice (also reachable from the language dropdown's
+// English/中文 values). Persists to settings.json; the rest of the UI stays
+// English, so no page reload is needed — just close the bilingual picker.
+window.setLanguage = lang => {
+    if (lang !== "zh" && lang !== "en") return;
+    window.settings.language = lang;
     fs.writeFileSync(settingsFile, JSON.stringify(window.settings, "", 4));
-    document.getElementById("settingsEditorStatus").innerText = "设置已写入 settings.json 文件，时间："+new Date().toTimeString();
+    if (window._langPicker && window._langPicker.id && window.modals[window._langPicker.id]) {
+        window.modals[window._langPicker.id].close();
+        window._langPicker = null;
+    }
+};
+
+window.showLanguagePicker = () => {
+    if (window.settings.language) return;
+    if (window._langPicker && window._langPicker.id && window.modals[window._langPicker.id]) return;
+    window._langPicker = new Modal({
+        type: "custom",
+        title: "Select language / 选择语言",
+        closeLabel: "Close / 关闭",
+        html: `<p style="margin:0 0 1.2vh">The interface stays English — this picks the language of the settings menu.<br>其余界面保持英文——此处选择设置菜单的语言。</p>`,
+        buttons: [
+            {label: "中文", action: "window.setLanguage('zh')"},
+            {label: "English", action: "window.setLanguage('en')"}
+        ]
+    });
 };
 
 window.toggleFullScreen = () => {
@@ -1307,18 +1760,18 @@ window.openShortcutsHelp = () => {
     if (document.getElementById("shortcutsHelpAccordeon1")) return;
 
     const shortcutsDefinition = {
-        "COPY": "从终端复制选中的缓冲区内容。",
-        "PASTE": "将系统剪贴板粘贴到终端。",
-        "NEXT_TAB": "切换到下一个已打开的终端标签页（从左到右）。",
-        "PREVIOUS_TAB": "切换到上一个已打开的终端标签页（从右到左）。",
-        "TAB_X": "切换到终端标签页 <strong>X</strong>，若尚未打开则创建它。",
-        "SETTINGS": "打开设置编辑器。",
-        "SHORTCUTS": "列出并编辑可用的键盘快捷键。",
-        "FUZZY_SEARCH": "在当前工作目录中搜索条目。",
-        "FS_LIST_VIEW": "在文件浏览器的列表视图与网格视图之间切换。",
-        "FS_DOTFILES": "切换文件浏览器中隐藏文件与目录的显示。",
-        "DEV_DEBUG": "打开 Chromium 开发者工具，用于调试。",
-        "DEV_RELOAD": "触发前端热重载。"
+        "COPY": t("shortcuts.copy"),
+        "PASTE": t("shortcuts.paste"),
+        "NEXT_TAB": t("shortcuts.nextTab"),
+        "PREVIOUS_TAB": t("shortcuts.prevTab"),
+        "TAB_X": t("shortcuts.tabX"),
+        "SETTINGS": t("shortcuts.settings"),
+        "SHORTCUTS": t("shortcuts.shortcuts"),
+        "FUZZY_SEARCH": t("shortcuts.fuzzySearch"),
+        "FS_LIST_VIEW": t("shortcuts.fsListView"),
+        "FS_DOTFILES": t("shortcuts.fsDotfiles"),
+        "DEV_DEBUG": t("shortcuts.devDebug"),
+        "DEV_RELOAD": t("shortcuts.devReload")
     };
 
     let appList = "";
@@ -1326,7 +1779,7 @@ window.openShortcutsHelp = () => {
         let action = (cut.action.startsWith("TAB_")) ? "TAB_X" : cut.action;
 
         appList += `<tr>
-                        <td>${(cut.enabled) ? '是' : '否'}</td>
+                        <td>${(cut.enabled) ? t("shortcuts.yes") : t("shortcuts.no")}</td>
                         <td><input disabled type="text" maxlength=25 value="${cut.trigger}"></td>
                         <td>${shortcutsDefinition[action]}</td>
                     </tr>`;
@@ -1335,10 +1788,10 @@ window.openShortcutsHelp = () => {
     let customList = "";
     window.shortcuts.filter(e => e.type === "shell").forEach(cut => {
         customList += `<tr>
-                            <td>${(cut.enabled) ? '是' : '否'}</td>
+                            <td>${(cut.enabled) ? t("shortcuts.yes") : t("shortcuts.no")}</td>
                             <td><input disabled type="text" maxlength=25 value="${cut.trigger}"></td>
                             <td>
-                                <input disabled type="text" placeholder="运行终端命令..." value="${cut.action}">
+                                <input disabled type="text" placeholder="${t("shortcuts.cmdPlaceholder")}" value="${cut.action}">
                                 <input disabled type="checkbox" name="shortcutsHelpNew_Enter" ${(cut.linebreak) ? 'checked' : ''}>
                                 <label for="shortcutsHelpNew_Enter">Enter</label>
                             </td>
@@ -1347,35 +1800,35 @@ window.openShortcutsHelp = () => {
 
     new Modal({
         type: "custom",
-        title: `键盘快捷键 <i>(v${remote.app.getVersion()})</i>`,
-        html: `<h5>您可以使用以下快捷键：</h5>
+        title: `${t("shortcuts.title")} <i>(v${remote.app.getVersion()})</i>`,
+        html: `<h5>${t("shortcuts.intro")}</h5>
                 <details open id="shortcutsHelpAccordeon1">
-                    <summary>模拟器快捷键</summary>
+                    <summary>${t("shortcuts.simulator")}</summary>
                     <table class="shortcutsHelp">
                         <tr>
-                            <th>启用</th>
-                            <th>快捷键</th>
-                            <th>操作</th>
+                            <th>${t("shortcuts.th.enabled")}</th>
+                            <th>${t("shortcuts.th.shortcut")}</th>
+                            <th>${t("shortcuts.th.action")}</th>
                         </tr>
                         ${appList}
                     </table>
                 </details>
                 <br>
                 <details id="shortcutsHelpAccordeon2">
-                    <summary>自定义命令快捷键</summary>
+                    <summary>${t("shortcuts.custom")}</summary>
                     <table class="shortcutsHelp">
                         <tr>
-                            <th>启用</th>
-                            <th>快捷键</th>
-                            <th>命令</th>
+                            <th>${t("shortcuts.th.enabled")}</th>
+                            <th>${t("shortcuts.th.shortcut")}</th>
+                            <th>${t("shortcuts.th.command")}</th>
                         <tr>
                        ${customList}
                     </table>
                 </details>
                 <br>`,
         buttons: [
-            {label: "打开快捷键文件", action:`electron.shell.openPath('${shortcutsFile}');electronWin.minimize();`},
-            {label: "重载界面", action: "window.location.reload(true);"},
+            {label: t("shortcuts.btn.openFile"), action:`electron.shell.openPath('${shortcutsFile}');electronWin.minimize();`},
+            {label: t("shortcuts.btn.reload"), action: "window.location.reload(true);"},
         ]
     }, () => {
         window.term[window.currentTerm].term.focus();
@@ -1679,43 +2132,101 @@ window.screensaver = (() => {
     // "jump" to something unrelated.
     const pad = n => "    ".repeat(Math.max(0, n));
     const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+    const GENWORDS = ["state", "vector", "matrix", "delta", "alpha", "beta", "gamma", "coef", "rate", "factor", "index", "buffer", "sample", "offset", "scale", "bound", "residual", "kernel"];
     const SCENARIOS = {
         ballistic: {
-            file: "strategic_sim.cpp", note: "three-stage ballistic trajectory and yield model",
-            funcs: ["compute_apogee", "estimate_reentry_angle", "integrate_trajectory", "compute_overpressure", "predict_impact_point", "assess_blast_damage", "trace_fallout_field"],
-            vars: ["velocity", "reentry_angle", "apogee", "warhead_yield", "detonation_alt", "impact_point", "range_m", "mach", "thrust", "guidance", "azimuth", "elevation", "fuse_time", "blast_radius", "overpressure", "payload_mass", "state_vector"],
-            exprs: ["0.5 * AIR_DENSITY * mach * mach * C_D * reference_area", "atan2(state.vel.z, sqrt(state.vel.x * state.vel.x + state.vel.y * state.vel.y))", "state.pos + state.vel * dt + 0.5 * state.accel * dt * dt", "yield_kilotons * pow(10.0, 2.0 / 3.0) * 0.6 * exposure_factor", "GRAVITY * (t - launch_time) * (t - launch_time) / 2.0", "mach * SPEED_OF_SOUND * (1.0 + 0.2 * mach * mach)", "sqrt(2.0 * kinetic_energy / payload_mass)", "cbrt(warhead_yield / 1.0e6) * BLAST_SCALE", "state.accel + GRAVITY * (1.0 - drag_coeff * mach * mach) - thrust / payload_mass", "range_m * sin(elevation) / tan(azimuth) + apogee * cos(reentry_angle) / 2.0"],
-            comments: ["Integrate the reentry vehicle under atmospheric drag using an RK4 integrator with a fixed 0.5 ms timestep and temperature-corrected density.", "Overpressure at the target scales with the cube root of the yield, attenuated by the terrain shadow factor and the local wind field.", "Predict the impact point from the current state vector, the trim condition and the residual ballistic coefficient of the reentry body.", "Detonation altitude must clear the fireball radius before ground contact in order to maximize the overpressure band at the aimpoint.", "The blast yield is bounded by the warhead maximum compression ratio at the moment of detonation, not the nominal yield.", "Trace the fallout field downwind using the transport model with a ten-metre gridded terrain mesh."],
-            consts: [["GRAVITY", "9.80665"], ["AIR_DENSITY", "1.225"], ["SPEED_OF_SOUND", "343.0"], ["BLAST_SCALE", "4.5e-4"], ["N_SAMPLES", "4096"]]
+            nouns: ["apogee", "reentry", "trajectory", "overpressure", "impact", "fallout", "yield", "thrust", "azimuth", "elevation", "payload", "warhead"],
+            verbs: ["compute", "predict", "integrate", "estimate", "assess", "trace", "solve", "model"],
+            note: "three-stage ballistic trajectory and yield model"
         },
         radar: {
-            file: "track_filter.cpp", note: "phased-array tracking and CFAR detection",
-            funcs: ["init_track_table", "update_kalman_track", "compute_doppler_shift", "cfar_detect_target", "fuse_beamformer_output", "coast_lost_track", "handoff_track_to_guidance"],
-            vars: ["azimuth", "elevation", "range_rate", "doppler", "signal_power", "noise_floor", "clutter", "track_id", "update_rate", "cross_section", "lock_status", "beam_width"],
-            exprs: ["2.0 * CARRIER_FREQ * range_rate / C", "C * round_trip_time / 2.0", "kalman_update(measurement, state, Q, R)", "pow(10.0, snr_db / 20.0)", "gain * (measurement - predicted_state)", "signal_power / noise_floor", "coherence * doppler_bin_width", "sqrt(beam_width * beam_width + pulse_width * pulse_width)", "2.0 * CARRIER_FREQ * range_rate / C * pow(10.0, snr_db / 20.0)", "sqrt(pow(signal_power, 2.0) + pow(noise_floor, 2.0)) * coherence"],
-            comments: ["Update the Kalman track with the latest radar measurement and its covariance matrix, gating on the innovation residual.", "Reject returns below the CFAR threshold as clutter and keep the false-alarm rate bounded across the scan volume.", "Coast the track when the target is lost for more than N consecutive frames before declaring the track invalid.", "Fuse the in-phase and quadrature channels to recover the Doppler offset of the target at the beam centre.", "Hand the confirmed track to the guidance loop together with the filter covariance and the residual history.", "Recompute the beam steering vector from the updated target state at each scan update."],
-            consts: [["CARRIER_FREQ", "9.4e9"], ["C", "2.99792458e8"], ["CFAR_THRESHOLD", "13.0"], ["MAX_TRACKS", "512"], ["UPDATE_RATE", "20.0"]]
+            nouns: ["track", "doppler", "beam", "clutter", "range_rate", "cross_section", "azimuth", "elevation", "signal", "noise_floor", "coherence"],
+            verbs: ["update", "init", "detect", "fuse", "coast", "handoff", "filter", "gate"],
+            note: "phased-array tracking and CFAR detection"
         },
         emp: {
-            file: "hardening_scan.cpp", note: "HEMP coupling and circuit hardening",
-            funcs: ["compute_field_coupling", "estimate_induced_surge", "assess_shield_attenuation", "model_cable_resonance", "verify_circuit_hardening", "sweep_rise_time"],
-            vars: ["field_strength", "pulse", "rise_time", "shield", "cable", "induction", "circuit", "hardening", "surge", "current", "impedance", "skin_depth"],
-            exprs: ["1.0e4 * pow(distance, -1.5) * polarisation_factor", "dPhi / dt", "voltage / impedance", "20.0 * log10(1.0 + thickness / SKIN_DEPTH)", "rise_time * BANDWIDTH", "flux_linkage * AREA", "peak * exp(-t / DECAY)", "induced_current * cable_length / loop_area", "2.0 * PEAK_E * sin(rise_time * BANDWIDTH) * exp(-t / DECAY)", "voltage / impedance * (1.0 - exp(-rise_time * BANDWIDTH))"],
-            comments: ["Compute the induced surge from the HEMP pulse coupling into the long cable run between the shelter and the mast.", "Attenuation rises with shield thickness relative to the skin depth at the dominant frequency of the incident field.", "A hardened circuit clamps the transient before it reaches the semiconductor gate and the downstream logic.", "The fast rise time couples into longer conductors far more efficiently than a slow ramp, so treat it as the worst case.", "Verify the clamp voltage against the worst-case transient produced by the coupling model at the shelter boundary.", "Sweep the rise time from the nominal HEMP spec down to the fast-coupling bound to bracket the response."],
-            consts: [["PEAK_E", "5.0e4"], ["RISE_TIME", "2.5e-9"], ["SKIN_DEPTH", "8.6e-6"], ["CLAMP_VOLTAGE", "2.2"], ["DECAY", "1.0e-7"]]
+            nouns: ["coupling", "surge", "attenuation", "resonance", "hardening", "induction", "shield", "cable", "impedance", "skin_depth"],
+            verbs: ["compute", "estimate", "assess", "model", "verify", "sweep", "clamp", "measure"],
+            note: "HEMP coupling and circuit hardening"
         },
         winter: {
-            file: "climate_transport.cpp", note: "stratospheric aerosol transport and forcing",
-            funcs: ["inject_soot_mass", "evolve_optical_depth", "compute_radiative_forcing", "transport_aerosol", "project_temperature_drop", "estimate_settling_rate"],
-            vars: ["aerosol", "optical_depth", "insolation", "temperature_drop", "dispersal", "settling", "stratosphere", "soot", "albedo", "tau"],
-            exprs: ["optical_depth * (1.0 - transmittance)", "-alpha * insolation * optical_depth", "soot_mass * settling_rate / scale_height", "albedo * (1.0 + delta)", "insolation * exp(-tau)", "forcing * response_time", "deposition / residence", "soot_emission * scavenging_fraction", "insolation * exp(-tau) * (1.0 - albedo * optical_depth)", "soot_mass * settling_rate / scale_height * exp(-residence / tau)"],
-            comments: ["Soot injected into the stratosphere reduces the surface insolation across the hemisphere, driving a surface cooling anomaly.", "Optical depth drives the temperature drop through the radiative forcing of the aerosol layer above the tropopause.", "Settling timescales govern how long the cooling anomaly persists after the source emission stops.", "High-albedo aerosols scatter more incoming shortwave radiation back into space, amplifying the forcing.", "Project the temperature anomaly over the response time of the coupled ocean and atmosphere model grid.", "Advect the aerosol column with the stratospheric wind field at each time step."],
-            consts: [["SUN_CONSTANT", "1361.0"], ["FORCING_COEF", "0.042"], ["RESIDENCE", "2.1e7"], ["SOOT_RATE", "5.0e6"], ["TAU_REF", "0.35"]]
+            nouns: ["aerosol", "optical_depth", "insolation", "temperature_drop", "settling", "stratosphere", "soot", "albedo", "tau", "forcing"],
+            verbs: ["inject", "evolve", "transport", "project", "compute", "estimate", "advect", "scatter"],
+            note: "stratospheric aerosol transport and forcing"
+        },
+        uplink: {
+            nouns: ["downlink", "carrier", "parity", "ack", "retransmit", "jitter", "sync", "throughput", "channel", "latency"],
+            verbs: ["encrypt", "decode", "verify", "resync", "throttle", "buffer", "handshake", "route"],
+            note: "deep-space uplink and forward error correction"
+        },
+        recon: {
+            nouns: ["signature", "sweep", "footprint", "spectrum", "return", "masking", "baseline", "resolution", "aperture", "phase"],
+            verbs: ["scan", "classify", "normalize", "correlate", "lock", "descope", "triangulate", "confirm"],
+            note: "orbital reconnaissance and signature analysis"
         }
     };
-    let S = SCENARIOS.ballistic;
-    const v = () => pick(S.vars) + (Math.random() < 0.4 ? "_" + R(0, 100) : "");
-    const E = () => pick(S.exprs);
+
+    // Each file is generated fresh from the scenario word pools, so the stream
+    // never visibly repeats: function names, constants, expressions and
+    // comments are all assembled at file start.
+    let cur = null; // { S, file, funcs, consts }
+    const makeConst = () => {
+        const name = varName().toUpperCase();
+        const t = Math.floor(Math.random() * 4);
+        const val = t === 0 ? R(1, 9) + "." + R(0, 9) + "e" + (Math.random() < 0.5 ? "+" : "-") + R(1, 9)
+            : t === 1 ? (Math.random() * 1000).toFixed(3)
+            : t === 2 ? String(R(10, 9999))
+            : (Math.random() * 10).toFixed(1);
+        return [name, val];
+    };
+    const beginFile = () => {
+        const S = pick(Object.keys(SCENARIOS).map(k => SCENARIOS[k]));
+        // Provisional entry so makeConst/varName (which read cur.S) can run
+        // while the rest of the file is assembled; replaced below.
+        cur = { S, file: "", funcs: [], consts: [] };
+        const funcs = [];
+        const seen = new Set();
+        for (let n = R(6, 9); funcs.length < n;) {
+            const f = pick(S.verbs) + "_" + pick(S.nouns);
+            if (!seen.has(f)) { seen.add(f); funcs.push(f); }
+        }
+        const consts = [];
+        for (let i = 0, n = R(4, 6); i < n; i++) consts.push(makeConst());
+        const file = pick(S.verbs) + "_" + pick(S.nouns) + (Math.random() < 0.4 ? "_" + R(2, 9) : "") + ".cpp";
+        cur = { S, file, funcs, consts };
+    };
+    const varName = () => pick(cur.S.nouns.concat(GENWORDS)) + (Math.random() < 0.4 ? "_" + R(0, 100) : "");
+    const num = () => {
+        const t = Math.floor(Math.random() * 4);
+        if (t === 0) return String(R(1, 999));
+        if (t === 1) return (Math.random() * 100).toFixed(2);
+        if (t === 2) return R(1, 9) + "." + R(0, 9) + "e" + (Math.random() < 0.5 ? "+" : "-") + R(1, 8);
+        return (Math.random() * 10).toFixed(1);
+    };
+    const E = () => {
+        const a = varName(), b = varName();
+        const t = Math.floor(Math.random() * 9);
+        if (t === 0) return a + " * " + b + " + " + num();
+        if (t === 1) return "(" + a + " + " + b + ") * " + num();
+        if (t === 2) return a + " / (" + b + " + " + num() + ")";
+        if (t === 3) return "sqrt(" + a + " * " + a + " + " + b + " * " + b + ")";
+        if (t === 4) return a + " * " + b + " * " + num();
+        if (t === 5) return "fmax(" + a + ", " + b + " * " + num() + ")";
+        if (t === 6) return "pow(" + a + ", " + num() + ") + " + b;
+        if (t === 7) return "sin(" + a + " * " + num() + ") * " + b;
+        return a + " * " + num() + " - " + b;
+    };
+    const C = () => {
+        const a = pick(cur.S.nouns), b = pick(cur.S.nouns), c = pick(cur.S.nouns);
+        const t = Math.floor(Math.random() * 7);
+        if (t === 0) return "Recompute the " + a + " from the current " + b + " state and the residual " + c + " history.";
+        if (t === 1) return "Bound the " + a + " against the worst-case " + b + " transient seen at the " + c + " boundary.";
+        if (t === 2) return "The " + a + " scales with the cube root of the " + b + ", attenuated by the " + c + " factor.";
+        if (t === 3) return "Integrate the " + a + " with an RK4 step and the " + b + " fixed at the " + c + " timestep.";
+        if (t === 4) return "Reject returns below the " + a + " threshold and keep the " + b + " rate bounded across the " + c + ".";
+        if (t === 5) return "Cache the " + a + " across calls to avoid recomputing the " + b + " on every " + c + " update.";
+        return "The " + a + " dominates once the " + b + " exceeds the " + c + " reference, so clamp early.";
+    };
     const SIGS = [
         "const SimConfig& cfg, const StateVector& s, double dt, int mode",
         "const TrackState& t, const Measurement& m, const Matrix& Q, const Matrix& R",
@@ -1723,6 +2234,12 @@ window.screensaver = (() => {
         "const Config& cfg, const array<double, 6>& state, double t0, double t1, double eps"
     ];
     const OP = ["<", ">", "<=", ">=", "=="];
+    const EARTH_BLOB = [
+        'const char* wgs84 = "a=6378137.0, f=1/298.257223563, omega=7.292115e-5, GM=3.986004418e14";',
+        "const double T_REF = 288.15; // ISA sea-level static temperature, K",
+        "constexpr size_t BUF_LEN = 1 << 20; // staging ring buffer",
+        "const uint32_t MAGIC = 0x5a4f4e45; // little-endian frame marker"
+    ];
 
     const buildFunction = (name) => {
         const lines = [];
@@ -1730,7 +2247,7 @@ window.screensaver = (() => {
         lines.push(pad(1) + "double result = " + E() + " + " + E() + ";");
         const locals = [];
         for (let i = 0, n = R(2, 4); i < n; i++) {
-            const lv = v();
+            const lv = varName();
             locals.push(lv);
             lines.push(pad(1) + "const double " + lv + " = " + E() + " + " + E() + ";");
         }
@@ -1738,14 +2255,14 @@ window.screensaver = (() => {
         for (let i = 0, n = R(8, 12); i < n; i++) {
             const t = Math.random();
             if (t < 0.26) lines.push(pad(1) + "result += " + use() + " * " + E() + " + " + E() + ";");
-            else if (t < 0.46) lines.push(pad(1) + "// " + pick(S.comments));
+            else if (t < 0.46) lines.push(pad(1) + "// " + C());
             else if (t < 0.60) {
                 lines.push(pad(1) + "if (" + use() + " " + pick(OP) + " " + E() + " + " + E() + ") {");
                 lines.push(pad(2) + "result += " + use() + " * " + E() + ";");
                 lines.push(pad(1) + "}");
             } else if (t < 0.74) lines.push(pad(1) + "result = fmax(result, " + use() + " * " + E() + " + " + E() + ");");
             else if (t < 0.86) lines.push(pad(1) + "samples.push_back(" + use() + " * " + E() + " + " + E() + ");");
-            else lines.push(pad(1) + "const char* wgs84 = \"a=6378137.0, f=1/298.257223563, omega=7.292115e-5, GM=3.986004418e14\";");
+            else lines.push(pad(1) + pick(EARTH_BLOB));
         }
         lines.push(pad(1) + "return result;");
         lines.push(pad(0) + "}");
@@ -1757,12 +2274,12 @@ window.screensaver = (() => {
         const lines = [];
         // two passes over the file's functions for one long, continuous file
         for (let pass = 0; pass < 2; pass++) {
-            S.funcs.forEach(fn => lines.push(...buildFunction(fn)));
+            cur.funcs.forEach(fn => lines.push(...buildFunction(fn)));
         }
         lines.push(pad(0) + "int main(int argc, char** argv) {");
         lines.push(pad(1) + "auto cfg = load_config(argv[1]);");
-        lines.push(pad(1) + "double r0 = " + S.funcs[0] + "(cfg, 0.0, 1.0);");
-        lines.push(pad(1) + "double r1 = " + S.funcs[1] + "(cfg, 1.0, 2.0);");
+        lines.push(pad(1) + "double r0 = " + cur.funcs[0] + "(cfg, 0.0, 1.0);");
+        lines.push(pad(1) + "double r1 = " + cur.funcs[1] + "(cfg, 1.0, 2.0);");
         lines.push(pad(1) + "fprintf(stderr, \"simulation complete: %.6f %.6f\\n\", r0, r1);");
         lines.push(pad(1) + "return 0;");
         lines.push(pad(0) + "}");
@@ -1772,28 +2289,39 @@ window.screensaver = (() => {
 
     const headerLines = () => {
         const lines = [];
-        lines.push("\r\nroot@kali:~# g++ -O3 -march=native " + S.file + " -lm -o sim");
+        lines.push("\r\nroot@kali:~# g++ -O3 -march=native " + cur.file + " -lm -o sim");
         lines.push("");
-        lines.push("/* " + S.file + " - " + S.note + " */");
-        lines.push("/* " + pick(["no warranty - research use only", "declassified reference model", "internal audit build"]) + " */");
+        lines.push("/* " + cur.file + " - " + cur.S.note + " */");
+        lines.push("/* " + pick(["no warranty - research use only", "declassified reference model", "internal audit build", "classified - export controlled"]) + " */");
         lines.push("#include <cmath>");
         lines.push("#include <vector>");
         lines.push("#include <array>");
         lines.push("#include <iostream>");
+        lines.push("#include <random>");
         lines.push("using namespace std;");
         lines.push("");
-        S.consts.forEach(c => lines.push("constexpr double " + c[0] + " = " + c[1] + ";"));
+        cur.consts.forEach(c => lines.push("constexpr double " + c[0] + " = " + c[1] + ";"));
         lines.push("");
         return lines;
     };
 
     // The whole file (header + program) streams one line per tick: no bursts,
-    // so the code never visibly "jumps" to something unrelated.
+    // so the code never visibly "jumps" to something unrelated. Every file is
+    // generated fresh; when one finishes the terminal is reset so the buffer
+    // never grows past a single file (no long-session scrollback lag).
     let pendingLines = [];
+    let sessionFirstFile = true;
     const nextLine = () => {
         if (!pendingLines.length) {
-            S = pick(["ballistic", "radar", "emp", "winter"].map(k => SCENARIOS[k]));
+            beginFile();
             pendingLines = headerLines().concat(buildProgram());
+            if (!sessionFirstFile) {
+                let t = window.term[window.currentTerm];
+                if (t && t.term && typeof t.term.reset === "function") {
+                    try { t.term.reset(); } catch (e) {}
+                }
+            }
+            sessionFirstFile = false;
         }
         return pendingLines.shift();
     };
@@ -1803,6 +2331,7 @@ window.screensaver = (() => {
         if (!t || !t.term || typeof t.term.write !== "function") return;
         t.term.write(nextLine() + "\r\n");
     };
+
 
     // ---- matrix style (fullscreen) ----
     let canvas = null, ctx = null, cols = 0, drops = [], mTimer = null;
@@ -1851,7 +2380,11 @@ window.screensaver = (() => {
 
     return {
         show() {
-            if (active) return;
+            if (active) {
+                // Already showing but the cover identity was lost — re-assert it.
+                if (window.cover && !window.cover.isActive()) window.cover.set(true);
+                return;
+            }
             active = true;
             fading = false;
             fadeTail = 0;
@@ -1870,10 +2403,24 @@ window.screensaver = (() => {
             } else {
                 codeTimer = setInterval(codeTick, 100);
             }
+            // While the screensaver plays, eDEX wears its cover identity (fake
+            // tabs / filesystem / IP / process list).
+            if (window.cover) window.cover.set(true);
         },
-        hide() {
+        hide(immediate) {
             if (!active) return;
             active = false;
+            // Leave cover mode: restore the real tabs / filesystem / IP / procs.
+            if (window.cover) window.cover.set(false);
+            if (immediate) {
+                // Used when dismissing straight into the lock screen: stop
+                // cleanly, no wind-down animation and no boot replay.
+                if (codeTimer) { clearInterval(codeTimer); codeTimer = null; }
+                if (mTimer) { clearInterval(mTimer); mTimer = null; }
+                fading = false; fadeTail = 0;
+                if (canvas) canvas.style.display = "none";
+                return;
+            }
             if (canvas) {
                 // Matrix wind-down: stop generating new characters so the rain
                 // drains out naturally; when the fade settles (in mDraw) the eDEX
@@ -1919,20 +2466,30 @@ window.screensaver = (() => {
 let lastActivity = Date.now();
 const bumpActivity = () => {
     lastActivity = Date.now();
-    if (window.screensaver.isActive()) window.screensaver.hide();
+    if (window.screensaver.isActive()) {
+        window.screensaver.hide(true);
+        // Dismissing the screensaver leads into the lock screen when the
+        // device has a password configured (lockOnIdle) and one was actually
+        // set (a non-empty lockCode — the passcode chosen at install time).
+        if (window.settings.lockOnIdle !== false
+            && String(window.settings.lockCode || "").length > 0
+            && window.lockScreen && !window.lockScreen.active) {
+            window.lockScreen.show();
+        }
+    }
 };
 ["mousemove", "mousedown", "keydown", "wheel", "touchstart", "click"].forEach(ev =>
     window.addEventListener(ev, bumpActivity, { passive: true })
 );
 setInterval(() => {
     if (window.screensaver.isActive()) return;
+    if (window.lockScreen && window.lockScreen.active) return; // locked: stay locked
     if (Object.keys(window.modals).length > 0) return; // keep modals (settings etc.) usable
     if (!window.settings.screensaverEnabled) return;
     let idle = (Number(window.settings.screensaverIdle) || 300) * 1000;
     if (Date.now() - lastActivity > idle) {
-        // Idle: lock (fullscreen code + passcode) when lockOnIdle is on,
-        // otherwise fall back to the plain screensaver.
-        if (window.settings.lockOnIdle !== false && window.lockScreen) window.lockScreen.show();
-        else window.screensaver.show();
+        // Idle always plays the screensaver first; the lock screen appears on
+        // dismiss (bumpActivity) when a passcode is configured.
+        window.screensaver.show();
     }
 }, 1000);

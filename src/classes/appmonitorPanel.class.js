@@ -21,10 +21,17 @@ class AppMonitorPanel {
         this.monitorId = opts.monitorId;                 // "a" | "b"
         this.labelEl = opts.labelId ? document.getElementById(opts.labelId) : null;
         this.selected = null;
-        this.webview = null;
+        this.webview = null;                 // native client webview (streams the X display)
+        this._webviews = {};                 // web apps kept running in the background: id -> webview
         this.apps = [];
         this.config = null;
         this.menuFocusIdx = -1;
+        this.runningApps = new Set();          // app ids currently running (dot marker / close button)
+        this.runningStates = new Map();        // appId -> "running" | "starting" | "exited"
+        this._statusTimer = null;
+        // Launch-count tracking (persisted) for the "运行频度" sort mode.
+        this._launchCounts = {};
+        try { this._launchCounts = JSON.parse(localStorage.getItem("edex_app_launches") || "{}"); } catch (e) {}
 
         this.menu = document.createElement("div");
         this.menu.className = "webapp_menu appmonitor_menu";
@@ -35,6 +42,7 @@ class AppMonitorPanel {
 
         this._bindOutsideClose();
         this._bindMenuKeys();
+
         this.init();
     }
 
@@ -53,7 +61,6 @@ class AppMonitorPanel {
                 if (!this.apps.some(a => a.name === w.name)) this.apps.push(Object.assign({}, w, { kind: "web" }));
             });
         } catch (e) {}
-        if (this.apps.length) this.apps.sort((a, b) => a.name.localeCompare(b.name));
 
         let saved = null;
         try { saved = localStorage.getItem("edex_monitor_" + this.monitorId + "_app"); } catch (e) {}
@@ -62,8 +69,15 @@ class AppMonitorPanel {
         const start = (saved && this.apps.find(a => a.name === saved))
             || this.apps.find(a => a.kind === "native")
             || this.apps[0];
-        if (this.labelEl && !start) this.labelEl.textContent = this.monitorId === "a" ? "MONITOR A" : "MONITOR B";
+        if (this.labelEl && !start) {
+            this.labelEl.textContent = (window.cover && window.cover.isActive())
+                ? window.cover.fakeMonitorLabel(this.monitorId)
+                : (this.monitorId === "a" ? "MONITOR A" : "MONITOR B");
+        }
         if (start) this.select(start);
+        await this._fetchStatus();
+        this._sortApps();
+        if (!this._statusTimer) this._statusTimer = setInterval(() => this._fetchStatus(), 3000);
         this._renderMenu();
     }
 
@@ -81,16 +95,58 @@ class AppMonitorPanel {
     select(app) {
         if (!app) return;
         this.selected = app;
-        if (this.labelEl) this.labelEl.textContent = app.name;
-        try { localStorage.setItem("edex_monitor_" + this.monitorId + "_app", app.name); } catch (e) {}
-        if (!this.webview) this._buildWebview();
-        if (app.kind === "native") {
-            window.appmonitorApi.launch(this.monitorId, app.id);   // starts/kills on the real backend; switches the mock scene
-            this.webview.setAttribute("src", this._clientUrl(app));
-        } else {
-            this.webview.setAttribute("src", app.url);
+        if (this.labelEl) {
+            this.labelEl.textContent = (window.cover && window.cover.isActive())
+                ? window.cover.fakeMonitorLabel(this.monitorId)
+                : app.name;
         }
+        try { localStorage.setItem("edex_monitor_" + this.monitorId + "_app", app.name); } catch (e) {}
+        this._trackLaunch(app);
+        if (app.kind === "native") this._showNativeWebview(app);
+        else this._showWebWebview(app);
         this._renderMenu();
+    }
+
+    // Show the monitor's native client webview (streams the nested X display)
+    // and launch the app on the backend. Hides any open web-app webviews.
+    _showNativeWebview(app) {
+        Object.keys(this._webviews).forEach(id => {
+            if (this._webviews[id]) this._webviews[id].style.display = "none";
+        });
+        if (!this.webview || !this.webview.isConnected) {
+            this.webview = document.createElement("webview");
+            this.webview.className = "appmonitor_webview";
+            this.webview.setAttribute("partition", "persist:edex-monitor-" + this.monitorId);
+            this.webview.setAttribute("webpreferences", "contextIsolation=yes, nodeIntegration=no, sandbox=yes");
+            this.webview.setAttribute("allowpopups", "");
+            this.container.appendChild(this.webview);
+        }
+        this.webview.style.display = "";
+        this.webview.setAttribute("src", app ? this._clientUrl(app) : "about:blank");
+        if (app) window.appmonitorApi.launch(this.monitorId, app.id);
+    }
+
+    // Show (or create, on first open) this web app's own persistent webview.
+    // The others — native client and other web apps — stay hidden but keep
+    // running, so switching back shows the same loaded page (no reload).
+    _showWebWebview(app) {
+        if (this.webview) this.webview.style.display = "none";
+        Object.keys(this._webviews).forEach(id => {
+            if (id !== app.id && this._webviews[id]) this._webviews[id].style.display = "none";
+        });
+        let wv = this._webviews[app.id];
+        if (!wv || !wv.isConnected) {
+            wv = document.createElement("webview");
+            wv.className = "appmonitor_webview";
+            wv.setAttribute("partition", "persist:edex-monitor-" + this.monitorId);
+            wv.setAttribute("webpreferences", "contextIsolation=yes, nodeIntegration=no, sandbox=yes");
+            wv.setAttribute("allowpopups", "");
+            wv.setAttribute("src", app.url);
+            this.container.appendChild(wv);
+            this._webviews[app.id] = wv;
+        } else {
+            wv.style.display = "";
+        }
     }
 
     _clientUrl(app) {
@@ -109,47 +165,47 @@ class AppMonitorPanel {
         return "http://127.0.0.1:" + this.config.httpPort + "/client.html?" + q.toString();
     }
 
-    _buildWebview() {
-        this.container.innerHTML = "";
-        const wv = document.createElement("webview");
-        wv.className = "appmonitor_webview";
-        wv.setAttribute("partition", "persist:edex-monitor-" + this.monitorId);
-        wv.setAttribute("webpreferences", "contextIsolation=yes, nodeIntegration=no, sandbox=yes");
-        wv.setAttribute("allowpopups", "");
-        wv.setAttribute("src", this.selected ? (this.selected.kind === "web" ? this.selected.url : this._clientUrl(this.selected)) : "about:blank");
-        this.container.appendChild(wv);
-        this.webview = wv;
-
-        const btn = document.createElement("button");
-        btn.className = "webapp_fullscreen_btn";
-        btn.title = "Fullscreen";
-        btn.innerHTML = Icons.maximize;
-        btn.onclick = () => {
-            if (!this.selected) return;
-            // Native apps: run COMPLETELY natively on the real display (the
-            // shell gets covered; a corner button / global hotkey returns).
-            if (this.selected.kind === "native") {
-                window.appmonitorApi.fullscreen(this.monitorId, this.selected.id).then(r => {
-                    if (r && !r.ok) {
-                        this._notify((r.error === "mock mode has no real display")
-                            ? "Native fullscreen requires the Linux system"
-                            : (r.error || "Fullscreen unavailable"));
-                    }
-                });
-                return;
-            }
-            // Web apps: fullscreen the streamed/embedded webview.
-            const src = this.selected.url;
-            if (!src) return;
-            if (window.webViewFullscreen.el) { window.webViewFullscreen.exit(); return; }
-            window.webViewFullscreen.enter(src, "persist:edex-monitor-" + this.monitorId);
-        };
-        this.container.appendChild(btn);
+    /* Enter fullscreen from the tab's top-left triangle button. */
+    fullscreenButton() {
+        if (!this.selected) return;
+        // Native apps: run COMPLETELY natively on the real display (the
+        // shell gets covered; a corner button / global hotkey returns).
+        if (this.selected.kind === "native") {
+            window.appmonitorApi.fullscreen(this.monitorId, this.selected.id).then(r => {
+                if (r && !r.ok) {
+                    this._notify((r.error === "mock mode has no real display")
+                        ? "Native fullscreen requires the Linux system"
+                        : (r.error || "Fullscreen unavailable"));
+                }
+            });
+            return;
+        }
+        // Web apps: fullscreen the streamed/embedded webview.
+        const src = this.selected.url;
+        if (!src) return;
+        if (window.webViewFullscreen.el) { window.webViewFullscreen.exit(); return; }
+        window.webViewFullscreen.enter(src, "persist:edex-monitor-" + this.monitorId);
     }
 
     /* ---- Focus entry points used by the shell (via the term shim) ---- */
-    activate() { if (this.webview) this.webview.focus(); else if (this.selected) { this._buildWebview(); } }
-    focus() { if (this.webview) this.webview.focus(); }
+    activate() {
+        if (!this.selected) return;
+        if (this.selected.kind === "web") {
+            let wv = this._webviews[this.selected.id];
+            if (!wv || !wv.isConnected) this._showWebWebview(this.selected);
+            wv = this._webviews[this.selected.id];
+            if (wv) wv.focus();
+        } else {
+            if (this.webview) this.webview.focus();
+            else this._showNativeWebview(this.selected);
+        }
+    }
+    focus() {
+        if (this.selected && this.selected.kind === "web") {
+            const wv = this._webviews[this.selected.id];
+            if (wv) wv.focus();
+        } else if (this.webview) this.webview.focus();
+    }
     fit() {}
 
     toggleDevTools() {
@@ -174,6 +230,10 @@ class AppMonitorPanel {
             // Re-scan the app list (e.g. a new AppImage just dropped into
             // ~/Applications) so it shows up without restarting eDEX.
             this.refresh();
+            // Focus the menu (tabindex=-1) so the ↑/↓/Enter/Esc keydown handler
+            // actually fires; _focusMenu + scrollIntoView then scrolls a long
+            // list with the arrow keys (the wheel scrolls via overflow-y:auto).
+            this.menu.focus();
             this._focusMenu(0);
         } else {
             this.closeMenu();
@@ -219,30 +279,52 @@ class AppMonitorPanel {
 
         this.apps.forEach(app => {
             const opt = document.createElement("div");
+            const isRunning = this.runningApps.has(app.id);
             opt.className = "webapp_menu_opt appmonitor_opt" + (this.selected && this.selected.name === app.name ? " active" : "");
+            // Leftmost column: the reserved running-dot slot (fixed width so
+            // the rest never shifts when a dot appears or disappears).
+            const dotSlot = document.createElement("span");
+            dotSlot.className = "appmonitor_dot_slot";
+            if (isRunning) {
+                const state = (this.runningStates && this.runningStates.get(app.id)) || "running";
+                const dot = document.createElement("span");
+                dot.className = "appmonitor_dot appmonitor_dot_" + state;
+                dot.title = state === "exited"
+                    ? "App exited / crashed"
+                    : (state === "starting" ? "Starting…" : "Running in background");
+                dotSlot.appendChild(dot);
+            }
+            opt.appendChild(dotSlot);
+            // Icon column (fixed width so names line up); apps without an icon
+            // get a generic placeholder glyph.
+            const iconSlot = document.createElement("span");
+            iconSlot.className = "appmonitor_icon_slot";
             if (app.icon) {
                 const img = document.createElement("img");
                 img.src = app.icon;
-                opt.appendChild(img);
+                iconSlot.appendChild(img);
             } else {
-                const badge = document.createElement("span");
-                badge.className = "appmonitor_badge";
-                badge.textContent = app.kind === "web" ? "WEB" : "APP";
-                opt.appendChild(badge);
+                iconSlot.innerHTML = '<svg class="appmonitor_icon_ph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="3"/><circle cx="12" cy="12" r="3.5"/></svg>';
             }
+            opt.appendChild(iconSlot);
             const span = document.createElement("span");
+            span.className = "appmonitor_name";
             span.textContent = app.name;
             opt.appendChild(span);
-            if (app.custom || (app.kind === "web" && app.custom)) {
-                const del = document.createElement("button");
-                del.className = "webapp_menu_del";
-                del.textContent = "×";
-                del.title = "Remove";
-                del.onclick = ev => {
+            // Running apps get a close (×) button — it stops the app (native:
+            // kill the process; web: drop the background webview). It does NOT
+            // uninstall anything (uninstall happens via the command line or the
+            // file manager).
+            if (isRunning) {
+                const close = document.createElement("button");
+                close.className = "webapp_menu_del";
+                close.textContent = "×";
+                close.title = "Close app";
+                close.onclick = ev => {
                     ev.stopPropagation();
-                    this._removeApp(app);
+                    this._closeApp(app);
                 };
-                opt.appendChild(del);
+                opt.appendChild(close);
             }
             opt.onclick = ev => {
                 ev.stopPropagation();
@@ -260,10 +342,28 @@ class AppMonitorPanel {
         }
     }
 
-    _removeApp(app) {
-        if (app.kind === "web" && window.webapps) { window.webapps.removeApp(app); this._notify("Removed \"" + app.name + "\""); }
-        else { window.appmonitorApi.removeNative(app.id); this._notify("Removed \"" + app.name + "\""); }
-        this.refresh();
+    // Close a running app. Native: stop its process on the backend. Web: drop
+    // its background webview. Uninstalling is NOT done here — remove the
+    // AppImage / package via the command line or the file manager.
+    _closeApp(app) {
+        if (app.kind === "web") {
+            const wv = this._webviews[app.id];
+            if (wv) { try { wv.remove(); } catch (e) {} }
+            delete this._webviews[app.id];
+            if (this.selected === app) {
+                // the closed app was on screen — fall back to the native view
+                this.selected = null;
+                this._showNativeWebview(this.apps.find(a => a.kind === "native"));
+            }
+            this._fetchStatus();
+            this._renderMenu();
+            return;
+        }
+        window.appmonitorApi.close(app.id).then(() => {
+            this._notify("Closed \"" + app.name + "\"");
+            this._fetchStatus();
+            this._renderMenu();
+        });
     }
 
     async refresh() {
@@ -278,12 +378,81 @@ class AppMonitorPanel {
                 if (!this.apps.some(a => a.name === w.name)) this.apps.push(Object.assign({}, w, { kind: "web" }));
             });
         } catch (e) {}
-        if (this.apps.length) this.apps.sort((a, b) => a.name.localeCompare(b.name));
         if (this.selected && !this.apps.some(a => a.name === this.selected.name)) {
             const first = this.apps[0];
             if (first) this.select(first);
         }
+        await this._fetchStatus();
+        this._sortApps();
         this._renderMenu();
+    }
+
+    /* Fetch which apps are currently running (per monitor) so the dropdown can
+       mark them with a state dot (green running / amber starting / red exited)
+       and offer a close (×) button. */
+    async _fetchStatus() {
+        try {
+            const res = await window.appmonitorApi.status();
+            const monitors = (res && res.monitors) || {};
+            const ids = new Set();
+            const states = new Map();           // appId -> "running" | "starting" | "exited"
+            for (const m of Object.keys(monitors)) {
+                const entry = monitors[m];
+                if (entry && entry.id) {
+                    ids.add(entry.id);
+                    states.set(entry.id, entry.state || "running");
+                }
+            }
+            // Web apps run in their own persistent webview (not via the backend),
+            // so every web app currently open on EITHER monitor counts as running
+            // for the green dot.
+            const sibling = (this.monitorId === "a") ? window.appmonitorB : window.appmonitorA;
+            [this, sibling].forEach(p => {
+                if (!p) return;
+                Object.keys(p._webviews || {}).forEach(id => {
+                    ids.add(id);
+                    states.set(id, "running");
+                });
+            });
+            const changed = ids.size !== this.runningApps.size
+                || [...ids].some(id => !this.runningApps.has(id));
+            this.runningApps = ids;
+            this.runningStates = states;
+            // Live-update an open menu so the dots/× track apps starting/closing
+            // and running apps move to the top.
+            if (changed && this.menu && this.menu.style.display !== "none") {
+                this._sortApps();
+                this._renderMenu();
+                if (this.menuFocusIdx >= 0) this._focusMenu(this.menuFocusIdx);
+            }
+        } catch (e) {}
+    }
+
+    /* Record a launch (for the "运行频度" sort mode) and persist the counts. */
+    _trackLaunch(app) {
+        if (!app) return;
+        const key = app.name;
+        this._launchCounts[key] = (this._launchCounts[key] || 0) + 1;
+        try { localStorage.setItem("edex_app_launches", JSON.stringify(this._launchCounts)); } catch (e) {}
+    }
+
+    /* Sort this.apps: running apps always first, then by the configured mode
+       (name / install time / launch frequency × ascending / descending). */
+    _sortApps() {
+        const mode = (window.settings && window.settings.appSort) || "name-asc";
+        const [field, dir] = String(mode).split("-");
+        const sign = dir === "desc" ? -1 : 1;
+        this.apps.sort((a, b) => {
+            const ra = a.kind === "native" && this.runningApps.has(a.id) ? 0 : 1;
+            const rb = b.kind === "native" && this.runningApps.has(b.id) ? 0 : 1;
+            if (ra !== rb) return ra - rb;
+            let cmp = 0;
+            if (field === "install") cmp = (a.installed || 0) - (b.installed || 0);
+            else if (field === "freq") cmp = (this._launchCounts[a.name] || 0) - (this._launchCounts[b.name] || 0);
+            else cmp = a.name.localeCompare(b.name);
+            cmp *= sign;
+            return cmp || a.name.localeCompare(b.name);
+        });
     }
 
     /* ---- ADD APP ---- */

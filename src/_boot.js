@@ -106,6 +106,8 @@ if (!fs.existsSync(settingsFile)) {
         lockCode: "0000",
         lockOnIdle: true,
         showKeyboard: false,
+        appSort: "name-asc",                 // app-monitor list order: name|install|freq + asc|desc
+        bootAnimAfterUnlock: true,           // play the boot animation after a matrix lock/screensaver unlock
         claude: {
             enabled: false,
             baseUrl: "",
@@ -387,7 +389,7 @@ function showFsExitButton() {
         fsExitWin = new electron.BrowserWindow({
             width: 104, height: 34, frame: false, transparent: true, resizable: false,
             alwaysOnTop: true, skipTaskbar: true, hasShadow: false, focusable: true,
-            x: sw - 128, y: sh - 52,
+            x: sw - 128, y: 14,   /* top-right corner of the screen */
             webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false }
         });
         fsExitWin.setAlwaysOnTop(true, "screen-saver");
@@ -484,6 +486,14 @@ app.on('ready', async () => {
         const am = global.appMonitor;
         return am ? apiPost(am.httpPort, "/api/monitors/" + monitorId + "/kill") : { ok: false, error: "disabled" };
     });
+    ipc.handle("appmonitor:status", () => {
+        const am = global.appMonitor;
+        return am ? apiGet(am.httpPort, "/api/monitors/status") : { ok: false, monitors: {} };
+    });
+    ipc.handle("appmonitor:close", (e, { appId }) => {
+        const am = global.appMonitor;
+        return am ? apiPost(am.httpPort, "/api/apps/close", { appId }) : { ok: false, error: "disabled" };
+    });
     ipc.handle("appmonitor:add-native", (e, entry) => {
         const am = global.appMonitor;
         return am ? apiPost(am.httpPort, "/api/native-apps", entry) : { ok: false, error: "disabled" };
@@ -504,6 +514,83 @@ app.on('ready', async () => {
         hideFsExitButton();
         if (win && !win.isDestroyed()) { win.show(); win.focus(); }
         return r;
+    });
+
+    // ---- Offline voice input (sherpa-onnx + a streaming Chinese model) ----
+    // The renderer captures the mic (16 kHz mono Float32), streams chunks here
+    // for recognition, and inserts the final text into the focused terminal.
+    let voiceRecognizer = null;
+    let voiceStream = null;
+    const voiceModelDirs = () => {
+        const candidates = [
+            path.join(__dirname, "..", "..", "models", "sherpa-onnx-streaming-zipformer-multi-zh-hans-2023-12-12"),
+            "/opt/edex/models/sherpa-onnx-streaming-zipformer-multi-zh-hans-2023-12-12",
+            path.join(electron.app.getPath("userData"), "models", "sherpa-onnx-streaming-zipformer-multi-zh-hans-2023-12-12")
+        ];
+        return candidates.find(p => fs.existsSync(path.join(p, "tokens.txt"))) || null;
+    };
+    ipc.handle("voice:init", () => {
+        try {
+            if (voiceRecognizer) return { ok: true };
+            const sherpa = require("sherpa-onnx-node");
+            const dir = voiceModelDirs();
+            if (!dir) return { ok: false, error: "voice model not found" };
+            const pick = (k) => fs.readdirSync(dir).find(f => f.includes(k) && f.endsWith(".onnx"));
+            const encoder = pick("encoder"), decoder = pick("decoder"), joiner = pick("joiner");
+            if (!encoder || !decoder || !joiner) return { ok: false, error: "model files missing" };
+            voiceRecognizer = new sherpa.OnlineRecognizer({
+                featConfig: { sampleRate: 16000, featureDim: 80 },
+                modelConfig: {
+                    transducer: {
+                        encoder: path.join(dir, encoder),
+                        decoder: path.join(dir, decoder),
+                        joiner: path.join(dir, joiner)
+                    },
+                    tokens: path.join(dir, "tokens.txt"),
+                    numThreads: 2,
+                    provider: "cpu",
+                    debug: 0
+                },
+                decodingMethod: "greedy_search"
+            });
+            signale.success("Voice recognizer ready (offline ASR)");
+            return { ok: true };
+        } catch (e) {
+            return { ok: false, error: String((e && e.message) || e) };
+        }
+    });
+    ipc.handle("voice:start", () => {
+        if (!voiceRecognizer) return { ok: false, error: "not initialized" };
+        voiceStream = voiceRecognizer.createStream();
+        return { ok: true };
+    });
+    ipc.handle("voice:chunk", (e, samples) => {
+        if (!voiceRecognizer || !voiceStream || !samples) return { ok: false };
+        try {
+            voiceStream.acceptWaveform({ samples: new Float32Array(samples), sampleRate: 16000 });
+            while (voiceRecognizer.isReady(voiceStream)) voiceRecognizer.decode(voiceStream);
+            const r = voiceRecognizer.getResult(voiceStream);
+            if (r && r.text) {
+                try { win.webContents.send("voice:partial", r.text); } catch (e2) {}
+            }
+            return { ok: true };
+        } catch (e) {
+            return { ok: false, error: String((e && e.message) || e) };
+        }
+    });
+    ipc.handle("voice:stop", () => {
+        if (!voiceRecognizer || !voiceStream) return { ok: true, text: "" };
+        try {
+            voiceStream.inputFinished();
+            while (voiceRecognizer.isReady(voiceStream)) voiceRecognizer.decode(voiceStream);
+            const r = voiceRecognizer.getResult(voiceStream);
+            const text = (r && r.text) || "";
+            voiceStream = null;
+            return { ok: true, text };
+        } catch (e) {
+            voiceStream = null;
+            return { ok: false, error: String((e && e.message) || e) };
+        }
     });
 
     // ---- WiFi (NetworkManager) — the simple-connect panel ----
@@ -551,6 +638,98 @@ app.on('ready', async () => {
         proc.stderr.on("data", d => String(d).split("\n").forEach(l => l.trim() && send(l.trim())));
         proc.on("close", code => resolve({ ok: code === 0, code }));
         proc.on("error", e => resolve({ ok: false, error: e.message }));
+    }));
+
+    // Tell the renderer whether eDEX is running from an AppImage (eDEX-OS
+    // install). The GitHub self-update is only meaningful in that mode — when
+    // running from src/ during development there is no file to replace.
+    ipc.handle("app:env", () => ({ isAppImage: !!process.env.APPIMAGE }));
+
+    // eDEX-UI self-update (GitHub release asset). Only works on the eDEX-OS
+    // install: when running from an AppImage, download the new .AppImage, verify
+    // its sha256 (a sibling release asset), atomically replace the running
+    // AppImage via sudo (the autologin user has passwordless sudo), then the
+    // renderer relaunches. Everywhere else it refuses cleanly.
+    ipc.handle("system:edex-update", (e, payload) => new Promise(resolve => {
+        const { url, sha256Url } = payload || {};
+        const APPIMAGE = process.env.APPIMAGE;
+        const send = line => { if (win && !win.isDestroyed()) win.webContents.send("edex-update-output", line); };
+        if (!APPIMAGE) return resolve({ ok: false, error: "NOT_APPIMAGE" });
+        if (!url) return resolve({ ok: false, error: "NO_URL" });
+        const { spawn } = require("child_process");
+        const crypto = require("crypto");
+        const tmp = path.join(electron.app.getPath("temp"), `edex-update-${Date.now()}.AppImage`);
+        const cleanup = () => { try { fs.unlinkSync(tmp); } catch (_) {} };
+        const fail = error => { cleanup(); resolve({ ok: false, error }); };
+
+        send("Downloading " + APPIMAGE + " → update…");
+
+        // 1) Expected sha256: a `.AppImage.sha256` sibling uploaded by the
+        //    release workflow. curl follows GitHub's asset redirects.
+        const fetchSha = () => new Promise(res2 => {
+            if (!sha256Url) return res2("");
+            const curl = spawn("curl", ["-fsSL", "--connect-timeout", "15", sha256Url]);
+            let out = "";
+            curl.stdout.on("data", d => { out += String(d); });
+            curl.on("close", () => {
+                const m = /([0-9a-fA-F]{64})/.exec(out);
+                res2(m ? m[1] : "");
+            });
+        });
+
+        // 2) Download the AppImage asset.
+        fetchSha().then(sha => {
+            const dl = spawn("curl", ["-fL", "--connect-timeout", "15", "--retry", "2", "-o", tmp, url]);
+            dl.on("error", e => fail(e.message));
+            dl.on("close", code => {
+                if (code !== 0) return fail("download failed (curl exit " + code + ")");
+                const done = () => {
+                    // 4) Same-filesystem copy into place, then an atomic rename.
+                    //    /opt/edex is root-owned on the eDEX-OS install, so a
+                    //    plain install fails with EACCES and we escalate to sudo
+                    //    (the autologin user has passwordless sudo).
+                    send("Checksum OK — replacing AppImage…");
+                    const newPath = APPIMAGE + ".new";
+                    const trySwap = sudo => {
+                        const cmd = sudo
+                            ? `install -m 755 -o root -g root '${tmp}' '${newPath}' && mv -f '${newPath}' '${APPIMAGE}'`
+                            : `install -m 755 '${tmp}' '${newPath}' && mv -f '${newPath}' '${APPIMAGE}'`;
+                        // `-n`: never prompt for a password — if the passwordless
+                        // sudo from install-edex.sh isn't in place, fail fast
+                        // instead of hanging on a password prompt.
+                        const p = spawn(sudo ? "sudo" : "bash", sudo ? ["-n", "bash", "-c", cmd] : ["-c", cmd]);
+                        p.stderr.on("data", d => send(String(d).trim()));
+                        p.on("close", code => {
+                            if (code !== 0) {
+                                if (!sudo) return trySwap(true);
+                                cleanup();
+                                return resolve({ ok: false, error: "replace failed (sudo exit " + code + ")" });
+                            }
+                            cleanup();
+                            resolve({ ok: true });
+                        });
+                    };
+                    trySwap(false);
+                };
+                // 3) Verify sha256 when the release provided one.
+                if (sha) {
+                    const hash = crypto.createHash("sha256");
+                    const rs = fs.createReadStream(tmp);
+                    rs.on("error", e => fail(e.message));
+                    rs.on("data", d => { hash.update(d); });
+                    rs.on("end", () => {
+                        const actual = hash.digest("hex");
+                        if (actual.toLowerCase() !== String(sha).toLowerCase()) {
+                            return fail("SHA256_MISMATCH");
+                        }
+                        done();
+                    });
+                } else {
+                    send("No checksum asset on this release — skipping verification.");
+                    done();
+                }
+            });
+        });
     }));
 
     startAppMonitor(settings, cleanEnv);

@@ -165,6 +165,47 @@ ul#main_shell_tabs > li.active {
     z-index: 2;
 }
 
+/* Small sci-fi triangle that enters fullscreen, tucked into the top-left
+   corner of the app-monitor tabs. It deliberately inherits the tab's
+   skewX(35deg) (no un-skew) so its top edge runs parallel to the
+   parallelogram's slanted top edge and it hugs the corner. */
+ul#main_shell_tabs > li#shell_tab3,
+ul#main_shell_tabs > li#shell_tab4 {
+    position: relative;
+}
+.appmonitor_fs_tab {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 2vh;
+    height: 2vh;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.85);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+    filter: drop-shadow(0 0 0.5vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.45));
+    transition: color .2s, filter .2s;
+}
+.appmonitor_fs_tab:hover {
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    filter: drop-shadow(0 0 0.8vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.8));
+}
+.appmonitor_fs_tab svg {
+    width: 100%;
+    height: 100%;
+}
+/* The active tab is filled with the theme color, so the triangle must switch
+   to the dark label color to stay visible there. */
+ul#main_shell_tabs > li.active .appmonitor_fs_tab {
+    color: var(--color_light_black);
+    filter: drop-shadow(0 0 0.5vh rgba(0, 0, 0, 0.4));
+}
+
 div#main_shell_innercontainer, div#main_shell_innercontainer pre {
     height: 100%;
     width: 100%;
@@ -177,6 +218,7 @@ div#main_shell_innercontainer, div#main_shell_innercontainer pre {
    automatic minimum size would otherwise let it squeeze the tab strip). */
 div#main_shell_innercontainer {
     min-height: 0;
+    position: relative; /* anchoring box for the global IME button */
 }
 div#main_shell_innercontainer pre {
     overflow: hidden;

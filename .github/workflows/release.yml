@@ -1,0 +1,63 @@
+# Publish an eDEX-UI AppImage release. Triggered by a `v*` tag (e.g. `v2.3.0`):
+# builds the x64 AppImage, computes its sha256, and attaches both to the GitHub
+# Release for that tag. The in-app UpdateChecker watches `releases/latest` and
+# offers to download + verify + replace the running AppImage on eDEX-OS installs.
+#
+#   git tag v2.3.0 && git push origin v2.3.0
+#
+# The tag name must match `src/package.json` version (minus the leading `v`) for
+# the version comparison to work.
+
+name: Release eDEX-UI AppImage
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache npm + Electron
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            ~/.cache/electron
+          key: ${{ runner.os }}-edex-${{ hashFiles('**/package-lock.json') }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install build deps
+        run: |
+          npm install
+          (cd src && npm install) || (npm install-scripts approve node-pty ffmpeg-static && (cd src && npm install))
+
+      - name: Build x64 AppImage
+        run: |
+          npm run prebuild-linux
+          ./node_modules/.bin/electron-builder build -l --x64 --publish never
+          rm -R prebuild-src
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute sha256 (sibling asset for the in-app updater)
+        run: |
+          APPIMAGE=$(ls dist/*.AppImage | head -1)
+          echo "AppImage: $APPIMAGE"
+          sha256sum "$APPIMAGE" > "$APPIMAGE.sha256"
+          cat "$APPIMAGE.sha256"
+
+      - name: Attach assets to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.AppImage
+            dist/*.AppImage.sha256
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

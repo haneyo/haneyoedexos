@@ -30,7 +30,9 @@ function parseDesktopFile(file) {
         else if (line.startsWith("Icon=") && !line.startsWith("Icon[")) icon = line.slice(5);
     }
     if (skip || !name || !exec) return null;
-    return { id: "native:" + name, name, exec, icon };
+    let installed = 0;
+    try { installed = fs.statSync(file).mtimeMs; } catch (e) {}
+    return { id: "native:" + name, name, exec, icon, installed };
 }
 
 /* Shell-tokenize a command line, dropping desktop field codes (%f %F %u %U ...). */
@@ -86,8 +88,10 @@ function scanAppImages(dirs) {
         for (const f of files) {
             if (!/\.appimage$/i.test(f)) continue;
             const full = path.join(dir, f);
-            try { if (!fs.statSync(full).isFile()) continue; } catch (e) { continue; }
-            apps.push({ id: "appimage:" + full, name: path.basename(f, path.extname(f)), path: full, exec: null, icon: null });
+            let st = null;
+            try { st = fs.statSync(full); } catch (e) { continue; }
+            if (!st.isFile()) continue;
+            apps.push({ id: "appimage:" + full, name: path.basename(f, path.extname(f)), path: full, exec: null, icon: null, installed: st.mtimeMs });
         }
     }
     return apps.sort((a, b) => a.name.localeCompare(b.name));
@@ -115,7 +119,8 @@ function listNativeApps(opts) {
         ? scanDesktopDirs().concat(scanAppImages(splitDirs(opts.appImageDirs)))
         : [];
     const custom = loadCustom(opts.userData).map(c => ({
-        id: "custom:" + c.name, name: c.name, exec: c.value, icon: null, custom: true
+        id: "custom:" + c.name, name: c.name, exec: c.value, icon: null, custom: true,
+        installed: c.added || 0
     }));
     const seen = new Set();
     return apps.concat(custom).filter(a => {

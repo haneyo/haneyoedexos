@@ -37,7 +37,10 @@ div.modal_popup.info {
 }
 
 div.modal_popup.focus {
-    z-index: 2500 !important;
+    /* Above the lock overlay (z 3000) and the elements it raises (terminal
+       3200, clock 3100, keyboard 3050): while locked the clock stays usable,
+       so the CLOCK & POWER menu it opens must render on top of everything. */
+    z-index: 4000 !important;
 }
 
 div.modal_popup.blink {
@@ -134,43 +137,148 @@ div.modal_popup table td {
     font-size: 1.45vh;
 }
 
-div.modal_popup:has(table#settingsEditor) {
-    width: 72vw;
-    max-width: 92vw;
+/* Settings editor modal: two-pane macOS-style layout. Fixed size so the
+   sidebar + scrollable pane hold their shape; flex column keeps the title,
+   body, status line and the action-button row stacked. */
+div.modal_popup:has(#settingsEditor) {
+    width: 78vw;
+    max-width: 94vw;
+    height: 64vh;
+    max-height: 90vh;
+    justify-content: flex-start;
+    overflow: hidden;
 }
 
-/* Fixed layout keeps the table inside the modal - no horizontal panning needed */
-div.modal_popup table#settingsEditor {
+#settingsBody {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
     width: 100%;
-    table-layout: fixed;
 }
 
-div.modal_popup table#settingsEditor tbody {
-	display: block;
-	position: relative;
-	max-height: 60vh;
-	overflow-y: auto;
-	overflow-x: hidden;
+/* Left category sidebar */
+#settingsSide {
+    flex: 0 0 20%;
+    min-width: 14vw;
+    overflow-y: auto;
+    border-right: 0.15vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.45);
+    padding: 0.4vh 0.8vh;
+    margin-right: 1.2vh;
 }
 
-div.modal_popup table#settingsEditor tbody tr:first-child {
-	position: sticky;
-	top: 0px;
+#settingsSide .settings_cat_btn {
+    display: block;
+    width: 100%;
+    text-align: left;
+    margin: 0 0 0.4vh 0;
+    padding: 0.7vh 1vh;
+    font-size: 1.6vh;
+    font-weight: bold;
+    letter-spacing: 0.03em;
+    border: 0.15vh solid transparent;
+    border-radius: 0.3vh;
+    background: transparent;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    cursor: pointer;
 }
 
-div.modal_popup table#settingsEditor th:nth-child(1),
-div.modal_popup table#settingsEditor td:nth-child(1) { width: 15%; }
-div.modal_popup table#settingsEditor th:nth-child(2),
-div.modal_popup table#settingsEditor td:nth-child(2) { width: 45%; }
-div.modal_popup table#settingsEditor th:nth-child(3),
-div.modal_popup table#settingsEditor td:nth-child(3) { width: 40%; }
+#settingsSide .settings_cat_btn:hover,
+#settingsSide .settings_cat_btn:focus {
+    outline: none;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.15);
+}
+
+#settingsSide .settings_cat_btn.active {
+    background: rgb(var(--color_r), var(--color_g), var(--color_b));
+    color: var(--color_light_black);
+}
+
+/* Right scrollable pane. Holds every category's controls (hidden panes are
+   display:none) so setupSettingsDropdowns + writeSettingsFile can read all. */
+div.modal_popup #settingsEditor {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-y: auto;
+    padding: 0 0.4vh 0.6vh 0;
+}
+
+div.modal_popup #settingsEditor .settings_cat { display: none; }
+div.modal_popup #settingsEditor .settings_cat.active { display: block; }
+
+/* A settings row: label (+ "i" button) on the left, control on the right */
+.settings_row {
+    display: flex;
+    align-items: center;
+    gap: 1vh;
+    padding: 0.55vh 0;
+    border-bottom: 0.15vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.22);
+}
+
+.settings_row:last-child { border-bottom: none; }
+
+.settings_row_label {
+    flex: 0 0 42%;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    position: relative;
+    font-size: 1.55vh;
+    line-height: 1.35;
+}
+
+.settings_row_ctl {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* "i" info button — reveals the previously-visible description on click. The
+   generic `div.modal_popup button` rule (border-radius, padding, margin) is less
+   specific, so scope these to win: without it the button renders square with the
+   default modal-button padding. */
+div.modal_popup .settings_info_btn {
+    flex: 0 0 auto;
+    width: 1.9vh;
+    height: 1.9vh;
+    margin: 0 0 0 0.6vh;
+    padding: 0;
+    border: 0.15vh solid rgb(var(--color_r), var(--color_g), var(--color_b));
+    border-radius: 50%;
+    background: transparent;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-size: 1.3vh;
+    font-weight: bold;
+    line-height: 1.4vh;
+    text-align: center;
+    cursor: pointer;
+}
+
+div.modal_popup .settings_info_btn:hover { background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.2); }
+
+/* Hidden help popover, toggled by its sibling "i" button */
+.settings_info_pop {
+    display: none;
+    position: absolute;
+    left: 0;
+    top: 100%;
+    z-index: 450;
+    max-width: 32vw;
+    background: var(--color_light_black);
+    border: 0.15vh solid rgb(var(--color_r), var(--color_g), var(--color_b));
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    padding: 0.8vh 1vh;
+    font-size: 1.35vh;
+    line-height: 1.5;
+    box-shadow: 0 0 1.5vh rgba(0, 0, 0, 0.6);
+}
+
+.settings_info_pop.open { display: block; }
 
 /* Section separator / note rows inside the settings editor (e.g. Claude Code) */
-div.modal_popup table#settingsEditor td.settingsEditor_section {
+.settingsEditor_section {
     text-align: center;
     font-weight: bold;
     letter-spacing: 0.05em;
-    padding: 0.6em 0.2em 0.3em;
+    padding: 0.8em 0.2em 0.3em;
     border-bottom: 1px solid rgb(var(--color_r), var(--color_g), var(--color_b));
     color: rgb(var(--color_r), var(--color_g), var(--color_b));
 }
@@ -194,6 +302,7 @@ div.modal_popup textarea:active, div.modal_popup textarea:focus {
 
 div.modal_popup td input {
     width: 100%;
+    font-family: var(--font_main_light); /* match the modal text instead of the default UI font */
     background: var(--color_light_black);
     color: rgb(var(--color_r), var(--color_g), var(--color_b));
     border: 0.15vh solid rgb(var(--color_r), var(--color_g), var(--color_b));
@@ -226,6 +335,28 @@ div.modal_popup td select {
     border: 0.15vh solid rgb(var(--color_r), var(--color_g), var(--color_b));
     padding: 0.4vh;
     font-size: 1.4vh;
+}
+
+/* Settings editor rows are divs (not table cells), so the td rules above don't
+   apply; style the text/password inputs identically. */
+div.modal_popup #settingsEditor input[type="text"],
+div.modal_popup #settingsEditor input[type="password"] {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: var(--font_main_light); /* match the sidebar/labels, not the default UI font */
+    background: var(--color_light_black);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    border: 0.15vh solid rgb(var(--color_r), var(--color_g), var(--color_b));
+    padding: 0.4vh 0.2vh;
+    font-size: 1.4vh;
+    line-height: 1.4;
+}
+
+div.modal_popup #settingsEditor input:active,
+div.modal_popup #settingsEditor input:focus {
+    outline: none !important;
+    background: rgb(var(--color_r), var(--color_g), var(--color_b));
+    color: var(--color_light_black);
 }
 
 /* Settings editor: theme-styled custom dropdowns (replaces native <select>).
@@ -316,3 +447,24 @@ details#shortcutsHelpAccordeon2 table td:nth-child(3) input[type="checkbox"] {
     max-height: 50vh;
     outline: none !important;
 }
+
+/* Prev / next arrows for browsing images in the same directory. Rendered
+   inline in the title row as "‹ name ›" — plain text buttons flanking the
+   filename, so they never cover the image. */
+div.modal_popup button.fs_media_link {
+    background: none;
+    border: none;
+    border-radius: 0;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main);
+    font-size: 2.6vh;
+    font-weight: normal;
+    line-height: 1;
+    padding: 0 0.6vh;
+    margin: 0;
+    cursor: pointer;
+    vertical-align: middle;
+    opacity: 0.6;
+    transition: opacity .2s;
+}
+div.modal_popup button.fs_media_link:hover { background: none; opacity: 1; }

@@ -38,6 +38,8 @@ button.fs_gear {
     color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.7);
     cursor: pointer;
     transition: color .2s, filter .2s;
+    position: relative;
+    top: -2px; /* sit a touch higher next to the FILESYSTEM label */
 }
 button.fs_gear:hover {
     color: rgb(var(--color_r), var(--color_g), var(--color_b));
@@ -48,6 +50,128 @@ button.fs_gear svg {
     width: 100%;
     height: 100%;
 }
+
+/* Header buttons (trash / network), same look as the gear button */
+button.fs_header_btn {
+    display: inline-block;
+    vertical-align: middle;
+    width: 1.6vh;
+    height: 1.6vh;
+    margin-left: 0.5vh;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.7);
+    cursor: pointer;
+    transition: color .2s, filter .2s;
+    position: relative;
+    top: -2px; /* sit a touch higher next to the FILESYSTEM label */
+}
+button.fs_header_btn:hover {
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    filter: drop-shadow(0 0 0.5vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.6));
+}
+button.fs_header_btn svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+/* Trash / network virtual views */
+.fs_virtual_bar {
+    display: flex;
+    flex-direction: row;
+    gap: 0.5vh;
+    padding: 0.4vh 0.4vw;
+    align-items: center;
+}
+.fs_virtual_btn {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.12);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 1.1vh;
+    letter-spacing: 0.08em;
+    padding: 0.4vh 1vh;
+    cursor: pointer;
+    text-transform: uppercase;
+}
+.fs_virtual_btn:hover { background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.25); }
+.fs_virtual_empty { border-color: rgb(var(--color_r), var(--color_g), var(--color_b)); }
+.fs_trash_list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3vh;
+    padding: 0.3vh 0.4vw;
+}
+.fs_trash_none {
+    color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    font-size: 1.1vh;
+    letter-spacing: 0.08em;
+    padding: 1vh;
+}
+.fs_trash_item {
+    display: flex;
+    align-items: center;
+    gap: 0.7vh;
+    padding: 0.5vh 0.6vh;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.05);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.12);
+    cursor: pointer;
+}
+.fs_trash_item:hover { background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.12); }
+.fs_trash_item svg { width: 2.4vh; height: 2.4vh; flex: 0 0 auto; }
+.fs_trash_meta { flex: 1 1 auto; min-width: 0; }
+.fs_trash_meta h3 {
+    margin: 0;
+    font-size: 1.2vh;
+    font-weight: normal;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.fs_trash_meta h4 {
+    margin: 0.15vh 0 0;
+    font-size: 0.9vh;
+    opacity: 0.55;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.fs_trash_restore, .fs_trash_purge {
+    flex: 0 0 auto;
+    background: transparent;
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.4);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 1vh;
+    letter-spacing: 0.06em;
+    padding: 0.3vh 0.7vh;
+    cursor: pointer;
+}
+.fs_trash_restore:hover { background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.3); }
+.fs_trash_purge:hover { background: rgba(224, 27, 36, 0.3); border-color: #e01b24; }
+
+/* Network mount dialog form */
+.fs_mount_form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5vh;
+    font-family: var(--font_main_light);
+}
+.fs_mount_form label {
+    font-size: 0.95vh;
+    opacity: 0.7;
+    letter-spacing: 0.08em;
+    margin-top: 0.4vh;
+}
+.fs_mount_form input {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.07);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 1.1vh;
+    padding: 0.4vh 0.6vh;
+    outline: none;
+}
+.fs_mount_form input:focus { border-color: rgb(var(--color_r), var(--color_g), var(--color_b)); }
 
 /* Quick-access shortcuts to common macOS folders */
 div#fs_quickbar {
@@ -324,6 +448,10 @@ section#filesystem.hideDotfiles > div#fs_disp_container > *.hidden {
 
 div#fs_disp_container > * > svg {
     width: 5vh;
+    /* Fixed height box: file-type icons have different aspect ratios (e.g.
+       439×512 images vs 24×24 glyphs) and would otherwise render at different
+       heights, pushing each cell's filename to a different vertical line. */
+    height: 5vh;
 }
 
 /* Add padding around non-edex icons */
@@ -337,11 +465,18 @@ div#fs_disp_container > * > h3 {
     max-width: 100%;
     max-height: 30%;
     margin: 0px;
-    padding-top: .5vh;
     box-sizing: border-box;
     white-space: nowrap;
     text-overflow: ellipsis;
     overflow: hidden;
+    /* Uniform label strip. A fixed height with line-height centering puts the
+       filename on the same horizontal line in every cell — Latin-only names and
+       names mixing in CJK (whose fallback font has taller metrics that used to
+       grow the box and push the text ~1.5px lower) now share one baseline. */
+    height: 2vh;
+    line-height: 2vh;
+    padding: 0;
+    margin-top: 0.3vh;
 }
 
 section#filesystem:not(.list-view) > div#fs_disp_container > div > h4 {

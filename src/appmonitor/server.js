@@ -107,6 +107,10 @@ const server = http.createServer((req, res) => {
         return backend.listNativeApps().then(apps => sendJson(res, 200, { ok: true, apps }));
     }
 
+    if (isGet && url === "/api/monitors/status") {
+        return backend.status().then(r => sendJson(res, 200, r));
+    }
+
     const monMatch = url.match(/^\/api\/monitors\/([ab])\/(launch|kill|fullscreen)$/);
     if (monMatch && (isPost || isGet)) {
         const mid = monMatch[1], action = monMatch[2];
@@ -115,6 +119,11 @@ const server = http.createServer((req, res) => {
                 backend[action](mid, body && body.appId).then(r => sendJson(res, r.ok ? 200 : 404, r)));
         }
         return backend.kill(mid).then(r => sendJson(res, 200, r));
+    }
+
+    if (isPost && url === "/api/apps/close") {
+        return readBody(req).then(body =>
+            backend.closeApp(body && body.appId).then(r => sendJson(res, 200, r)));
     }
 
     if (isPost && url === "/api/fullscreen/exit") {

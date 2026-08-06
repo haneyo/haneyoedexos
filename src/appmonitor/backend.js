@@ -27,6 +27,7 @@ function createBackend(mode, deps) {
 function mockBackend(deps) {
     const scenes = deps.scenes;           // { a: scene, b: scene }
     const opts = deps.opts;               // { userData, appImageDirs }
+    const running = {};                   // monitorId -> appId currently shown
     return {
         mode: "mock",
         listNativeApps() {
@@ -38,6 +39,7 @@ function mockBackend(deps) {
             const app = DEMO_APPS.find(a => a.id === appId);
             const scene = scenes[monitorId];
             if (!scene) return Promise.resolve({ ok: false, error: "bad monitor" });
+            running[monitorId] = appId;
             if (app) setDemo(scene, app.demo);
             else setDemo(scene, "terminal");     // a custom native app has no real binary here
             return Promise.resolve({ ok: true });
@@ -45,6 +47,25 @@ function mockBackend(deps) {
         kill(monitorId) {
             const scene = scenes[monitorId];
             if (scene) setDemo(scene, "terminal");
+            delete running[monitorId];
+            return Promise.resolve({ ok: true });
+        },
+        status() {
+            const monitorState = {};
+            for (const id of ["a", "b"]) {
+                monitorState[id] = running[id] ? { id: running[id], state: "running" } : null;
+            }
+            return Promise.resolve({ ok: true, monitors: monitorState });
+        },
+        // Close a specific app wherever it is running (no uninstall).
+        closeApp(appId) {
+            for (const id of Object.keys(running)) {
+                if (running[id] === appId) {
+                    const scene = scenes[id];
+                    if (scene) setDemo(scene, "terminal");
+                    delete running[id];
+                }
+            }
             return Promise.resolve({ ok: true });
         },
         fullscreen() {
@@ -68,7 +89,7 @@ function realBackend(deps) {
     const { spawn } = require("child_process");
     const monitors = deps.monitors;       // [{id, display, rfbPort, wsPath}]
     const opts = deps.opts;               // { userData, appImageDirs }
-    const running = {};                   // id -> {appPid, children:[]}
+    const running = {};                   // id -> {appPid, appId, children:[]}
     let fullscreenPid = null;             // app running natively on DISPLAY=:0
 
     function startMonitor(m) {
@@ -82,19 +103,31 @@ function realBackend(deps) {
              "-listen", "127.0.0.1"],
             { stdio: "ignore" });
         children.push(xvfb, wm, vnc);
+        // Fcitx5 + Rime (小狼毫) inside the virtual display so apps shown there
+        // can type Chinese too. Best-effort — only when fcitx5 is installed.
+        const fcitx = spawn("fcitx5", ["-d", "--replace"], {
+            stdio: "ignore",
+            env: Object.assign({}, process.env, {
+                DISPLAY: m.display,
+                GTK_IM_MODULE: "fcitx", QT_IM_MODULE: "fcitx", XMODIFIERS: "@im=fcitx"
+            })
+        });
+        children.push(fcitx);
         for (const c of children) c.on("error", e => console.error("[appmonitor] " + m.id + " spawn:", e.message));
-        running[m.id] = { appPid: null, children };
+        running[m.id] = { appPid: null, appId: null, children, exited: false };
         setTimeout(() => { if (running[m.id]) running[m.id].started = true; }, 800);
     }
 
     function killTree(monitorId) {
         const r = running[monitorId];
         if (!r) return;
+        r.exited = false;               // an intentional close clears any crash state
         if (r.appPid) {
             try { process.kill(r.appPid, "SIGTERM"); } catch (e) {}
             setTimeout(() => { try { process.kill(r.appPid, "SIGKILL"); } catch (e) {} }, 2000);
             r.appPid = null;
         }
+        r.appId = null;
     }
 
     // Chromium-based apps (Chrome/Chromium/Brave/Edge/Opera/Electron/AppImage)
@@ -139,7 +172,14 @@ function realBackend(deps) {
             const cmd = buildCommand(app);
             if (!cmd) return Promise.resolve({ ok: false, error: "cannot build command" });
             killTree(monitorId);
-            const env = Object.assign({}, process.env, { DISPLAY: m.display });
+            if (running[m.id]) running[m.id].appId = appId;
+            const env = Object.assign({}, process.env, {
+                DISPLAY: m.display,
+                // Fcitx5 input-method hooks so the app can type Chinese
+                GTK_IM_MODULE: "fcitx",
+                QT_IM_MODULE: "fcitx",
+                XMODIFIERS: "@im=fcitx"
+            });
             if (isChromium(cmd.cmd)) {
                 env.ELECTRON_DISABLE_SANDBOX = "1";
             }
@@ -147,6 +187,15 @@ function realBackend(deps) {
             const doSpawn = () => {
                 const child = spawn(cmd.cmd, cmd.args, { env, stdio: "ignore" });
                 child.on("error", e => console.error("[appmonitor] app spawn:", e.message));
+                // Mark the app as exited/crashed if its process dies on its own
+                // (an intentional kill goes through killTree, which clears appPid
+                // first, so that exit is not mistaken for a crash).
+                child.on("exit", () => {
+                    if (running[m.id] && running[m.id].appPid === child.pid) {
+                        running[m.id].exited = true;
+                        running[m.id].appPid = null;
+                    }
+                });
                 if (running[m.id]) running[m.id].appPid = child.pid;
             };
             const r = running[m.id];
@@ -155,6 +204,31 @@ function realBackend(deps) {
             return Promise.resolve({ ok: true, app: app.name });
         },
         kill(monitorId) { killTree(monitorId); return Promise.resolve({ ok: true }); },
+        status() {
+            const monitorState = {};
+            for (const m of monitors) {
+                const r = running[m.id];
+                if (r && r.appId) {
+                    monitorState[m.id] = {
+                        id: r.appId,
+                        // exited = the process died on its own (crash / closed by
+                        // the app); running = a live process; starting = launched
+                        // but the process has not spawned yet.
+                        state: r.exited ? "exited" : (r.appPid ? "running" : "starting")
+                    };
+                } else {
+                    monitorState[m.id] = null;
+                }
+            }
+            return Promise.resolve({ ok: true, monitors: monitorState });
+        },
+        // Close a specific app wherever it is running (no uninstall).
+        closeApp(appId) {
+            for (const m of monitors) {
+                if (running[m.id] && running[m.id].appId === appId) killTree(m.id);
+            }
+            return Promise.resolve({ ok: true });
+        },
         // Native fullscreen: stop the nested-display preview and launch the app
         // directly on the real display (:0), where openbox (the WM on :0) can
         // raise/fullscreen it. This is the "the app runs completely natively"

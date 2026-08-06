@@ -18,11 +18,20 @@
 2. Actions → **Build eDEX-OS ISO** → Run workflow(可改 Ubuntu ISO 地址)。
 3. 完成后下载 `eDEX-OS-ISO` artifact 里的 `.iso`。
 
+**AppImage 来源**(`appimage_source` 输入):
+| 选项 | 说明 |
+|---|---|
+| `latest-release`(默认) | 直接取 GitHub 最新 Release 的 AppImage → **ISO 与在线更新永远是同一个最新版本** |
+| `tag` | 取指定 Release tag 的 AppImage(配合 `tag` 输入) |
+| `source` | 从当前 commit 源码现场编译(做预发布 / 开发验证时用) |
+
+> 推荐日常构建用默认的 `latest-release`:这样「从 GitHub 构建的 ISO」和「装机后在线更新」给的都是同一份最新版,不会出现 ISO 比在线更新还新的错位。
+
 ### 方式 B:本地构建(Ubuntu 24.04 机器 / 笔记本)
 ```bash
 sudo apt install -y git curl squashfs-tools xorriso
 git clone <your-repo> && cd <repo>
-bash packaging/build-iso-local.sh            # 自动下载官方 ISO 并构建
+bash packaging/build-iso-local.sh            # 自动下载官方 ISO 并构建(本地始终从源码编译)
 # 产物: eDEX-OS-local.iso
 ```
 
@@ -30,7 +39,7 @@ bash packaging/build-iso-local.sh            # 自动下载官方 ISO 并构建
 1. 烧录:`dd if=eDEX-OS-*.iso of=/dev/sdX bs=4M status=progress`(或用 balenaEtcher / Rufus)。U 盘 ≥8GB。
 2. 笔记本开机进 BIOS/UEFI 启动菜单,选 U 盘启动(可关 Secure Boot 或保持开启——本镜像不改引导链,Secure Boot 可用)。
 3. 走一遍 Ubuntu 式安装:选语言 / 连网 / 分区 / 建用户名密码。其余自动。
-4. 安装完重启 → **自动登录并直接进入 eDEX 全屏**。
+4. 安装完重启 → 首次开机先跑一次「系统初始化」向导(xterm 里设置 **root 密码**和**解锁 PIN**,4-8 位数字,均输入两次确认),设完自动进 **eDEX 全屏**。PIN 即为闲置锁屏的解锁码(锁屏仅支持数字)。
 
 ## 三、用起来
 - **终端 tab 1/2/3**:前两个是终端,第 3 个是内嵌 Claude(需自行 `claude` CLI + 配置 API Key)。

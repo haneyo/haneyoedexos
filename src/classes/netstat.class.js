@@ -97,11 +97,6 @@ class Netstat {
         this.parent = document.getElementById(parentId);
 
         // China administrative divisions (province -> city -> districts) plus a
-        // parallel map of their English (romanized) display names. Loaded
-        // page-relative, same pattern as filesystem.class.js.
-        this._cnAdmin = require("./assets/misc/cn_admin.json");
-        this._cnEn = require("./assets/misc/cn_admin_en.json");
-
         // Location persisted via settings.json (key weatherLocation). Falls back
         // to the Chengdu, Xinjin default when nothing has been set yet.
         let saved = (window.settings && window.settings.weatherLocation && typeof window.settings.weatherLocation.latitude === "number")
@@ -113,17 +108,10 @@ class Netstat {
                 <h1>WEATHER</h1>
                 <div id="mod_netstat_weather_loc">
                     <button type="button" class="mod_loc_auto" title="Auto-detect my location (works anywhere)">AUTO</button>
-                    <div class="mod_loc_dd">
-                        <button type="button" class="mod_loc_btn" data-field="province">--</button>
-                        <div class="mod_loc_list" data-field="province"></div>
-                    </div>
-                    <div class="mod_loc_dd">
-                        <button type="button" class="mod_loc_btn" data-field="city">--</button>
-                        <div class="mod_loc_list" data-field="city"></div>
-                    </div>
-                    <div class="mod_loc_dd">
-                        <button type="button" class="mod_loc_btn" data-field="district">--</button>
-                        <div class="mod_loc_list" data-field="district"></div>
+                    <button type="button" class="mod_loc_cur" title="Click to change location"></button>
+                    <div class="mod_loc_editor">
+                        <input id="mod_netstat_weather_search" type="text" placeholder="Search city or address…" spellcheck="false" autocomplete="off">
+                        <div class="mod_loc_results"></div>
                     </div>
                     <span id="mod_netstat_weather_loc_status"></span>
                 </div>
@@ -228,64 +216,55 @@ class Netstat {
         });
     }
 
-    // English (romanized) display name for a Chinese division name, e.g.
-    // 四川省 -> Sichuan, 深圳市 -> Shenzhen, 南山区 -> Nanshan District.
-    // Falls back to the Chinese name when the parallel dataset has no entry.
-    _en(field, zh) {
-        if (!zh) return "--";
-        let en = zh;
-        if (field === "province") {
-            en = (this._cnEn[zh] && this._cnEn[zh].en) || zh;
-        } else if (field === "city") {
-            en = (this._loc && this._cnEn[this._loc.province] && this._cnEn[this._loc.province].cities[zh] && this._cnEn[this._loc.province].cities[zh].en) || zh;
-        } else {
-            en = (this._loc && this._cnEn[this._loc.province] && this._cnEn[this._loc.province].cities[this._loc.city] && this._cnEn[this._loc.province].cities[this._loc.city].districts[zh]) || zh;
-        }
-        return en;
-    }
-
-    // Three-level (province / city / district) location picker, rendered as
-    // custom dropdowns matching the theme (no native <select>).
+    // Location picker: click the current-place button to open a search box
+    // (Open-Meteo geocoding), pick a result, or toggle AUTO.
     //
     // Modules created after this one (globe, conninfo) rebuild the column's
     // innerHTML with `+=`, which re-parses and detaches every element captured
     // here. Two measures survive that:
     //   - a single delegated click listener on `document` (never rebuilt)
     //   - `_renderPicker()`, the single source of truth, re-run on a timer so
-    //     the rebuilt DOM is re-populated from `this._loc`.
+    //     the rebuilt DOM is re-populated from `this._weatherSaved`.
     _initLocationPicker() {
-        let saved = this._weatherSaved;
-        if (saved && this._cnAdmin[saved.province] && this._cnAdmin[saved.province][saved.city]) {
-            this._loc = { province: saved.province, city: saved.city, district: saved.district || "" };
-        } else {
-            // Default UI state mirrors the fallback location: Chengdu, Xinjin.
-            this._loc = { province: "四川省", city: "成都市", district: "新津区" };
-        }
-        this._openField = null;
+        this._auto = !!(this._weatherSaved && this._weatherSaved.auto);
+        this._editorOpen = false;
         this._userPicked = false;
         this._autoApplied = false;
-        this._auto = !!(saved && saved.auto);   // explicit "AUTO" mode (works for non-China)
+        this._manualSaved = (this._weatherSaved && !this._weatherSaved.auto) ? this._weatherSaved : null;
 
-        // Delegated clicks, scoped to this module so the settings editor's own
-        // `.mod_loc_*` dropdowns are left alone.
+        // Delegated clicks: AUTO toggles; the current-location button opens the
+        // search editor; a search result applies it; clicking outside closes.
         document.addEventListener("click", e => {
-            let inWeather = e.target.closest && e.target.closest("#mod_netstat_weather_loc");
-            if (inWeather) {
+            const inLoc = e.target.closest && e.target.closest("#mod_netstat_weather_loc");
+            if (inLoc) {
                 if (e.target.closest(".mod_loc_auto")) {
-                    // AUTO is a toggle: press again to leave AUTO and go back
-                    // to the manual province/city/district pickers.
                     if (this._auto) { this._disableAuto(); } else { this._enableAuto(); }
                     return;
                 }
-                let btn = e.target.closest(".mod_loc_btn");
-                if (btn) { this._toggleField(btn.dataset.field); return; }
-                let opt = e.target.closest(".mod_loc_opt");
-                if (opt) { this._selectOption(opt.dataset.field, opt.dataset.value); return; }
+                if (e.target.closest(".mod_loc_cur")) { this._toggleEditor(); return; }
+                return; // search results handle their own click
             }
-            // click outside any open weather dropdown closes it
-            if (this._openField && !(e.target.closest && e.target.closest("#mod_netstat_weather_loc"))) {
-                this._openField = null;
-                this._renderPicker();
+            if (this._editorOpen && !(e.target.closest && e.target.closest("#mod_netstat_weather_loc"))) {
+                this._closeEditor();
+            }
+        });
+
+        // The netstat column is rebuilt by later modules (which detaches the
+        // search input), so delegate input/keydown to `document` — the same way
+        // the click handler is delegated.
+        let debounce;
+        document.addEventListener("input", e => {
+            if (e.target && e.target.id === "mod_netstat_weather_search") {
+                clearTimeout(debounce);
+                const q = e.target.value.trim();
+                debounce = setTimeout(() => this._searchAndRender(q), 350);
+            }
+        });
+        document.addEventListener("keydown", e => {
+            if (e.target && e.target.id === "mod_netstat_weather_search") {
+                e.stopPropagation();
+                if (e.key === "Escape") { e.preventDefault(); this._closeEditor(); }
+                else if (e.key === "Enter") { e.preventDefault(); }
             }
         });
 
@@ -301,48 +280,110 @@ class Netstat {
         }
     }
 
+    _toggleEditor() {
+        this._editorOpen = !this._editorOpen;
+        this._renderPicker();
+        if (this._editorOpen) {
+            setTimeout(() => {
+                const input = document.getElementById("mod_netstat_weather_search");
+                if (input) { input.value = ""; input.focus(); }
+                const results = document.querySelector("#mod_netstat_weather_loc .mod_loc_results");
+                if (results) results.innerHTML = "";
+            }, 0);
+        }
+    }
+
+    _closeEditor() {
+        this._editorOpen = false;
+        this._renderPicker();
+    }
+
+    // Open-Meteo geocoding search (any country, English results).
+    _searchLocations(q) {
+        return new Promise(resolve => {
+            if (!q) return resolve([]);
+            const url = "https://geocoding-api.open-meteo.com/v1/search?count=8&language=en&format=json&name=" + encodeURIComponent(q);
+            const req = require("https").get(url, {
+                agent: this._httpsAgent, timeout: 12000,
+                headers: {"User-Agent": "eDEX-UI/2.2.8"}
+            }, res => {
+                let raw = "";
+                res.on("data", c => raw += c);
+                res.on("end", () => { try { const d = JSON.parse(raw); resolve((d && d.results) || []); } catch (e) { resolve([]); } });
+            });
+            req.on("timeout", () => { req.destroy(); resolve([]); });
+            req.on("error", () => resolve([]));
+        });
+    }
+
+    async _searchAndRender(q) {
+        const results = document.querySelector("#mod_netstat_weather_loc .mod_loc_results");
+        if (!results) return;
+        if (!q) { results.innerHTML = ""; return; }
+        results.innerHTML = `<div class="mod_loc_status_line">SEARCHING…</div>`;
+        const found = await this._searchLocations(q);
+        if (!found.length) { results.innerHTML = `<div class="mod_loc_status_line">NO RESULTS</div>`; return; }
+        results.innerHTML = "";
+        found.forEach((r, i) => {
+            const d = document.createElement("div");
+            d.className = "mod_loc_result" + (i === 0 ? " mod_loc_result_top" : "");
+            d.innerHTML = `<b>${r.name}</b><span>${[r.admin1, r.country].filter(Boolean).join(" · ")}</span>`;
+            d.onclick = () => this._selectSearchResult(r);
+            results.appendChild(d);
+        });
+    }
+
+    _selectSearchResult(r) {
+        this._auto = false;
+        this._userPicked = true;
+        clearInterval(this._autoRetry);
+        clearInterval(this._autoLocTimer);
+        const name = [r.name, r.admin1, r.country].filter(Boolean).join(", ");
+        window.settings.weatherLocation = {
+            name, latitude: r.latitude, longitude: r.longitude,
+            timezone: r.timezone || "auto", auto: false
+        };
+        this._manualSaved = window.settings.weatherLocation;
+        this._weatherSaved = window.settings.weatherLocation;
+        this._persistWeather();
+        this._closeEditor();
+        this._renderPicker();
+        if (this.weather && this.weather.destroy) this.weather.destroy();
+        this._initWeather();
+        require("electron").ipcRenderer.send("log", "debug",
+            `Weather location set: ${name} (${r.latitude}, ${r.longitude})`);
+    }
+
+    _persistWeather() {
+        try {
+            const fs = require("fs"), path = require("path"), remote = require("@electron/remote");
+            fs.writeFileSync(path.join(remote.app.getPath("userData"), "settings.json"),
+                JSON.stringify(window.settings, null, 4));
+        } catch (e) { /* non-fatal */ }
+    }
+
     // When nothing is saved and the user has not picked a location, apply the
-    // location detected by netstat (ipwho.is) as the weather default. Uses the
-    // detected coordinates directly (no geocoding); maps the detected city name
-    // onto the admin-division table for display. Not persisted, so a roaming
-    // machine re-detects on every launch until the user picks a location.
+    // location detected by netstat (ipwho.is) as the weather default. Not
+    // persisted, so a roaming machine re-detects on every launch until the
+    // user picks a location.
     _autoLocate() {
         if (this._userPicked || this._weatherSaved || this._autoApplied) return;
         let geo = this.ipinfo && this.ipinfo.geo;
         if (!geo || typeof geo.latitude !== "number" || typeof geo.longitude !== "number") return;
-
-        let want = String(geo.city || "").toLowerCase().trim();
-        let found = null;
-        for (const [prov, p] of Object.entries(this._cnEn)) {
-            for (const [city, c] of Object.entries(p.cities)) {
-                if (String(c.en).toLowerCase() === want) { found = { prov, city }; break; }
-            }
-            if (found) break;
-        }
-        if (!found) return; // could not map the detected city; keep the fallback
-
         this._autoApplied = true;
         clearInterval(this._autoLocTimer);
-        this._loc = {
-            province: found.prov,
-            city: found.city,
-            district: (this._cnAdmin[found.prov][found.city] && this._cnAdmin[found.prov][found.city][0]) || ""
-        };
-        window.settings.weatherLocation = {
-            province: found.prov, city: found.city, district: this._loc.district,
-            name: geo.city, latitude: geo.latitude, longitude: geo.longitude,
-            timezone: "Asia/Shanghai"
-        };
+        const name = [geo.city, geo.region, geo.country].filter(Boolean).join(", ") || "Detected location";
+        window.settings.weatherLocation = { name, latitude: geo.latitude, longitude: geo.longitude, timezone: "auto" };
         this._weatherSaved = window.settings.weatherLocation;
         this._renderPicker();
         if (this.weather && this.weather.destroy) this.weather.destroy();
         this._initWeather();
         require("electron").ipcRenderer.send("log", "debug",
-            `Weather auto-located to ${found.prov}/${found.city} (${geo.latitude}, ${geo.longitude})`);
+            `Weather auto-located to ${name} (${geo.latitude}, ${geo.longitude})`);
     }
 
     // Explicit "AUTO" location — uses the detected coordinates directly, so it
-    // works for users OUTSIDE China too (no province/city mapping required).
+    // works everywhere (no province/city mapping required).
     _enableAuto() {
         this._auto = true;
         this._userPicked = true;
@@ -353,24 +394,30 @@ class Netstat {
         }
     }
 
-    // Leave explicit AUTO mode again: stop any pending auto-location retry,
-    // restore the manual CN pickers and re-apply the last manual selection.
+    // Leave AUTO: restore the last manually searched location, if any.
     _disableAuto() {
         this._auto = false;
         this._userPicked = true;
         clearInterval(this._autoRetry);
+        const manual = this._manualSaved;
+        if (manual) {
+            window.settings.weatherLocation = manual;
+            this._weatherSaved = window.settings.weatherLocation;
+            this._persistWeather();
+            if (this.weather && this.weather.destroy) this.weather.destroy();
+            this._initWeather();
+        }
         this._renderPicker();
-        this._applyLocation();
     }
 
     // Applies the geo-detected location to the weather. Returns true once done.
     _applyAuto() {
         let geo = this.ipinfo && this.ipinfo.geo;
         if (!geo || typeof geo.latitude !== "number" || typeof geo.longitude !== "number") return false;
-        const name = geo.city || geo.country || "AUTO";
+        const name = [geo.city, geo.region, geo.country].filter(Boolean).join(", ") || "AUTO";
         window.settings.weatherLocation = {
             latitude: geo.latitude, longitude: geo.longitude,
-            name: name, country: geo.country || "", auto: true
+            name, country: geo.country || "", auto: true
         };
         this._weatherSaved = window.settings.weatherLocation;
         this._renderPicker();
@@ -381,203 +428,35 @@ class Netstat {
 
     // Rebuild the whole picker from `this._loc`: English button labels, the
     // Chinese dropdown lists and the open/closed state of each list.
+    // Rebuild the location row: AUTO button state, the current place name
+    // (English), and the open/closed state of the search editor.
     _renderPicker() {
-        let provBtn = document.querySelector("#mod_netstat_weather_loc .mod_loc_btn[data-field='province']");
-        if (!provBtn) return; // pre-rebuild DOM detached; the timer re-runs this
-        let cityBtn = document.querySelector("#mod_netstat_weather_loc .mod_loc_btn[data-field='city']");
-        let distBtn = document.querySelector("#mod_netstat_weather_loc .mod_loc_btn[data-field='district']");
-        let autoBtn = document.querySelector("#mod_netstat_weather_loc .mod_loc_auto");
-        let status = document.getElementById("mod_netstat_weather_loc_status");
-        let dds = document.querySelectorAll("#mod_netstat_weather_loc .mod_loc_dd");
+        const loc = document.querySelector("#mod_netstat_weather_loc");
+        if (!loc) return;
+        const autoBtn = loc.querySelector(".mod_loc_auto");
+        const cur = loc.querySelector(".mod_loc_cur");
+        const editor = loc.querySelector(".mod_loc_editor");
+        const status = document.getElementById("mod_netstat_weather_loc_status");
 
-        if (this._auto) {
-            // AUTO mode: show the detected place and hide the CN pickers. The
-            // AUTO button itself is the restore control - press it again to
-            // leave AUTO and bring the manual province/city/district buttons
-            // back (see _disableAuto).
-            if (autoBtn) autoBtn.classList.add("mod_loc_auto_active");
-            if (status) status.textContent = (this._weatherSaved && this._weatherSaved.name) || "detecting…";
-            dds.forEach(d => { d.style.display = "none"; });
-            if (cityBtn) cityBtn.textContent = "";
-            if (distBtn) distBtn.textContent = "";
-            return;
+        if (autoBtn) autoBtn.classList.toggle("mod_loc_auto_active", this._auto);
+        const saved = this._weatherSaved;
+        if (cur) {
+            cur.textContent = this._auto
+                ? ((saved && saved.name) ? "AUTO · " + saved.name : "AUTO · detecting…")
+                : ((saved && saved.name) ? saved.name : "Set location");
         }
-        if (autoBtn) autoBtn.classList.remove("mod_loc_auto_active");
+        if (editor) editor.style.display = this._editorOpen ? "block" : "none";
         if (status) status.textContent = "";
-        dds.forEach(d => { d.style.display = ""; });
-
-        provBtn.textContent = this._en("province", this._loc.province);
-        if (cityBtn) cityBtn.textContent = this._en("city", this._loc.city);
-        if (distBtn) distBtn.textContent = this._en("district", this._loc.district);
-
-        this._renderList("province", Object.keys(this._cnAdmin));
-        let cities = this._cnAdmin[this._loc.province] || {};
-        this._renderList("city", Object.keys(cities));
-        this._renderList("district", cities[this._loc.city] || []);
-
-        document.querySelectorAll("#mod_netstat_weather_loc .mod_loc_list").forEach(l => {
-            l.classList.toggle("mod_loc_open", l.dataset.field === this._openField);
-        });
-    }
-
-    _renderList(field, items) {
-        let list = document.querySelector(`#mod_netstat_weather_loc .mod_loc_list[data-field='${field}']`);
-        if (!list) return;
-        list.innerHTML = "";
-        items.forEach(item => {
-            let div = document.createElement("div");
-            div.className = "mod_loc_opt" + (item === this._loc[field] ? " mod_loc_opt_active" : "");
-            div.dataset.field = field;
-            div.dataset.value = item;
-            div.textContent = item;
-            list.appendChild(div);
-        });
-    }
-
-    _toggleField(field) {
-        this._openField = (this._openField === field) ? null : field;
-        this._renderPicker();
-        if (this._openField === field) {
-            let list = document.querySelector(`#mod_netstat_weather_loc .mod_loc_list[data-field='${field}']`);
-            let active = list && list.querySelector(".mod_loc_opt_active");
-            if (active) active.scrollIntoView({ block: "nearest" });
-        }
-    }
-
-    _selectOption(field, value) {
-        this._userPicked = true;
-        this._auto = false;   // manual pick leaves AUTO mode
-        clearInterval(this._autoRetry);
-        if (field === "province") {
-            this._loc.province = value;
-            let cities = this._cnAdmin[value] || {};
-            this._loc.city = Object.keys(cities)[0] || "";
-            this._loc.district = (cities[this._loc.city] && cities[this._loc.city][0]) || "";
-        } else if (field === "city") {
-            this._loc.city = value;
-            let cities = this._cnAdmin[this._loc.province] || {};
-            this._loc.district = (cities[value] && cities[value][0]) || "";
-        } else {
-            this._loc.district = value;
-        }
-        this._openField = null;
-        this._renderPicker();
-        this._applyLocation();
-    }
-
-    // Geocode the currently selected province/city/district, persist the choice
-    // and restart the weather widget on the resolved coordinates.
-    _applyLocation() {
-        let status = document.getElementById("mod_netstat_weather_loc_status");
-        let province = this._loc.province;
-        let city = this._loc.city || "";
-        let district = this._loc.district || "";
-        if (!province) return;
-
-        if (status) status.innerText = "RESOLVING";
-        this._geocodeSelection(province, city, district).then(loc => {
-            if (!loc) {
-                if (status) status.innerText = "FAILED";
-                return;
-            }
-
-            // Persist for the next launch (best-effort; failure only affects this session)
-            window.settings.weatherLocation = {
-                province: province,
-                city: city,
-                district: district,
-                name: loc.name,
-                latitude: loc.latitude,
-                longitude: loc.longitude,
-                timezone: loc.timezone
-            };
-            this._weatherSaved = window.settings.weatherLocation;
-            try {
-                let fs = require("fs");
-                let path = require("path");
-                let remote = require("@electron/remote");
-                fs.writeFileSync(path.join(remote.app.getPath("userData"), "settings.json"),
-                    JSON.stringify(window.settings, null, 4));
-            } catch (e) { /* non-fatal */ }
-
-            // Restart the widget on the new coords; the picker buttons are the
-            // location display, which `_renderPicker` updates on the next pick.
-            if (this.weather && this.weather.destroy) this.weather.destroy();
-            this._initWeather();
-
-            if (status) status.innerText = "OK";
-            require("electron").ipcRenderer.send("log", "debug",
-                `Weather location set: ${province} ${city} ${district} (${loc.latitude}, ${loc.longitude})`);
-        });
-    }
-
-    // Open-Meteo's geocoder indexes populated places, not administrative
-    // divisions, so a district name alone usually fails. We therefore geocode the
-    // parent city (or the county-level district for province-administered
-    // divisions) and reuse those coordinates for the district - the forecast
-    // grid is far too coarse for district-level differences to matter.
-    _geocodeSelection(province, city, district) {
-        let queries;
-        if (!city || city === province) {
-            queries = [province];                    // municipalities: geocode the city itself
-        } else if (city === "省直辖县级行政区划") {
-            queries = [district, city, province];    // province-administered counties
-        } else {
-            queries = [city, city.replace(/市$/, ""), province];
-        }
-        return this._geocodeCN(queries, province);
-    }
-
-    // Geocode candidate names against the free Open-Meteo API, restricted to
-    // China. Results are ranked by the API; among them we prefer one whose
-    // province (admin1) matches the selected province, since plain city names
-    // often collide with unrelated towns in other provinces.
-    _geocodeCN(queries, province) {
-        let norm = s => String(s || "").replace(/省|市|壮族自治区|回族自治区|维吾尔自治区|自治区|特别行政区/g, "");
-        let want = norm(province);
-
-        let attempt = q => new Promise(resolve => {
-            if (!q) return resolve([]);
-            let url = "https://geocoding-api.open-meteo.com/v1/search?count=8&language=zh&format=json&country=CN&name=" + encodeURIComponent(q);
-            let req = require("https").get(url, {
-                agent: this._httpsAgent,
-                timeout: 15000,
-                headers: {"User-Agent": "eDEX-UI/2.2.8"}
-            }, res => {
-                let raw = "";
-                res.on("data", c => raw += c);
-                res.on("end", () => {
-                    try {
-                        let d = JSON.parse(raw);
-                        resolve((d && d.results) || []);
-                    } catch (e) { resolve([]); }
-                });
-            });
-            req.on("timeout", () => { req.destroy(); resolve([]); });
-            req.on("error", () => resolve([]));
-        });
-
-        let walk = i => {
-            if (i >= queries.length) return Promise.resolve(null);
-            return attempt(queries[i]).then(rs => {
-                if (!rs.length) return walk(i + 1);
-                let exact = rs.find(r => norm(r.admin1) === want);
-                if (exact) return exact;
-                // Last resort: the province-name query may only return a nearby city
-                if (i === queries.length - 1) return rs[0];
-                return walk(i + 1);
-            });
-        };
-
-        return walk(0).then(r => r ? {
-            name: r.name,
-            latitude: r.latitude,
-            longitude: r.longitude,
-            timezone: r.timezone
-        } : null);
     }
 
     updateInfo() {
+        // Cover mode (lock / screensaver): report the fabricated uplink instead
+        // of the real interface / public IP.
+        if (window.cover && window.cover.isActive()) {
+            let ms = 30 + Math.floor(Math.random() * 50);
+            document.getElementById("mod_netstat_netfooter").innerText = `NET: SATLINK-7 · ONLINE · ${ms}MS · IP 10.90.45.7`;
+            return;
+        }
         window.si.networkInterfaces().then(async data => {
             let offline = false;
 
@@ -636,6 +515,11 @@ class Netstat {
                 }
 
                 let p = await this.ping(window.settings.pingAddr || "223.5.5.5", 80, net.ip4).catch(() => { offline = true });
+
+                // Cover mode was engaged while this async chain was in flight
+                // (e.g. a lock right after the previous tick started) — the fake
+                // footer already took over, so a real IP must not overwrite it.
+                if (window.cover && window.cover.isActive()) return;
 
                 this.offline = offline;
                 let footer = `NET: ${net.iface} · ${offline ? "OFFLINE" : "ONLINE"}`;

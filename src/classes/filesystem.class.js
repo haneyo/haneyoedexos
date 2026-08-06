@@ -66,9 +66,11 @@ class FilesystemDisplay {
         // Gear button next to the "FILESYSTEM" title: opens the eDEX settings
         // editor directly (themes, shell, keyboard, ...).
         const gearIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
+        const trashIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6"/></svg>`;
+        const netIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>`;
 
         container.innerHTML = `
-            <h3 class="title"><p>FILESYSTEM<button class="fs_gear" title="eDEX Settings" onclick="window.openSettings()">${gearIcon}</button></p><p id="fs_disp_title_dir"></p></h3>
+            <h3 class="title"><p>FILESYSTEM<button class="fs_header_btn" title="Trash" onclick="window.fsDisp.showTrash()">${trashIcon}</button><button class="fs_header_btn" title="Network" onclick="window.fsDisp.showNetwork()">${netIcon}</button><button class="fs_gear" title="eDEX Settings" onclick="window.openSettings()">${gearIcon}</button></p><p id="fs_disp_title_dir"></p></h3>
             <div id="fs_quickbar">${this._quickbarHTML()}</div>
             <div id="fs_disp_container">
             </div>
@@ -317,6 +319,16 @@ class FilesystemDisplay {
                     .map(el => this._itemPath(el)).filter(Boolean);
                 this._refreshSelectionUI();
             }
+            // Windows-like deletion in the normal file view:
+            //   Delete        → move to trash
+            //   Shift + Delete → delete permanently
+            if (this._fsHovered && this.dirpath !== "trash://"
+                && this.selected && this.selected.length && e.code === "Delete") {
+                e.preventDefault();
+                e.stopPropagation();
+                if (e.shiftKey) this._deleteSelectedPermanent();
+                else this._deleteSelected();
+            }
         }, true);
 
         // Single click still opens/navigates (the item's inline onclick). Only
@@ -415,7 +427,8 @@ class FilesystemDisplay {
             <button class="fs_ctx_item" data-action="copy">Copy</button>
             <button class="fs_ctx_item" data-action="cut">Cut</button>
             <button class="fs_ctx_item" data-action="paste">Paste</button>
-            <button class="fs_ctx_item" data-action="delete">Delete</button>
+            <button class="fs_ctx_item" data-action="trash">Move to Trash</button>
+            <button class="fs_ctx_item" data-action="delete">Delete Permanently</button>
             <button class="fs_ctx_item" data-action="newfolder">New Folder</button>`;
         document.body.appendChild(this._ctxMenu);
         this._ctxMenu.addEventListener("click", e => {
@@ -438,6 +451,7 @@ class FilesystemDisplay {
             m.querySelector('[data-action="copy"]').classList.toggle("disabled", !hasSelection);
             m.querySelector('[data-action="cut"]').classList.toggle("disabled", !hasSelection);
             m.querySelector('[data-action="paste"]').classList.toggle("disabled", !pasteOk);
+            m.querySelector('[data-action="trash"]').classList.toggle("disabled", !hasSelection);
             m.querySelector('[data-action="delete"]').classList.toggle("disabled", !hasSelection);
             m.style.display = "block";
             let mw = m.offsetWidth, mh = m.offsetHeight;
@@ -455,7 +469,8 @@ class FilesystemDisplay {
                 case "copy": this.clipboard = { mode: "copy", paths: this.selected.slice() }; break;
                 case "cut": this.clipboard = { mode: "cut", paths: this.selected.slice() }; break;
                 case "paste": this._paste(); break;
-                case "delete": this._deleteSelected(); break;
+                case "trash": this._deleteSelected(); break;                  // Move to Trash
+                case "delete": this._deleteSelectedPermanent(); break;        // Delete Permanently
                 case "newfolder": this._newFolder(); break;
             }
         };
@@ -479,7 +494,7 @@ class FilesystemDisplay {
             let oldPath = this.selected[0];
             if (!input || !input.value.trim() || !this._renameDir || !oldPath) return;
             let newPath = this._renameDir + "/" + input.value.trim();
-            this._term(`mv "${oldPath.replace(/"/g, '\\"')}" "${newPath.replace(/"/g, '\\"')}"`);
+            this._exec(`mv "${oldPath.replace(/"/g, '\\"')}" "${newPath.replace(/"/g, '\\"')}"`);
             this._renameDir = null;
         };
 
@@ -568,18 +583,22 @@ class FilesystemDisplay {
             });
         };
 
-        // Run a shell command through the active terminal and refresh the view.
-        this._term = cmd => {
-            let t = window.term[window.currentTerm];
-            if (t && t.writelr) t.writelr(cmd);
-            setTimeout(() => { this.readFS(this.dirpath); }, 800);
+        // Run a shell command in a BACKGROUND process (no dependency on the
+        // terminals being free), then refresh. Used for file operations so they
+        // work even when both terminal tabs are busy with other programs.
+        this._exec = (cmd, cb) => {
+            require("child_process").exec(cmd, (err, stdout, stderr) => {
+                if (err) console.warn("[filesystem] op failed:", stderr || err.message);
+                if (cb) cb();
+                this.readFS(this.dirpath);
+            });
         };
 
         this._paste = () => {
             if (!this.clipboard || !this.clipboard.paths.length || !this.dirpath) return;
             let dest = this.dirpath.replace(/"/g, '\\"');
             let srcs = this.clipboard.paths.map(p => `"${p.replace(/"/g, '\\"')}"`).join(" ");
-            this._term(this.clipboard.mode === "copy"
+            this._exec(this.clipboard.mode === "copy"
                 ? `cp -R ${srcs} "${dest}/"`
                 : `mv ${srcs} "${dest}/"`);
             this.clipboard = null;
@@ -587,9 +606,277 @@ class FilesystemDisplay {
 
         this._deleteSelected = () => {
             if (!this.selected.length) return;
-            let srcs = this.selected.map(p => `"${p.replace(/"/g, '\\"')}"`).join(" ");
-            this._term(`rm -rf ${srcs}`);
+            // Windows-like: Delete moves to the trash.
+            this._toTrash(this.selected);
             this.selected = [];
+        };
+
+        this._deleteSelectedPermanent = () => {
+            if (!this.selected.length) return;
+            this._deletePermanently(this.selected);
+            this.selected = [];
+        };
+
+        /* ---- Trash (XDG) + network mount helpers ---- */
+        this._trashDirs = () => {
+            const os = require("os");
+            const path = require("path");
+            const root = process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
+            const trash = path.join(root, "Trash");
+            return { root: trash, files: path.join(trash, "files"), info: path.join(trash, "info") };
+        };
+        this._ensureTrash = () => {
+            const fs = require("fs");
+            const d = this._trashDirs();
+            try { fs.mkdirSync(d.files, { recursive: true }); } catch (e) {}
+            try { fs.mkdirSync(d.info, { recursive: true }); } catch (e) {}
+            return d;
+        };
+        this._copyRecursive = (src, dest) => {
+            const fs = require("fs");
+            const path = require("path");
+            const st = fs.statSync(src);
+            if (st.isDirectory()) {
+                fs.mkdirSync(dest, { recursive: true });
+                fs.readdirSync(src).forEach(f => this._copyRecursive(path.join(src, f), path.join(dest, f)));
+            } else {
+                fs.copyFileSync(src, dest);
+            }
+        };
+        // Move paths into the XDG trash (file + .trashinfo sidecar). Handles
+        // name collisions and cross-device moves (copy + delete fallback).
+        this._toTrash = (paths, cb) => {
+            const fs = require("fs");
+            const path = require("path");
+            if (!paths || !paths.length) return;
+            const d = this._ensureTrash();
+            let remaining = paths.length;
+            const done = () => {
+                if (--remaining <= 0) { if (cb) cb(); this.readFS(this.dirpath); }
+            };
+            paths.forEach(p => {
+                const base = path.basename(p);
+                let name = base, n = 1;
+                while (fs.existsSync(path.join(d.files, name))) { name = base + "." + Date.now() + "." + (n++); }
+                const target = path.join(d.files, name);
+                const encPath = p.split("/").map(encodeURIComponent).join("/");
+                const info = `[Trash Info]\nPath=${encPath}\nDeletionDate=${new Date().toISOString()}\n`;
+                try {
+                    fs.renameSync(p, target);
+                    try { fs.writeFileSync(path.join(d.info, name + ".trashinfo"), info); } catch (e) {}
+                    done();
+                } catch (e) {
+                    try {
+                        this._copyRecursive(p, target);
+                        fs.rmSync(p, { recursive: true, force: true });
+                        try { fs.writeFileSync(path.join(d.info, name + ".trashinfo"), info); } catch (e2) {}
+                        done();
+                    } catch (e2) { done(); }
+                }
+            });
+        };
+        // List trash contents (files + parsed .trashinfo originals).
+        this._trashList = () => {
+            const fs = require("fs");
+            const path = require("path");
+            const d = this._trashDirs();
+            let items = [];
+            try {
+                const names = fs.readdirSync(d.files);
+                items = names.map(name => {
+                    let originalPath = "", deletionDate = "";
+                    try {
+                        const raw = fs.readFileSync(path.join(d.info, name + ".trashinfo"), "utf8");
+                        const mPath = raw.match(/^Path=(.*)$/m);
+                        const mDate = raw.match(/^DeletionDate=(.*)$/m);
+                        if (mPath) originalPath = decodeURIComponent(mPath[1].replace(/\+/g, "%20"));
+                        if (mDate) deletionDate = mDate[1];
+                    } catch (e) {}
+                    const full = path.join(d.files, name);
+                    let st = null; try { st = fs.statSync(full); } catch (e) {}
+                    return { name, originalPath, deletionDate, full,
+                        isDir: st ? st.isDirectory() : false, size: st ? st.size : 0 };
+                }).filter(i => i.name);
+            } catch (e) {}
+            return items;
+        };
+        // Restore one trash item back to its original path (rename, or copy+delete).
+        this._restoreFromTrash = (item, cb) => {
+            const fs = require("fs");
+            const path = require("path");
+            if (!item || !item.originalPath) return;
+            let dest = item.originalPath;
+            if (fs.existsSync(dest)) {
+                const ext = path.extname(dest);
+                const base = path.basename(dest, ext);
+                dest = path.join(path.dirname(dest), base + " (restored)" + ext);
+            }
+            try { fs.mkdirSync(path.dirname(dest), { recursive: true }); } catch (e) {}
+            const infoFile = path.join(this._trashDirs().info, item.name + ".trashinfo");
+            try {
+                fs.renameSync(item.full, dest);
+                try { fs.rmSync(infoFile, { force: true }); } catch (e) {}
+            } catch (e) {
+                try {
+                    this._copyRecursive(item.full, dest);
+                    fs.rmSync(item.full, { recursive: true, force: true });
+                    try { fs.rmSync(infoFile, { force: true }); } catch (e2) {}
+                } catch (e2) {}
+            }
+            if (cb) cb();
+            this._renderTrashView();
+        };
+        // Permanently delete a trash item (file + info).
+        this._purgeTrashItem = item => {
+            const fs = require("fs");
+            const path = require("path");
+            try { fs.rmSync(item.full, { recursive: true, force: true }); } catch (e) {}
+            try { fs.rmSync(path.join(this._trashDirs().info, item.name + ".trashinfo"), { force: true }); } catch (e) {}
+            this._renderTrashView();
+        };
+        // Empty the trash (files + info).
+        this._emptyTrash = () => {
+            const fs = require("fs");
+            const d = this._trashDirs();
+            try { fs.rmSync(d.files, { recursive: true, force: true }); } catch (e) {}
+            try { fs.rmSync(d.info, { recursive: true, force: true }); } catch (e) {}
+            this._renderTrashView();
+        };
+        // Delete permanently, bypassing the trash.
+        this._deletePermanently = (paths, cb) => {
+            const fs = require("fs");
+            if (!paths || !paths.length) return;
+            let remaining = paths.length;
+            const done = () => {
+                if (--remaining <= 0) { if (cb) cb(); this.readFS(this.dirpath); }
+            };
+            paths.forEach(p => { try { fs.rmSync(p, { recursive: true, force: true }); } catch (e) {} done(); });
+        };
+        this._gvfsRoot = () => {
+            const os = require("os");
+            return `/run/user/${os.userInfo().uid}/gvfs`;
+        };
+        // Mount an SMB share via gio (gvfs). Credentials are inlined so it can
+        // work non-interactively; guest/anon when no user is given.
+        this._mountSMB = (host, share, user, pass) => {
+            const exec = require("child_process").exec;
+            const enc = s => encodeURIComponent(s || "");
+            let uri = "smb://";
+            if (user) uri += enc(user) + (pass ? ":" + enc(pass) : "") + "@";
+            uri += host;
+            if (share) uri += "/" + share.split("/").map(enc).join("/");
+            return new Promise(resolve => {
+                exec(`gio mount "${uri}"`, { timeout: 25000 }, (err, stdout, stderr) => {
+                    resolve({ ok: !err, err: err ? (stderr || err.message).trim() : "" });
+                });
+            });
+        };
+
+        /* ---- Trash + network views (virtual dirpaths "trash://" / "network://") ---- */
+        this._trashHome = () => { const os = require("os"); return os.homedir(); };
+        this._trashItemByIndex = i => this._trashList()[i] || null;
+        this._restoreTrashByIndex = i => { const it = this._trashItemByIndex(i); if (it) this._restoreFromTrash(it); };
+        this._purgeTrashByIndex = i => { const it = this._trashItemByIndex(i); if (it) this._purgeTrashItem(it); };
+
+        this.showTrash = () => {
+            this.dirpath = "trash://";
+            this._renderTrashView();
+        };
+
+        this._renderTrashView = () => {
+            const title = document.getElementById("fs_disp_title_dir");
+            if (title) title.innerText = "TRASH";
+            this.filesContainer.setAttribute("class", "");
+            this.filesContainer.innerHTML = "";
+            const items = this._trashList();
+            const esc = s => String(s == null ? "" : s).replace(/</g, "&lt;");
+            let html = `
+                <div class="fs_virtual_bar">
+                    <button class="fs_virtual_btn fs_virtual_empty" onclick="window.fsDisp._emptyTrash()">Empty</button>
+                    <button class="fs_virtual_btn" onclick="window.fsDisp.readFS(window.fsDisp._trashHome())">Back</button>
+                </div>
+                <div class="fs_trash_list">`;
+            if (!items.length) html += `<p class="fs_trash_none">Trash is empty</p>`;
+            items.forEach((item, i) => {
+                const icon = item.isDir ? this.icons.dir : this.icons.file;
+                html += `
+                    <div class="fs_trash_item">
+                        <svg viewBox="0 0 ${icon.width} ${icon.height}" fill="${this.iconcolor}">${icon.svg}</svg>
+                        <div class="fs_trash_meta">
+                            <h3>${esc(item.name)}</h3>
+                            <h4>${esc(item.originalPath || "unknown original location")}</h4>
+                        </div>
+                        <button class="fs_trash_restore" onclick="window.fsDisp._restoreTrashByIndex(${i})">Restore</button>
+                        <button class="fs_trash_purge" onclick="window.fsDisp._purgeTrashByIndex(${i})">Delete</button>
+                    </div>`;
+            });
+            html += `</div>`;
+            this.filesContainer.innerHTML = html;
+        };
+
+        this.showNetwork = () => {
+            this.dirpath = "network://";
+            this._renderNetworkView();
+        };
+
+        this._renderNetworkView = () => {
+            const fs = require("fs");
+            const path = require("path");
+            const title = document.getElementById("fs_disp_title_dir");
+            if (title) title.innerText = "NETWORK";
+            this.filesContainer.setAttribute("class", "");
+            this.filesContainer.innerHTML = "";
+            const gvfsRoot = this._gvfsRoot();
+            let mounts = [];
+            try { mounts = fs.readdirSync(gvfsRoot).filter(n => !n.startsWith(".")); } catch (e) {}
+            const esc = s => String(s == null ? "" : s).replace(/</g, "&lt;");
+            let html = `
+                <div class="fs_virtual_bar">
+                    <button class="fs_virtual_btn fs_virtual_empty" onclick="window.fsDisp.showMountDialog()">Connect to Server…</button>
+                    <button class="fs_virtual_btn" onclick="window.fsDisp.readFS(window.fsDisp._trashHome())">Back</button>
+                </div>
+                <div class="fs_trash_list">`;
+            if (!mounts.length) html += `<p class="fs_trash_none">No network mounts yet — connect to an SMB share</p>`;
+            mounts.forEach(m => {
+                const p = path.join(gvfsRoot, m);
+                html += `
+                    <div class="fs_trash_item fs_net_mount" data-path="${p.replace(/"/g, "&quot;")}" onclick="window.fsDisp.readFS(window.fsDisp._itemPath(this))">
+                        <svg viewBox="0 0 ${this.icons.dir.width} ${this.icons.dir.height}" fill="${this.iconcolor}">${this.icons.dir.svg}</svg>
+                        <div class="fs_trash_meta"><h3>${esc(m)}</h3><h4>${esc(p)}</h4></div>
+                    </div>`;
+            });
+            html += `</div>`;
+            this.filesContainer.innerHTML = html;
+        };
+
+        this.showMountDialog = () => {
+            new Modal({
+                type: "custom",
+                title: "Connect to Server (SMB)",
+                html: `
+                    <div class="fs_mount_form">
+                        <label>Server</label><input id="fs_mount_server" placeholder="192.168.1.10">
+                        <label>Share (optional)</label><input id="fs_mount_share" placeholder="public">
+                        <label>Username (optional)</label><input id="fs_mount_user">
+                        <label>Password (optional)</label><input id="fs_mount_pass" type="password">
+                    </div>`,
+                buttons: [{ label: "Mount", action: `window.fsDisp.doMount(); window.modals[Object.keys(window.modals).pop()].close();` }]
+            });
+        };
+
+        this.doMount = async () => {
+            const g = id => document.getElementById(id);
+            const host = g("fs_mount_server") ? g("fs_mount_server").value.trim() : "";
+            const share = g("fs_mount_share") ? g("fs_mount_share").value.trim() : "";
+            const user = g("fs_mount_user") ? g("fs_mount_user").value.trim() : "";
+            const pass = g("fs_mount_pass") ? g("fs_mount_pass").value : "";
+            if (!host) return;
+            const r = await this._mountSMB(host, share, user, pass);
+            if (!r.ok) {
+                new Modal({ type: "custom", title: "Mount failed", html: `<p>${(r.err || "Could not mount the share").replace(/</g, "&lt;")}</p>` });
+                return;
+            }
+            this.readFS(this._gvfsRoot());
         };
 
         this._newFolder = () => {
@@ -605,7 +892,7 @@ class FilesystemDisplay {
             let input = document.getElementById("fs_new_folder_name");
             if (!input || !input.value.trim() || !this.dirpath) return;
             let name = input.value.trim().replace(/"/g, '\\"');
-            this._term(`mkdir "${this.dirpath.replace(/"/g, '\\"')}/${name}"`);
+            this._exec(`mkdir "${this.dirpath.replace(/"/g, '\\"')}/${name}"`);
         };
 
         // Open a small editor to change a quick tab's label and path.
@@ -658,7 +945,33 @@ class FilesystemDisplay {
         };
 
         this.readFS = async dir => {
+            // Cover mode (lock / screensaver): never touch the real filesystem.
+            // Render the fabricated launch-systems tree for whatever path is
+            // asked — navigation inside the fake tree keeps calling readFS,
+            // which short-circuits again here.
+            if (window.cover && window.cover.isActive()) {
+                const fakePath = window.cover.fakePath(dir);
+                this.dirpath = fakePath;
+                this._reading = false;
+                this.failed = false;
+                this._clearSelection();
+                this._hideContextMenu();
+                document.getElementById("fs_disp_title_dir").innerText = fakePath;
+                this.filesContainer.setAttribute("class", "");
+                this.cwd = window.cover.fakeDir(fakePath);
+                this.render(this.cwd, false);
+                return false;
+            }
             if (this._reading) return false;
+            // Virtual views (trash / network) are rendered specially, not read
+            // as real directories.
+            if (dir === "trash://" || dir === "network://") {
+                this.dirpath = dir;
+                this._reading = false;
+                if (dir === "trash://") this._renderTrashView();
+                else this._renderNetworkView();
+                return false;
+            }
             this._reading = true;
             // A new read attempt clears any previous failure, so navigation
             // always stays possible (quick tabs, GO UP/GO HOME, terminal cwd).
@@ -814,6 +1127,16 @@ class FilesystemDisplay {
         this.render = async (originBlockList, isDiskView) => {
             // Work on a clone of the blocklist to avoid altering fsDisp.cwd
             let blockList = JSON.parse(JSON.stringify(originBlockList));
+
+            // Cover mode safety net: whatever the caller produced (a real read
+            // already in flight, the disk view, …), show the fabricated tree.
+            if (window.cover && window.cover.isActive()) {
+                const fakePath = window.cover.fakePath(this.dirpath);
+                document.getElementById("fs_disp_title_dir").innerText = fakePath;
+                blockList = JSON.parse(JSON.stringify(window.cover.fakeDir(fakePath)));
+                this.cwd = blockList;
+                isDiskView = false;
+            }
 
             if (this.failed === true) return false;
 
@@ -1201,8 +1524,10 @@ class FilesystemDisplay {
 
         this.openMedia = (name, path, type) => {
             let block, html;
+            let index = -1;
 
             if (typeof name === "number") {
+                index = name;
                 block = this.cwd[name];
                 name = block.name;
             }
@@ -1317,6 +1642,15 @@ class FilesystemDisplay {
                 html
             });
 
+            // Image title row reads like "‹ name ›" — inline prev/next arrows
+            // flanking the filename, so the image itself stays unobstructed.
+            if (block.type === "image" && index >= 0) {
+                let h1 = document.getElementById("modal_" + newModal.id).querySelector("h1");
+                if (h1) {
+                    h1.innerHTML = `<button class="fs_media_link fs_media_prev" title="Previous image" onclick="window.fsDisp.mediaNav(${index}, -1)">&lt;</button> ${_escapeHtml(name)} <button class="fs_media_link fs_media_next" title="Next image" onclick="window.fsDisp.mediaNav(${index}, 1)">&gt;</button>`;
+                }
+            }
+
             // Remove the loading overlay once the media is actually ready
             let mEl = document.getElementById("modal_" + newModal.id);
             let removeLoad = () => { let l = mEl && mEl.querySelector(".fs_loading"); if (l) l.remove(); };
@@ -1419,6 +1753,26 @@ class FilesystemDisplay {
                     type: block.type
                 });
             }
+        };
+
+        // Browse the previous/next image in the same directory, updating the
+        // open media modal in place (no need to close and reopen). The arrows
+        // are re-bound to the new image's index so repeated clicks keep moving.
+        this.mediaNav = (index, delta) => {
+            const images = this.cwd.map((b, i) => ({ b, i })).filter(x => x.b.type === "image");
+            if (!images.length) return;
+            const cur = images.findIndex(x => x.i === index);
+            if (cur < 0) return;
+            const next = images[(cur + delta + images.length) % images.length];
+            const modalEls = document.querySelectorAll("[id^=modal_]");
+            const modal = modalEls[modalEls.length - 1];
+            if (!modal) return;
+            const h1 = modal.querySelector("h1");
+            if (h1) {
+                h1.innerHTML = `<button class="fs_media_link fs_media_prev" title="Previous image" onclick="window.fsDisp.mediaNav(${next.i}, -1)">&lt;</button> ${_escapeHtml(next.b.name)} <button class="fs_media_link fs_media_next" title="Next image" onclick="window.fsDisp.mediaNav(${next.i}, 1)">&gt;</button>`;
+            }
+            const img = modal.querySelector("img.fsDisp_mediaDisp");
+            if (img) img.src = window._encodePathURI(next.b.path);
         };
     }
 }
