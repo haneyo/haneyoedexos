@@ -8,6 +8,14 @@
 #   eDEX-UI.AppImage      the eDEX-UI AppImage (built by the CI pipeline)
 autoinstall:
   version: 1
+  # Installer language: the locale step STAYS interactive so the language choice
+  # is preserved (first screen), but it now PRE-FILLS en_US as the safe default.
+  # NOTE: the installer runs in the kernel VT console, which has NO CJK glyphs —
+  # choosing Chinese here still renders as boxes (console limitation, not a font
+  # problem). The installed system gets fonts-noto-cjk so the eDEX UI itself can
+  # display Chinese correctly once the machine boots.
+  locale: en_US.UTF-8
+  keyboard: { layout: us }
   # Fully OFFLINE install: the GUI stack + eDEX are baked into the squashfs, so
   # no network and no update download is needed. The network step is optional —
   # connect WiFi during install if you like (it just writes the config), skip it

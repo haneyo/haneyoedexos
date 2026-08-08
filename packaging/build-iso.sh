@@ -91,7 +91,7 @@ EOF
 # The GUI stack to bake in. Shared by the chroot and proot branches.
 APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     xvfb x11vnc novnc websockify dbus-x11 wmctrl xterm curl \
-    fonts-dejavu-core fontconfig libfuse2 \
+    fonts-dejavu-core fonts-noto-cjk fontconfig libfuse2 \
     libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 libasound2t64 libgbm1 libdrm2 \
     libxkbcommon0 xdg-utils libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 \
     libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 \

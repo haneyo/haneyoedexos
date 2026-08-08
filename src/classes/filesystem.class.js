@@ -45,11 +45,16 @@ class FilesystemDisplay {
         // badge on each tab; customizations persist in settings.json.
         this._defaultQuickLinks = () => {
             const home = os.homedir();
+            // eDEX-OS install-edex.sh creates ~/Applications for dropped AppImages
+            // and the standard ~/Desktop|Downloads|Documents… dirs. Stock eDEX
+            // pointed APPLICATIONS at macOS's /Applications, which doesn't exist
+            // on Linux and made the tab report "cannot connect" (#17).
+            const appsPath = process.platform === "darwin" ? "/Applications" : path.join(home, "Applications");
             return [
                 {label: "DESKTOP", path: path.join(home, "Desktop")},
                 {label: "DOWNLOADS", path: path.join(home, "Downloads")},
                 {label: "DOCUMENTS", path: path.join(home, "Documents")},
-                {label: "APPLICATIONS", path: "/Applications"}
+                {label: "APPLICATIONS", path: appsPath}
             ];
         };
         let savedLinks = (window.settings && Array.isArray(window.settings.fsQuickLinks) && window.settings.fsQuickLinks.length)

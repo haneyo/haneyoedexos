@@ -41,7 +41,9 @@ openbox --replace >/dev/null 2>&1 &
 fcitx5 -d >/dev/null 2>&1 &
 sleep 1
 if [ ! -f /etc/edex-setup-done ]; then
-    xterm -geometry 96x28 -T "eDEX-OS · SYSTEM INITIALIZATION" -e /usr/local/sbin/edex-first-setup.sh
+    # -fa gives xterm a CJK-capable font (fonts-noto-cjk is baked into the
+    # squashfs), so the wizard's "中文" language option renders instead of tofu.
+    xterm -geometry 96x28 -fa "Noto Sans CJK SC" -fs 12 -T "eDEX-OS · SYSTEM INITIALIZATION" -e /usr/local/sbin/edex-first-setup.sh
 fi
 exec /opt/edex/eDEX-UI.AppImage --no-sandbox
 SESH
@@ -201,6 +203,15 @@ echo "[edex] timezone Asia/Shanghai + NTP sync"
 echo "Asia/Shanghai" > /etc/timezone
 ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
 systemctl enable systemd-timesyncd.service 2>/dev/null || true
+
+echo "[edex] bluetooth: enable the bluez stack"
+# bluez is injected into the squashfs on the build side (a fresh boot has no apt).
+# A real dpkg postinst would create the "bluetooth" group and enable the unit —
+# do that here instead. `systemctl enable` also writes the dbus-org.bluez.service
+# alias, so bluetoothd is D-Bus auto-activated the first time anything (the eDEX
+# settings Bluetooth tab, NetworkManager) talks to org.bluez.
+addgroup --system bluetooth 2>/dev/null || true
+systemctl enable bluetooth.service 2>/dev/null || true
 
 echo "[edex] plymouth boot splash (#19)"
 # plymouth + themes are baked into the squashfs, but two things are missing on a
@@ -362,9 +373,11 @@ echo "[edex] first-boot setup wizard (root password + unlock PIN)"
 cat > /usr/local/sbin/edex-first-setup.sh <<'WIZARD'
 #!/usr/bin/env bash
 # eDEX-OS first-boot setup — runs once (before eDEX) in the autologin X session.
-# Sets the root password and the numeric unlock PIN (4-8 digits), writes the PIN
-# into eDEX's settings.json as lockCode so the idle lock/screensaver unlocks
-# with it, then marks the system configured. A later boot skips straight to eDEX.
+# Sets the interface language (used by eDEX, and skips eDEX's own first-launch
+# picker), the root password and the numeric unlock PIN (4-8 digits), writes the
+# language + PIN into eDEX's settings.json (language / lockCode) so the idle
+# lock/screensaver unlocks with it, then marks the system configured. A later
+# boot skips straight to eDEX.
 set -euo pipefail
 
 if [ -f /etc/edex-setup-done ]; then
@@ -374,8 +387,23 @@ fi
 echo
 echo "================================================================"
 echo "    eDEX-OS · SYSTEM INITIALIZATION"
-echo "    Set the root password and the unlock PIN (enter each twice)"
+echo "    Choose the language, then set the root password + unlock PIN"
 echo "================================================================"
+echo
+
+# --- interface language ---
+# Drives eDEX's settings-menu language. Writing it here also sets
+# settings.language before eDEX's first launch, which makes eDEX skip its own
+# first-launch language picker — the choice is asked exactly once.
+echo "Select interface language (default 1 = English):"
+echo "   1) English"
+echo "   2) 中文"
+read -rp "Choice [1-2, default 1]: " UILANG
+case "${UILANG:-1}" in
+    2) UILANG="zh";;
+    *) UILANG="en";;
+esac
+echo "  Interface language: $UILANG"
 echo
 
 # --- timezone ---
@@ -428,12 +456,13 @@ done
 SET="$HOME/.config/eDEX-UI/settings.json"
 mkdir -p "$(dirname "$SET")"
 [ -f "$SET" ] || echo '{}' > "$SET"
-python3 - "$SET" "$P1" <<'PY'
+python3 - "$SET" "$P1" "$UILANG" <<'PY'
 import json, sys
-p, pin = sys.argv[1], sys.argv[2]
+p, pin, lang = sys.argv[1], sys.argv[2], sys.argv[3]
 d = json.load(open(p))
 d["lockCode"] = pin
 d["lockOnIdle"] = True
+d["language"] = lang if lang in ("zh", "en") else "en"
 json.dump(d, open(p, "w"), indent=4, ensure_ascii=False)
 PY
 unset P1 P2
