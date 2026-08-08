@@ -33,6 +33,18 @@ div#mod_clock {
 #edex_battery.battery_charging .battery_fill { animation: battery_charge_pulse 1.2s ease-in-out infinite; }
 #edex_battery.battery_charging .battery_bolt { stroke: rgba(var(--color_r), var(--color_g), var(--color_b), 0.95); }
 
+/* Battery grade tints (#37): critical = red blink, low = red, mid = amber,
+   high = theme, full = theme + glow. Discharged grades override the base fill
+   so the readout stays readable at a glance. */
+@keyframes battery_critical_pulse { 0%, 100% { fill-opacity: 1; } 50% { fill-opacity: 0.2; } }
+#edex_battery.battery_critical .battery_fill { fill: rgba(255, 64, 54, 1); animation: battery_critical_pulse 0.9s ease-in-out infinite; }
+#edex_battery.battery_critical .battery_out,
+#edex_battery.battery_critical .battery_cap { stroke: rgba(255, 64, 54, 0.7); }
+#edex_battery.battery_low .battery_fill { fill: rgba(255, 96, 80, 0.95); }
+#edex_battery.battery_mid .battery_fill { fill: rgba(255, 185, 70, 0.95); }
+#edex_battery.battery_full .battery_fill { fill: rgba(var(--color_r), var(--color_g), var(--color_b), 1); }
+#edex_battery.battery_full .battery_ico { filter: drop-shadow(0 0 0.35vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.85)); }
+
 /* Current date, pinned to the clock's bottom edge (position:absolute, so it
    never participates in the flex layout and the centered time never shifts —
    same pattern as the battery readout). */

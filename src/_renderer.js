@@ -982,6 +982,28 @@ async function initUI() {
     const clockHost = document.getElementById("mod_clock");
     if (clockHost) {
         clockHost.appendChild(batteryEl);
+        // Lightweight toast, shared with the panels' #edex_toast element. The
+        // app-monitor panels are constructed later than this block, so fall
+        // back to creating the element ourselves when they are not ready yet.
+        const notifyToast = msg => {
+            if (window.appmonitorA && window.appmonitorA._notify) {
+                return window.appmonitorA._notify(msg);
+            }
+            let t = document.getElementById("edex_toast");
+            if (!t) {
+                t = document.createElement("div");
+                t.id = "edex_toast";
+                t.className = "browser_toast";
+                document.body.appendChild(t);
+            }
+            t.textContent = msg;
+            t.classList.add("show");
+            clearTimeout(notifyToast._timer);
+            notifyToast._timer = setTimeout(() => t.classList.remove("show"), 2200);
+        };
+        // Cross-refresh memory so the graded warnings fire once per transition,
+        // not on every 30s tick.
+        const battTrack = { charging: null, lowWarned: false, critWarned: false, fullWarned: false };
         const battery = {
             async refresh() {
                 try {
@@ -999,8 +1021,40 @@ async function initUI() {
                     }
                     if (!b || !b.present) { el.className = "battery_hidden"; return; }
                     const pct = Math.max(0, Math.min(100, Math.round((b.level || 0) * 100)));
-                    el.className = b.charging ? "battery_charging" : "";
+                    // Grade: critical ≤5% (red blink) < low ≤20% (red) < mid
+                    // ≤50% (amber) < high ≤80% (theme) < full (theme + glow).
+                    const grade = b.charging ? "charging"
+                        : pct <= 5 ? "critical"
+                        : pct <= 20 ? "low"
+                        : pct <= 50 ? "mid"
+                        : pct <= 80 ? "high"
+                        : "full";
+                    el.className = "battery_" + grade;
                     el.title = `${pct}% ${b.charging ? "(charging)" : "(battery)"}`;
+                    // One-shot toasts on transitions: plug-in, low, critical,
+                    // full. Reset the discharged warnings once back above 20%.
+                    if (b.charging && battTrack.charging !== true) {
+                        if (battTrack.charging === false) notifyToast("CHARGING");
+                        battTrack.charging = true;
+                    } else if (!b.charging && battTrack.charging === true) {
+                        battTrack.charging = false;
+                        battTrack.fullWarned = false;
+                    }
+                    if (b.charging) {
+                        if (pct >= 99 && !battTrack.fullWarned) {
+                            notifyToast("BATTERY FULL");
+                            battTrack.fullWarned = true;
+                        }
+                    } else if (grade === "critical" && !battTrack.critWarned) {
+                        notifyToast("BATTERY CRITICAL");
+                        battTrack.critWarned = true;
+                    } else if (grade === "low" && !battTrack.lowWarned) {
+                        notifyToast("LOW BATTERY " + pct + "%");
+                        battTrack.lowWarned = true;
+                    } else if (grade === "mid" || grade === "high" || grade === "full") {
+                        battTrack.lowWarned = false;
+                        battTrack.critWarned = false;
+                    }
                     el.innerHTML =
                         `<svg viewBox="0 0 32 14" class="battery_ico">` +
                         `<rect x="1" y="1" width="25" height="12" rx="2" class="battery_out"/>` +
@@ -1909,6 +1963,8 @@ window.openSettings = async () => {
             settingsRow("settings.power.freq", `<span id="settingsPowerReadout">–</span>`, "settings.power.freq.help"),
             settingsRow("settings.power.brightness", `<select id="settingsPowerBrightness">${numOptions(0, 100, 5, v => v + "%", 50)}</select>`, "settings.power.brightness.help"),
             settingsRow("settings.power.volume", `<select id="settingsPowerVolume">${numOptions(0, 100, 5, v => v + "%", 70)}</select>`, "settings.power.volume.help"),
+            settingsRow("settings.power.kbdBacklight", `<select id="settingsKbdBacklight">${numOptions(0, 2, 1, v => v === 0 ? t("settings.power.kbd.off") : v === 1 ? t("settings.power.kbd.low") : t("settings.power.kbd.high"), window.settings.kbdBacklight ?? 1)}</select>`, "settings.power.kbdBacklight.help"),
+            settingsRow("settings.power.touchpadTap", `<select id="settingsTouchpadTap">${numOptions(0, 1, 1, v => v === 1 ? t("settings.power.touchpad.on") : t("settings.power.touchpad.off"), window.settings.touchpadTap ?? 1)}</select>`, "settings.power.touchpadTap.help"),
         ].join("") },
     ];
 
@@ -2122,15 +2178,20 @@ window.populatePowerControls = () => {
         if (!el) return;
         const wrap = el.closest ? el.closest(".settings_dd") : null;
         let debounce = null;
-        const apply = () => {
+        const apply = val => {
             if (debounce) clearTimeout(debounce);
-            debounce = setTimeout(() => ipc.invoke(invoke, { set: Number(el.value) }).catch(() => {}), 120);
+            debounce = setTimeout(() => ipc.invoke(invoke, { set: val }).catch(() => {}), 120);
         };
         if (wrap) {
+            // Capture phase: the list's own click handler calls stopPropagation()
+            // before a bubble-phase listener on wrap would run. Read the clicked
+            // option's value directly so apply() sees the NEW selection (the list
+            // handler's setValue() runs after this, in bubble phase).
             wrap.addEventListener("click", e => {
-                if (!(e.target.closest && e.target.closest(".mod_loc_opt"))) return;
-                setTimeout(apply, 0); // el.value is updated by the list handler
-            });
+                const opt = e.target.closest ? e.target.closest(".mod_loc_opt") : null;
+                if (!opt) return;
+                apply(Number(opt.dataset.value));
+            }, true);
             ipc.invoke(invoke).then(r => {
                 if (!r || !r.ok || r.percent == null) return;
                 const v = String(Math.round(r.percent / 5) * 5);
@@ -2145,6 +2206,39 @@ window.populatePowerControls = () => {
     };
     slider("settingsPowerBrightness", "power:brightness");
     slider("settingsPowerVolume", "power:volume");
+
+    // Discrete-state dropdowns (keyboard backlight 0..2, touchpad tap on/off).
+    // Same immediate-effect + debounce + visible-sync shape as slider(), but the
+    // values are real state integers (0..max), not percentages.
+    const stateSlider = (id, invoke, max) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const wrap = el.closest ? el.closest(".settings_dd") : null;
+        let debounce = null;
+        const apply = val => {
+            if (debounce) clearTimeout(debounce);
+            debounce = setTimeout(() => ipc.invoke(invoke, { set: val }).catch(() => {}), 120);
+        };
+        if (wrap) {
+            wrap.addEventListener("click", e => {
+                const opt = e.target.closest ? e.target.closest(".mod_loc_opt") : null;
+                if (!opt) return;
+                apply(Number(opt.dataset.value));
+            }, true);
+            ipc.invoke(invoke).then(r => {
+                if (!r || !r.ok || r.level == null) return;
+                const v = String(Math.max(0, Math.min(max, Math.round(r.level))));
+                el.value = v;
+                wrap.querySelectorAll(".mod_loc_opt").forEach(o =>
+                    o.classList.toggle("mod_loc_opt_active", o.dataset.value === v));
+                const btn = wrap.querySelector(".mod_loc_btn");
+                const cur = wrap.querySelector(".mod_loc_opt_active");
+                if (btn && cur) btn.textContent = cur.textContent;
+            }).catch(() => {});
+        }
+    };
+    stateSlider("settingsKbdBacklight", "kbd:backlight", 2);
+    stateSlider("settingsTouchpadTap", "touchpad:tap", 1);
 };
 
 window.setupSettingsDropdowns = () => {

@@ -807,6 +807,65 @@ app.on('ready', async () => {
         return { ok: true, percent: await get() };
     });
 
+    // Keyboard backlight (settings dropdown). ThinkPads expose tpacpi::kbd_backlight
+    // as an LED with brightness 0..max (usually 2); the session script turns it on
+    // at boot, this lets the user change it live. The autologin user is in the
+    // `video` group, so the direct sysfs write works (same as the screen backlight);
+    // fall back to passwordless sudo only if a device is group-restricted.
+    const kbdBacklightFile = () => {
+        try {
+            for (const d of fs.readdirSync("/sys/class/leds")) {
+                if (String(d).toLowerCase().indexOf("kbd") >= 0) {
+                    const b = "/sys/class/leds/" + d + "/brightness";
+                    if (fs.existsSync(b)) return b;
+                }
+            }
+        } catch (e) {}
+        return null;
+    };
+    ipc.handle("kbd:backlight", async (e, payload) => {
+        const { exec } = require("child_process");
+        const run = cmd => new Promise(res => exec(cmd, err => res(!err)));
+        const f = kbdBacklightFile();
+        if (!f) return { ok: false, level: null }; // no keyboard LED (desktop/preview)
+        const want = payload && payload.set != null ? Math.max(0, Math.min(3, Number(payload.set))) : null;
+        if (want != null) {
+            let ok = await run(`sh -c 'echo ${want} > "${f}"' 2>/dev/null`);
+            if (!ok) await run(`sudo sh -c 'echo ${want} > "${f}"' 2>/dev/null`);
+        }
+        let max = 2, cur = 0;
+        try { max = Number(fs.readFileSync(f.replace(/\/brightness$/, "/max_brightness"), "utf8").trim()) || max; } catch (e) {}
+        try { cur = Number(fs.readFileSync(f, "utf8").trim()) || 0; } catch (e) {}
+        return { ok: true, level: Math.min(max, cur) };
+    });
+
+    // Touchpad tap-to-click toggle (settings dropdown). libinput exposes tapping
+    // as the "libinput Tapping Enabled" property on every pointer device — same
+    // xinput approach as the pointer-speed slider, applied device-wide.
+    ipc.handle("touchpad:tap", async (e, payload) => {
+        if (process.platform !== "linux") return { ok: false, level: null };
+        const { execSync } = require("child_process");
+        const set = payload && payload.set != null ? (payload.set ? "1" : "0") : null;
+        try {
+            const ids = execSync("xinput list --id-only 2>/dev/null").toString().trim().split("\n");
+            for (const id of ids) {
+                if (!id) continue;
+                try {
+                    execSync(`xinput set-prop ${id} "libinput Tapping Enabled" ${set || "1"} 2>/dev/null`);
+                } catch (err) {}
+            }
+        } catch (err) {}
+        // Read the current tapping state back from the first device that exposes it.
+        let level = null;
+        try {
+            const first = execSync("xinput list --id-only 2>/dev/null").toString().trim().split("\n")[0];
+            const out = execSync(`xinput list-props ${first} 2>/dev/null`).toString();
+            const m = /libinput Tapping Enabled \(\d+\):[\s]*(\d)/.exec(out);
+            if (m) level = Number(m[1]);
+        } catch (err) {}
+        return { ok: true, level };
+    });
+
     // eDEX-UI self-update (GitHub release asset). Only works on the eDEX-OS
     // install: when running from an AppImage, download the new .AppImage, verify
     // its sha256 (a sibling release asset), atomically replace the running
