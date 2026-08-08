@@ -165,12 +165,34 @@ usermod -aG video "$U" 2>/dev/null || true
 echo "[edex] configured for user: $U"
 
 echo "[edex] NetworkManager as the network stack (WiFi via nmcli)"
+# CRITICAL: the interactive installer (subiquity) writes /etc/netplan/00-installer-config.yaml
+# from the network answers, and Ubuntu Server defaults to renderer: networkd there.
+# Leaving that file in place means the system has TWO netplan files declaring two
+# DIFFERENT renderers — netplan refuses that ("conflicting renderer"), the whole
+# network config fails to generate, and NetworkManager never takes over. That is
+# the classic "cannot find any WiFi" failure on this build. Drop every
+# installer-generated config so ours is the only netplan file in play.
+rm -f /etc/netplan/00-installer-config.yaml /etc/netplan/*-installer-config.yaml
 cat > /etc/netplan/01-network-manager-all.yaml <<'NETPLAN'
 network:
   version: 2
   renderer: NetworkManager
 NETPLAN
+chmod 600 /etc/netplan/01-network-manager-all.yaml
 systemctl enable NetworkManager.service 2>/dev/null || true
+
+echo "[edex] wifi: disable power-save (weak/invisible-signal fix)"
+# Ubuntu ships a default-wifi-powersave-on.conf setting wifi.powersave=3. Power-save
+# makes iwlwifi drop beacons and miss networks entirely on some laptops (the E580
+# included). NetworkManager merges /etc/NetworkManager/conf.d/*.conf in name order,
+# so a file sorting AFTER "default-*" (zz-) overrides the shipped default. 2 =
+# NM_SETTING_WIRELESS_POWERSAVE_DISABLE.
+mkdir -p /etc/NetworkManager/conf.d
+cat > /etc/NetworkManager/conf.d/zz-edex-wifi-powersave-off.conf <<'NMPW'
+[connection]
+wifi.powersave = 2
+NMPW
+systemctl try-restart NetworkManager 2>/dev/null || true
 
 echo "[edex] timezone Asia/Shanghai + NTP sync"
 # Fresh installs boot on UTC with no timezone, so the clock is wrong until the
@@ -179,6 +201,29 @@ echo "[edex] timezone Asia/Shanghai + NTP sync"
 echo "Asia/Shanghai" > /etc/timezone
 ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
 systemctl enable systemd-timesyncd.service 2>/dev/null || true
+
+echo "[edex] plymouth boot splash (#19)"
+# plymouth + themes are baked into the squashfs, but two things are missing on a
+# fresh install: GRUB does not pass "splash" so plymouth never starts, and the
+# initramfs has no plymouth embedded. All three commands below must run INSIDE the
+# installed system — update-initramfs/update-grub are chroot/mount dependent, which
+# is exactly why this lives here (curtin in-target) and not on the macOS build side.
+cat > /etc/default/grub <<'GRUB'
+GRUB_DEFAULT=0
+GRUB_TIMEOUT=2
+GRUB_DISTRIBUTOR=`lsb_release -i -s 2>/dev/null || echo Debian`
+GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"
+GRUB_CMDLINE_LINUX=""
+GRUB_TERMINAL_OUTPUT="console"
+GRUB_DISABLE_OS_PROBER=true
+GRUB
+# spinner is a text-category theme (always works, no GPU/framebuffer requirement)
+# while still showing a boot animation; details would be plain scrolling text.
+plymouth-set-default-theme spinner 2>/dev/null || true
+update-initramfs -u >/tmp/edex-update-initramfs.log 2>&1 \
+    || { echo "[edex] WARN: update-initramfs failed"; tail -20 /tmp/edex-update-initramfs.log; }
+update-grub >/tmp/edex-update-grub.log 2>&1 \
+    || { echo "[edex] WARN: update-grub failed"; tail -20 /tmp/edex-update-grub.log; }
 
 echo "[edex] lightdm autologin"
 mkdir -p /etc/lightdm/lightdm.conf.d

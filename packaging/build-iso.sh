@@ -101,7 +101,7 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     flatpak xdg-desktop-portal xdg-desktop-portal-gtk \
     playerctl \
     gvfs gvfs-backends libglib2.0-bin \
-    fcitx5 fcitx5-chinese-addons fcitx5-config-qt \
+    fcitx5 fcitx5-rime fcitx5-chinese-addons fcitx5-config-qt \
     fcitx5-frontend-gtk3 fcitx5-frontend-qt5"
 
 # Bind-mount /proc,/sys,/dev for the chroot. If the runner forbids mounts
@@ -113,9 +113,13 @@ for m in /proc /sys /dev; do
         || { echo "[edex] WARN: cannot bind-mount $m — falling back to proot"; MOUNTS_OK=0; break; }
 done
 
-# Bake in the Claude Code CLI too, so the built-in assistant works out of the
-# box (only the API key still needs to be added once from the gear menu).
-INSTALL_CLAUDE='(npm install -g @anthropic-ai/claude-code 2>/dev/null || echo "[edex] WARN: claude CLI install skipped (best-effort)")'
+# Claude Code is a HARD requirement (the built-in assistant is unusable without
+# it), so a failed install or a missing binary FAILS the build instead of
+# silently shipping an ISO whose assistant does not run. npm -g puts the launcher
+# in /usr/local/bin and its postinstall pulls the platform-native binary; the
+# `claude --version` sanity check catches a wrapper without its native dep (the
+# "claude native binary not installed" failure mode).
+INSTALL_CLAUDE='(set -o pipefail; npm install -g @anthropic-ai/claude-code >/tmp/edex-claude-install.log 2>&1; if ! command -v claude >/dev/null 2>&1 || ! claude --version >/dev/null 2>&1; then echo "[edex] ERROR: claude CLI failed to install"; tail -30 /tmp/edex-claude-install.log; exit 1; fi; echo "[edex] claude $(claude --version 2>/dev/null | head -1) OK")'
 
 if [ "$MOUNTS_OK" = "1" ]; then
     echo "[edex] chroot apt preinstall (mounted)"

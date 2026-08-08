@@ -9,15 +9,15 @@
 
 | # | 问题 | 侧 | 状态 |
 |---|------|----|------|
-| 1 | 开机 GRUB 报 `error: file '/boot/' not found`(不影响引导) | OS/ISO | 待查 |
+| 1 | 开机 GRUB 报 `error: file '/boot/' not found`(不影响引导) | OS/ISO | 已定位:Ubuntu 签名 grubx64.efi 内嵌配置所致,装饰性,暂不改(详见 ubuntu-side-changes.md §3) |
 | 2 | 首启向导中文变方块字,要求改英文界面 | OS | 已修(源码,待装验) |
-| 3 | 搜不到 WiFi | OS(需真机诊断) | 待查 |
+| 3 | 搜不到 WiFi | OS(需真机诊断) | 已修(源码,待装验):netplan 双 renderer 冲突 + 关 wifi 电源管理(见 ubuntu-side-changes.md §2) |
 | 4 | 系统时间不对:需要时区 + 手动改时间 + 联网同步功能 | OS + App | 部分修 |
 | 5 | 语音输入按钮按下后卡死,无法再按、无法语音输入 | App | 已修(源码,待装验) |
-| 6 | 输入法切换无反应,一直 EN | OS/App(需诊断) | 待查 |
+| 6 | 输入法切换无反应,一直 EN | OS/App(需诊断) | Rime 引擎缺失:fcitx5-rime 已加入 build(待装验) |
 | 7 | 文件浏览器默认标签连不上(XDG 目录不存在) | OS | 已修(源码,待装验) |
 | 8 | 设置-通用-用户名显示 `undefined` | App | 已修(源码,待装验) |
-| 9 | 默认跳过启动动画,要恢复 | OS | 待修 |
+| 9 | 默认跳过启动动画,要恢复 | OS | 已修(源码,待装验):install-edex.sh 配 quiet splash + update-initramfs/grub(见 ubuntu-side-changes.md §1) |
 | 10 | 虚拟显示器(tab 4/5)黑屏,无 app 画面 | App | 已修(源码,待装验) |
 | 11 | app 列表混入 google/bing/uxterm/fcitx5,只应显示用户应用;且要能在设置里配置(设置项可执行命令行) | App + seed | 已修过滤(源码,待装验);设置项未加 |
 | 12 | 打开 tab 4/5 列表后锁屏,code 模式下列表不消失 | App | 已修(源码,待装验) |
@@ -52,9 +52,9 @@
 | 53 | 确认驱动/固件内置完整(对照现代桌面发行版) | OS | 待查 |
 ## 修复顺序建议
 
-1. **第一批(OS 侧,一次重装验多项)**: #2 向导英文、#4 时区/NTP、#7 XDG 目录、#9 plymouth、#1 GRUB 报错
+1. **第一批(OS 侧,一次重装验多项)**: #2 向导英文、#4 时区/NTP、#7 XDG 目录、#3 WiFi、#9 plymouth(均已在源码,待装验)、#1 GRUB 报错(已定位,暂不改)
 2. **App 侧(edex-ui 源码)**: #5 语音、#6 输入法、#8 用户名、#10 虚拟显示器、#11 app 列表过滤、#12 锁屏残留
-3. **需要真机诊断**: #3 WiFi、#6 输入法、#10 虚拟显示器、#5 语音
+3. **需要真机诊断**: #3 WiFi(修复后需真机复验)、#6 输入法、#10 虚拟显示器、#5 语音
 
 ## 诊断命令(真机上跑)
 
@@ -96,4 +96,5 @@ fcitx5-diagnose | head -60; pgrep -a fcitx5
 5. #44 替换 `rootfs7z/opt/edex/eDEX-UI.AppImage` → mksquashfs 重打主 squashfs → 更新 `extract/casper/filesystem.size` → xorriso 重建 `eDEX-OS-latest-fixed.iso`。
 
 ### 待用户确认后提交(repo)
-- #10 改 packaging/build-iso.sh + .github/workflows/release.yml(需先看现状)
+- #10 改 packaging/build-iso.sh(已改:claude 硬校验 + fcitx5-rime)+ .github/workflows/release.yml(需先看现状)
+- 本次系统侧改动:install-edex.sh(WiFi/plymouth)+ docs/ubuntu-side-changes.md 新增
