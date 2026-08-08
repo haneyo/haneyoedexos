@@ -59,6 +59,9 @@ div.modal_popup.blink {
 div.modal_popup > h1 {
     width: 100%;
     max-width: 80vw;
+    /* Never let the flex-column layout squeeze the title when a tall category
+       (e.g. 网络) fills the modal — otherwise overflow:hidden clips the text. */
+    flex-shrink: 0;
     cursor: move;
     font-size: 2.8vh;
     margin: 0vh;
@@ -66,12 +69,16 @@ div.modal_popup > h1 {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    letter-spacing: 0.05em;
+    text-shadow: 0 0 0.8vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.45);
 }
 
 div.modal_popup > h1 i {
-    font-size: 2.3vh;
+    font-size: 1.7vh;
     opacity: 0.6;
     font-style: normal;
+    font-family: var(--font_mono), monospace;
+    letter-spacing: 0.1em;
 }
 
 div.modal_popup > h5 {
@@ -118,6 +125,15 @@ div.modal_popup button:hover {
     background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
 }
 
+/* Footer action buttons of the settings editor: neon glow on hover */
+div.modal_popup:has(#settingsEditor) > div:last-child button {
+    border-top-color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    transition: background 0.15s, box-shadow 0.15s;
+}
+div.modal_popup:has(#settingsEditor) > div:last-child button:hover {
+    box-shadow: 0 0 0.8vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+}
+
 div.modal_popup table, div.modal_popup table th, div.modal_popup table td {
     border: 0.15vh solid rgb(var(--color_r), var(--color_g), var(--color_b));
     border-collapse: collapse;
@@ -141,12 +157,20 @@ div.modal_popup table td {
    sidebar + scrollable pane hold their shape; flex column keeps the title,
    body, status line and the action-button row stacked. */
 div.modal_popup:has(#settingsEditor) {
-    width: 60vw;
-    max-width: 88vw;
+    /* 66vw so the network category's lists and proxy inputs fit comfortably;
+       capped by max-width so huge monitors don't stretch it unbounded. */
+    width: 66vw;
+    max-width: 92vw;
     height: 64vh;
     max-height: 90vh;
     justify-content: flex-start;
     overflow: hidden;
+    /* Sci-fi panel: mostly-opaque so the text stays readable, but the dot-grid
+       glimmers through the corners; outer neon glow + faint inner ambient,
+       same recipe as the cyber data panel. */
+    background: color-mix(in srgb, var(--color_light_black) 78%, transparent);
+    box-shadow: 0 0 1.2vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.35),
+                inset 0 0 3vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.07);
 }
 
 #settingsBody {
@@ -167,30 +191,57 @@ div.modal_popup:has(#settingsEditor) {
 }
 
 #settingsSide .settings_cat_btn {
-    display: block;
+    display: flex;
+    align-items: center;
     width: 100%;
     text-align: left;
-    margin: 0 0 0.4vh 0;
-    padding: 0.7vh 1vh;
+    margin: 0 0 0.5vh 0;
+    padding: 0.75vh 1vh;
     font-size: 1.6vh;
     font-weight: bold;
     letter-spacing: 0.03em;
     border: 0.15vh solid transparent;
-    border-radius: 0.3vh;
+    border-left: 0.35vh solid transparent; /* accent bar on the active/hover item */
+    border-radius: 0;
     background: transparent;
     color: rgb(var(--color_r), var(--color_g), var(--color_b));
     cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, text-shadow 0.15s;
+}
+
+#settingsSide .settings_cat_btn .settings_cat_idx {
+    flex: 0 0 auto;
+    width: 3.4vh;
+    font-family: var(--font_mono), monospace;
+    font-size: 1.25vh;
+    opacity: 0.45;
+    letter-spacing: 0.05em;
+}
+
+#settingsSide .settings_cat_btn .settings_cat_name {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 #settingsSide .settings_cat_btn:hover,
 #settingsSide .settings_cat_btn:focus {
     outline: none;
-    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.15);
+    border-left-color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.4);
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.08);
 }
 
 #settingsSide .settings_cat_btn.active {
-    background: rgb(var(--color_r), var(--color_g), var(--color_b));
-    color: var(--color_light_black);
+    border-left-color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.15);
+    box-shadow: 0 0 1vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.25);
+    text-shadow: 0 0 0.8vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.8);
+}
+
+#settingsSide .settings_cat_btn.active .settings_cat_idx {
+    opacity: 1;
 }
 
 /* Right scrollable pane. Holds every category's controls (hidden panes are
@@ -210,8 +261,13 @@ div.modal_popup #settingsEditor .settings_cat.active { display: block; }
     display: flex;
     align-items: center;
     gap: 1vh;
-    padding: 0.55vh 0;
-    border-bottom: 0.15vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.22);
+    padding: 0.7vh 0.5vh;
+    border-bottom: 0.12vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.14);
+    transition: background 0.15s;
+}
+
+.settings_row:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.05);
 }
 
 .settings_row:last-child { border-bottom: none; }
@@ -224,6 +280,7 @@ div.modal_popup #settingsEditor .settings_cat.active { display: block; }
     position: relative;
     font-size: 1.55vh;
     line-height: 1.35;
+    letter-spacing: 0.04em;
 }
 
 .settings_row_ctl {
@@ -273,14 +330,36 @@ div.modal_popup .settings_info_btn:hover { background: rgba(var(--color_r), var(
 
 .settings_info_pop.open { display: block; }
 
-/* Section separator / note rows inside the settings editor (e.g. Claude Code) */
+/* Section separator / note rows inside the settings editor (e.g. Claude Code).
+   Rendered as a mono tech label ("◆ WIFI") with a short accent rule that fades
+   out to the right — replaces the old centered full-width underline. */
 .settingsEditor_section {
-    text-align: center;
-    font-weight: bold;
-    letter-spacing: 0.05em;
-    padding: 0.8em 0.2em 0.3em;
-    border-bottom: 1px solid rgb(var(--color_r), var(--color_g), var(--color_b));
+    position: relative;
+    font-family: var(--font_mono), monospace;
+    font-size: 1.5vh;
+    font-weight: normal;
+    letter-spacing: 0.12em;
+    padding: 1vh 0.4vh 0.6vh;
+    margin: 0.6vh 0 0.2vh 0;
     color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    text-shadow: 0 0 0.6vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+}
+
+.settingsEditor_section::before {
+    content: "◆ ";
+    opacity: 0.85;
+}
+
+.settingsEditor_section::after {
+    content: "";
+    position: absolute;
+    left: 0.4vh;
+    right: 0.4vh;
+    bottom: 0.1vh;
+    height: 0.15vh;
+    background: linear-gradient(90deg,
+        rgba(var(--color_r), var(--color_g), var(--color_b), 0.6),
+        rgba(var(--color_r), var(--color_g), var(--color_b), 0) 85%);
 }
 
 /* Embedded performance controller: 省电/平衡/性能 governor buttons */
@@ -307,8 +386,196 @@ div.modal_popup .settings_info_btn:hover { background: rgba(var(--color_r), var(
     background: rgb(var(--color_r), var(--color_g), var(--color_b));
     color: #05080d;
 }
-#settingsPowerReadout {
+
+/* Time & Date category: live clock/timezone readout + manual-time apply button.
+   The readout mirrors the power-mode frequency readout; the button mirrors the
+   power-mode buttons. */
+div.modal_popup #settingsEditor .settings_time_status {
+    font-family: var(--font_main_light); /* match the UI body font, not monospace */
+    font-size: 1.5vh;
+    letter-spacing: 0.03em;
+    opacity: 0.9;
+}
+div.modal_popup #settingsEditor .settings_time_btn {
+    /* Hug the label (a full-width bar read as "too wide"), but cancel the
+       generic modal-button left margin (1.5vh) so the left edge lines up with
+       the dropdowns/inputs above it — same override the settings_dd buttons
+       apply. */
+    width: auto;
+    min-width: 10vh;
+    margin: 0;
+    padding: 0.5vh 2vh;
+    border: 0.15vh solid rgb(var(--color_r), var(--color_g), var(--color_b));
+    background: transparent;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: inherit;
+    font-size: 1.6vh; /* match the UI text, not the old smaller control font */
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+div.modal_popup #settingsEditor .settings_time_btn:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.18);
+}
+
+/* Network category (WiFi + Bluetooth, macOS-style). Lists are theme-bordered,
+   rows are focusable buttons so the keyboard can drive them (Tab + arrows). */
+div.modal_popup #settingsEditor .settings_net_status {
+    font-family: var(--font_main_light); /* match the UI body font, not monospace */
+    font-size: 1.5vh;
+    letter-spacing: 0.03em;
+    opacity: 0.9;
+}
+div.modal_popup #settingsEditor .settings_net_info {
+    font-family: var(--font_main_light); /* match the UI body font, not monospace */
+    font-size: 1.4vh;
+    letter-spacing: 0.02em;
+    opacity: 0.85;
+    min-height: 1.8vh;
+}
+div.modal_popup #settingsEditor .settings_net_list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4vh;
+    max-height: 22vh;
+    overflow-y: auto;
+    /* clip stray horizontal overflow (scrollbars on this box were adding a
+       few px) and keep the list compact instead of stretching the control */
+    overflow-x: hidden;
+    max-width: 40vh;
+    padding: 0.5vh;
+    /* Card treatment: translucent fill + soft inner glow. The outline is drawn
+       by augmented-ui (--aug-border*), which follows the cut corners — a plain
+       CSS border would be clipped away at the notch. */
+    --aug-border: 0.12vh;
+    --aug-border-bg: rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+    --aug-inset: 0;
+    background: color-mix(in srgb, var(--color_light_black) 60%, transparent);
+    box-shadow: inset 0 0 2vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.06);
+}
+div.modal_popup #settingsEditor .settings_net_empty {
+    font-size: 1.4vh;
+    opacity: 0.6;
+    padding: 0.5vh;
+    text-align: center;
+}
+div.modal_popup #settingsEditor button.settings_net_row {
+    display: flex;
+    align-items: center;
+    gap: 0.8vh;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: 0.12vh solid transparent;
+    color: inherit;
+    font-family: inherit;
+    font-size: 1.5vh;
+    padding: 0.45vh 0.6vh;
+    cursor: pointer;
+    letter-spacing: 0.03em;
+}
+div.modal_popup #settingsEditor button.settings_net_row:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.12);
+}
+div.modal_popup #settingsEditor button.settings_net_row.selected {
+    border-color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.12);
+}
+div.modal_popup #settingsEditor .settings_net_bars {
     font-family: var(--font_mono), monospace;
+    font-size: 1.4vh;
+    min-width: 3.6vh;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+}
+div.modal_popup #settingsEditor .settings_net_lock {
+    margin-left: auto;
+    opacity: 0.7;
+    font-size: 1.4vh;
+}
+div.modal_popup #settingsEditor .settings_net_saved,
+div.modal_popup #settingsEditor .settings_net_bt {
+    display: flex;
+    align-items: center;
+    gap: 0.6vh;
+    padding: 0.4vh 0.3vh;
+    border-bottom: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.18);
+}
+div.modal_popup #settingsEditor .settings_net_saved:last-child,
+div.modal_popup #settingsEditor .settings_net_bt:last-child {
+    border-bottom: none;
+}
+div.modal_popup #settingsEditor .settings_net_name {
+    flex: 0 1 auto;
+    font-size: 1.5vh;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+div.modal_popup #settingsEditor .settings_net_badge {
+    font-size: 1.2vh;
+    opacity: 0.6;
+    margin-left: 0.4vh;
+}
+div.modal_popup #settingsEditor .settings_net_actions {
+    margin-left: auto;
+    display: flex;
+    gap: 0.4vh;
+    flex-shrink: 0;
+}
+div.modal_popup #settingsEditor button.settings_net_btn {
+    margin: 0; /* cancel the generic modal-button 1.5vh left margin */
+    padding: 0.4vh 1.2vh;
+    border: 0.15vh solid rgb(var(--color_r), var(--color_g), var(--color_b));
+    background: transparent;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: inherit;
+    font-size: 1.4vh;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+div.modal_popup #settingsEditor button.settings_net_btn:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.18);
+}
+div.modal_popup #settingsEditor button.settings_net_btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+div.modal_popup #settingsEditor button.settings_net_mini {
+    padding: 0.25vh 0.8vh;
+    font-size: 1.3vh;
+    border-width: 0.12vh;
+    opacity: 0.85;
+}
+div.modal_popup #settingsEditor .settings_net_pw {
+    margin-top: 0.6vh;
+    /* keep the password field aligned with the narrower network list above */
+    max-width: 40vh;
+}
+div.modal_popup #settingsEditor .settings_net_pw input {
+    width: 100%;
+    box-sizing: border-box;
+}
+div.modal_popup #settingsEditor .settings_net_actions {
+    margin-top: 0.5vh;
+    display: flex;
+    gap: 0.6vh;
+}
+div.modal_popup #settingsEditor .settings_net_proxy {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6vh;
+    align-items: center;
+}
+div.modal_popup #settingsEditor .settings_net_proxy > div.settings_dd {
+    flex: 0 0 16vh;
+}
+div.modal_popup #settingsEditor .settings_net_proxy input {
+    flex: 1 1 20vh;
+    min-width: 0;
+}
+#settingsPowerReadout {
+    font-family: var(--font_main_light); /* match the UI body font, not monospace */
     color: rgb(var(--color_r), var(--color_g), var(--color_b));
 }
 
@@ -410,6 +677,7 @@ div.modal_popup #settingsEditor input:not([type="range"]):focus {
     outline: none !important;
     background: rgb(var(--color_r), var(--color_g), var(--color_b));
     color: var(--color_light_black);
+    box-shadow: 0 0 0.8vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
 }
 
 /* Passcode field validation (settings → lock screen): a red border while the
@@ -458,7 +726,7 @@ div.modal_popup button.settings_pw_toggle {
     border: 0.15vh solid rgb(var(--color_r), var(--color_g), var(--color_b));
     background: var(--color_light_black);
     color: rgb(var(--color_r), var(--color_g), var(--color_b));
-    font-family: var(--font_mono);
+    font-family: var(--font_mono), monospace;
     font-size: 1.4vh;
     line-height: 1.4; /* match the sibling inputs so heights are pixel-identical */
     letter-spacing: 0.06em;
@@ -475,6 +743,18 @@ div.modal_popup button.settings_pw_toggle:hover {
    "值" column looks uniform. */
 div.modal_popup div.settings_dd {
     width: 100%;
+    min-width: 0;
+}
+
+/* Time & Date category: the date (year/month/day) and time (hour/minute)
+   selects sit side by side in a flex group, each equal-width and matching the
+   single-dropdown rows above. */
+div.modal_popup #settingsEditor .settings_time_grp {
+    display: flex;
+    gap: 0.5vh;
+}
+div.modal_popup #settingsEditor .settings_time_grp > div.settings_dd {
+    flex: 1 1 0;
     min-width: 0;
 }
 
@@ -551,8 +831,41 @@ div.modal_popup summary+table {
 h6#settingsEditorStatus {
     margin: 0;
     margin-top: 1vh;
-    font-size: 1.5vh;
-    font-style: italic;
+    font-size: 1.3vh;
+    font-weight: normal;
+    font-style: normal;
+    font-family: var(--font_mono), monospace;
+    letter-spacing: 0.12em;
+    opacity: 0.75;
+}
+
+h6#settingsEditorStatus::before {
+    content: "▸ ";
+    opacity: 0.6;
+}
+
+/* Thin neon scrollbars for the settings editor panes and network lists */
+div.modal_popup:has(#settingsEditor) #settingsEditor::-webkit-scrollbar,
+div.modal_popup:has(#settingsEditor) #settingsSide::-webkit-scrollbar,
+div.modal_popup:has(#settingsEditor) .settings_net_list::-webkit-scrollbar {
+    width: 0.7vh;
+    height: 0.7vh;
+}
+div.modal_popup:has(#settingsEditor) #settingsEditor::-webkit-scrollbar-track,
+div.modal_popup:has(#settingsEditor) #settingsSide::-webkit-scrollbar-track,
+div.modal_popup:has(#settingsEditor) .settings_net_list::-webkit-scrollbar-track {
+    background: transparent;
+}
+div.modal_popup:has(#settingsEditor) #settingsEditor::-webkit-scrollbar-thumb,
+div.modal_popup:has(#settingsEditor) #settingsSide::-webkit-scrollbar-thumb,
+div.modal_popup:has(#settingsEditor) .settings_net_list::-webkit-scrollbar-thumb {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    border-radius: 0.35vh;
+}
+div.modal_popup:has(#settingsEditor) #settingsEditor::-webkit-scrollbar-thumb:hover,
+div.modal_popup:has(#settingsEditor) #settingsSide::-webkit-scrollbar-thumb:hover,
+div.modal_popup:has(#settingsEditor) .settings_net_list::-webkit-scrollbar-thumb:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.85);
 }
 
 /* Keyboard shortcuts modal */

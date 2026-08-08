@@ -1840,10 +1840,6 @@ window.openSettings = async () => {
             </select>`, "settings.theme.help"),
             settingsRow("settings.termFontSize", `<input type="text" id="settingsEditor-termFontSize" value="${window.settings.termFontSize}">`, "settings.termFontSize.help"),
             settingsRow("settings.shell", `<input type="text" id="settingsEditor-shell" value="${window.settings.shell}">`, "settings.shell.help"),
-            settingsRow("settings.clockHours", `<select id="settingsEditor-clockHours">
-                <option>${(window.settings.clockHours === 12) ? "12" : "24"}</option>
-                <option>${(window.settings.clockHours === 12) ? "24" : "12"}</option>
-            </select>`, "settings.clockHours.help"),
             settingsRow("settings.showKeyboard", `<select id="settingsEditor-showKeyboard">
                 <option>${window.settings.showKeyboard === true}</option>
                 <option>${window.settings.showKeyboard !== true}</option>
@@ -1940,6 +1936,41 @@ window.openSettings = async () => {
             </select>`, "settings.appMonitor.mock.help"),
             settingsRow("settings.appMonitor.appImageDirs", `<input type="text" id="settingsEditor-appMonitor-appImageDirs" value="${(window.settings.appMonitor || {}).appImageDirs || ''}">`, "settings.appMonitor.appImageDirs.help"),
         ].join("") },
+        { id: "network", titleKey: "settings.cat.network", html: () => {
+            const netOnOff = (id, on) => `<select id="${id}">
+                <option value="1" ${on ? "selected" : ""}>${t("settings.network.on")}</option>
+                <option value="0" ${!on ? "selected" : ""}>${t("settings.network.off")}</option>
+            </select>`;
+            return [
+                section("settings.network.wifi"),
+                settingsRow("settings.network.wifiPower", netOnOff("settingsNetWifiPower", true), "settings.network.wifiPower.help"),
+                settingsRow("settings.network.wifiStatus", `<span id="settingsNetWifiStatus" class="settings_net_status">–</span>`, "settings.network.wifiStatus.help"),
+                settingsRow("settings.network.wifiInfo", `<div id="settingsNetWifiInfo" class="settings_net_info"></div>`, "settings.network.wifiInfo.help"),
+                settingsRow("settings.network.wifiDisconnect", `<button type="button" id="settingsNetWifiDisconnect" class="settings_net_btn">${t("settings.network.btDisc")}</button>`, "settings.network.wifiDisconnect.help"),
+                settingsRow("settings.network.available", `<div id="settingsNetWifiList" class="settings_net_list" augmented-ui="bl-clip tr-clip exe"></div>
+                    <div class="settings_net_pw"><input type="password" id="settingsNetWifiPassword" placeholder="${t("settings.network.pwPh")}"></div>
+                    <div class="settings_net_actions">
+                        <button type="button" id="settingsNetWifiConnect" class="settings_net_btn">${t("settings.network.connect")}</button>
+                        <button type="button" id="settingsNetWifiScan" class="settings_net_btn">${t("settings.network.scan")}</button>
+                    </div>`, "settings.network.available.help"),
+                settingsRow("settings.network.saved", `<div id="settingsNetWifiSaved" class="settings_net_list" augmented-ui="bl-clip tr-clip exe"></div>`, "settings.network.saved.help"),
+                settingsRow("settings.network.proxy", `<div id="settingsNetProxy" class="settings_net_proxy">
+                        <select id="settingsNetWifiProxyMethod">
+                            <option value="auto">${t("settings.network.proxy.auto")}</option>
+                            <option value="none">${t("settings.network.proxy.none")}</option>
+                            <option value="manual">${t("settings.network.proxy.manual")}</option>
+                        </select>
+                        <input type="text" id="settingsNetWifiProxyHttp" placeholder="HTTP proxy">
+                        <input type="text" id="settingsNetWifiProxyHttps" placeholder="HTTPS proxy">
+                        <button type="button" id="settingsNetProxyApply" class="settings_net_btn">${t("settings.network.proxy.apply")}</button>
+                    </div>`, "settings.network.proxy.help"),
+                section("settings.network.bt"),
+                settingsRow("settings.network.btPower", netOnOff("settingsNetBtPower", true), "settings.network.btPower.help"),
+                settingsRow("settings.network.btStatus", `<span id="settingsNetBtStatus" class="settings_net_status">–</span>`, "settings.network.btStatus.help"),
+                settingsRow("settings.network.btDevices", `<div id="settingsNetBtList" class="settings_net_list" augmented-ui="bl-clip tr-clip exe"></div>
+                    <div class="settings_net_actions"><button type="button" id="settingsNetBtScan" class="settings_net_btn">${t("settings.network.btScan")}</button></div>`, "settings.network.btDevices.help"),
+            ].join("");
+        } },
         { id: "claude", titleKey: "settings.cat.claude", html: () => [
             settingsRow("settings.claude.enabled", `<select id="settingsEditor-claude-enabled">
                 <option>${(window.settings.claude || {}).enabled}</option>
@@ -1966,6 +1997,39 @@ window.openSettings = async () => {
             settingsRow("settings.power.kbdBacklight", `<select id="settingsKbdBacklight">${numOptions(0, 2, 1, v => v === 0 ? t("settings.power.kbd.off") : v === 1 ? t("settings.power.kbd.low") : t("settings.power.kbd.high"), window.settings.kbdBacklight ?? 1)}</select>`, "settings.power.kbdBacklight.help"),
             settingsRow("settings.power.touchpadTap", `<select id="settingsTouchpadTap">${numOptions(0, 1, 1, v => v === 1 ? t("settings.power.touchpad.on") : t("settings.power.touchpad.off"), window.settings.touchpadTap ?? 1)}</select>`, "settings.power.touchpadTap.help"),
         ].join("") },
+        { id: "time", titleKey: "settings.cat.time", html: () => {
+            const y0 = new Date().getFullYear();
+            const yr = () => Array.from({ length: 11 }, (_, i) => y0 - 5 + i).map(y => `<option value="${y}">${y}</option>`).join("");
+            const mo = () => Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${String(i + 1).padStart(2, "0")}</option>`).join("");
+            const dd = () => Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}">${String(i + 1).padStart(2, "0")}</option>`).join("");
+            const hh = () => Array.from({ length: 24 }, (_, i) => `<option value="${i}">${String(i).padStart(2, "0")}</option>`).join("");
+            const mm = () => Array.from({ length: 60 }, (_, i) => `<option value="${i}">${String(i).padStart(2, "0")}</option>`).join("");
+            return [
+                settingsRow("settings.time.status", `<span id="settingsTimeStatus" class="settings_time_status">–</span>`, "settings.time.status.help"),
+                settingsRow("settings.clockHours", `<select id="settingsEditor-clockHours">
+                    <option>${(window.settings.clockHours === 12) ? "12" : "24"}</option>
+                    <option>${(window.settings.clockHours === 12) ? "24" : "12"}</option>
+                </select>`, "settings.clockHours.help"),
+                settingsRow("settings.time.ntp", `<select id="settingsTimeNtp">
+                    <option value="1">${t("settings.time.ntp.on")}</option>
+                    <option value="0">${t("settings.time.ntp.off")}</option>
+                </select>`, "settings.time.ntp.help"),
+                // The date/time pickers are plain selects → converted to the same
+                // theme dropdowns as every other setting (no native calendar/clock
+                // popups). Day options are clamped to the selected month by the
+                // bindings below.
+                settingsRow("settings.time.date", `<div class="settings_time_grp">
+                    <select id="settingsTimeYear">${yr()}</select>
+                    <select id="settingsTimeMonth">${mo()}</select>
+                    <select id="settingsTimeDay">${dd()}</select>
+                </div>`, "settings.time.date.help"),
+                settingsRow("settings.time.clock", `<div class="settings_time_grp">
+                    <select id="settingsTimeHour">${hh()}</select>
+                    <select id="settingsTimeMinute">${mm()}</select>
+                </div>`, "settings.time.clock.help"),
+                settingsRow("settings.time.apply", `<button type="button" id="settingsTimeApply" class="settings_time_btn">${t("settings.time.apply")}</button>`, "settings.time.apply.help"),
+            ].join("");
+        } },
     ];
 
     // Remember the language the editor was opened in, so a change can re-open
@@ -1979,7 +2043,10 @@ window.openSettings = async () => {
         title: `${t("settings.title")} <i>(v${remote.app.getVersion()})</i>`,
         html: `<div id="settingsBody">
                     <div id="settingsSide">
-                        ${CATS.map((c, i) => `<button type="button" class="settings_cat_btn${i === 0 ? " active" : ""}" data-cat="${c.id}">${t(c.titleKey)}</button>`).join("")}
+                        ${CATS.map((c, i) => `<button type="button" class="settings_cat_btn${i === 0 ? " active" : ""}" data-cat="${c.id}">
+                            <span class="settings_cat_idx">${String(i + 1).padStart(2, "0")}</span>
+                            <span class="settings_cat_name">${t(c.titleKey)}</span>
+                        </button>`).join("")}
                     </div>
                     <div id="settingsEditor">
                         ${CATS.map((c, i) => `<div class="settings_cat${i === 0 ? " active" : ""}" data-cat="${c.id}">${c.html()}</div>`).join("")}
@@ -1990,7 +2057,6 @@ window.openSettings = async () => {
             {label: t("settings.btn.openExternal"), action:`electron.shell.openPath('${settingsFile}');electronWin.minimize();`},
             {label: t("settings.btn.save"), action: "window.writeSettingsFile()"},
             {label: t("settings.btn.shortcuts"), action: "window.openShortcutsHelp()"},
-            {label: t("settings.btn.wifi"), action: "window.wifiPanel.open()"},
             {label: t("settings.btn.update"), action: "window.systemUpdate.open()"},
             {label: t("settings.btn.reload"), action: "window.location.reload(true);"},
             {label: t("settings.btn.restart"), action: "remote.app.relaunch();remote.app.quit();"}
@@ -2239,6 +2305,381 @@ window.populatePowerControls = () => {
     };
     stateSlider("settingsKbdBacklight", "kbd:backlight", 2);
     stateSlider("settingsTouchpadTap", "touchpad:tap", 1);
+
+    // Time & Date (#14): NTP sync toggle + manual date/time apply. On open the
+    // status row, the NTP dropdown and the date/time dropdowns are filled from
+    // `time:get` (live system state, not a persisted setting); the dropdowns and
+    // the Apply button push back through `time:set`. Toggling NTP and setting
+    // the time are both immediate system effects, so nothing needs
+    // writeSettingsFile.
+    const timeStatus = document.getElementById("settingsTimeStatus");
+    const timeNtp = document.getElementById("settingsTimeNtp");
+    const timeYear = document.getElementById("settingsTimeYear");
+    const timeMonth = document.getElementById("settingsTimeMonth");
+    const timeDay = document.getElementById("settingsTimeDay");
+    const timeHour = document.getElementById("settingsTimeHour");
+    const timeMinute = document.getElementById("settingsTimeMinute");
+    const timeApply = document.getElementById("settingsTimeApply");
+    const pad2 = n => String(n).padStart(2, "0");
+
+    const notify = msg => {
+        if (window.appmonitorA && typeof window.appmonitorA._notify === "function") {
+            window.appmonitorA._notify(msg);
+            return;
+        }
+        // Fallback: create the shared toast element ourselves when the app-monitor
+        // panels are not ready yet (mirrors the battery notifyToast pattern).
+        let t = document.getElementById("edex_toast");
+        if (!t) {
+            t = document.createElement("div");
+            t.id = "edex_toast";
+            t.className = "browser_toast";
+            document.body.appendChild(t);
+        }
+        t.textContent = msg;
+        t.classList.add("show");
+        clearTimeout(notify._timer);
+        notify._timer = setTimeout(() => t.classList.remove("show"), 2200);
+    };
+    // Set a converted .settings_dd dropdown's hidden value + visible selection.
+    const setDd = (el, value) => {
+        if (!el) return;
+        el.value = String(value);
+        const wrap = el.closest ? el.closest(".settings_dd") : null;
+        if (!wrap) return;
+        wrap.querySelectorAll(".mod_loc_opt").forEach(o =>
+            o.classList.toggle("mod_loc_opt_active", o.dataset.value === String(value)));
+        const btn = wrap.querySelector(".mod_loc_btn");
+        const active = wrap.querySelector(".mod_loc_opt_active");
+        if (btn && active) btn.textContent = active.textContent;
+    };
+    // Rebuild a converted dropdown's option list (used to clamp the day list to
+    // the selected month's length). options: [{value, text}].
+    const rebuildDd = (el, options, value) => {
+        if (!el) return;
+        el.value = String(value);
+        const wrap = el.closest ? el.closest(".settings_dd") : null;
+        if (!wrap) return;
+        const list = wrap.querySelector(".mod_loc_list");
+        if (!list) return;
+        list.innerHTML = "";
+        options.forEach(o => {
+            const d = document.createElement("div");
+            d.className = "mod_loc_opt" + (String(o.value) === String(value) ? " mod_loc_opt_active" : "");
+            d.dataset.value = String(o.value);
+            d.textContent = o.text;
+            list.appendChild(d);
+        });
+        const btn = wrap.querySelector(".mod_loc_btn");
+        const active = list.querySelector(".mod_loc_opt_active");
+        if (btn && active) btn.textContent = active.textContent;
+    };
+    const daysInMonth = (y, m) => new Date(y, m, 0).getDate(); // m is 1..12
+    const clampDay = () => {
+        const y = Number(timeYear && timeYear.value) || new Date().getFullYear();
+        const m = Number(timeMonth && timeMonth.value) || 1;
+        const max = daysInMonth(y, m);
+        const cur = Math.min(Number(timeDay && timeDay.value) || 1, max);
+        rebuildDd(timeDay, Array.from({ length: max }, (_, i) => ({ value: i + 1, text: pad2(i + 1) })), cur);
+    };
+    // Sync the visible NTP dropdown selection (bool state stored as "1"/"0", so
+    // the dropdown keeps its 开/关 text — a bool-valued select would render as
+    // TRUE/FALSE via setupSettingsDropdowns).
+    const syncNtpVisible = on => {
+        if (!timeNtp) return;
+        setDd(timeNtp, on ? "1" : "0");
+    };
+    const refreshTime = () => {
+        ipc.invoke("time:get").then(r => {
+            if (!r || !r.ok) {
+                if (timeStatus) timeStatus.textContent = "–";
+                return;
+            }
+            if (timeStatus) timeStatus.textContent = (r.local || "") + (r.timezone ? " · " + r.timezone : "");
+            if (r.date && /^\d{4}-\d{2}-\d{2}$/.test(r.date)) {
+                setDd(timeYear, String(Number(r.date.slice(0, 4))));
+                setDd(timeMonth, String(Number(r.date.slice(5, 7))));
+                setDd(timeDay, String(Number(r.date.slice(8, 10))));
+            }
+            if (r.clock && /^\d{2}:\d{2}$/.test(r.clock)) {
+                setDd(timeHour, String(Number(r.clock.slice(0, 2))));
+                setDd(timeMinute, String(Number(r.clock.slice(3, 5))));
+            }
+            if (r.ntp != null) syncNtpVisible(r.ntp);
+        }).catch(() => {});
+    };
+    if (timeNtp) {
+        const wrap = timeNtp.closest ? timeNtp.closest(".settings_dd") : null;
+        if (wrap) {
+            wrap.addEventListener("click", e => {
+                const opt = e.target.closest ? e.target.closest(".mod_loc_opt") : null;
+                if (!opt) return;
+                const on = opt.dataset.value === "1";
+                ipc.invoke("time:set", { ntp: on }).then(r => {
+                    if (!r || !r.ok) { refreshTime(); return; }
+                    syncNtpVisible(on);
+                    notify(on ? t("settings.time.ntp.notifyOn") : t("settings.time.ntp.notifyOff"));
+                }).catch(() => {});
+            }, true);
+        }
+    }
+    // Changing the year or month re-clamps the day dropdown to that month's real
+    // number of days (Feb → 28/29), so an impossible date can never be sent.
+    [timeYear, timeMonth].forEach(el => {
+        if (!el) return;
+        const wrap = el.closest ? el.closest(".settings_dd") : null;
+        if (!wrap) return;
+        wrap.addEventListener("click", e => {
+            const opt = e.target.closest ? e.target.closest(".mod_loc_opt") : null;
+            if (!opt) return;
+            setDd(el, opt.dataset.value);
+            clampDay();
+        }, true);
+    });
+    if (timeApply) {
+        timeApply.addEventListener("click", () => {
+            const y = Number(timeYear && timeYear.value), m = Number(timeMonth && timeMonth.value);
+            const d = Number(timeDay && timeDay.value), h = Number(timeHour && timeHour.value);
+            const mi = Number(timeMinute && timeMinute.value);
+            const dt = new Date(y, m - 1, d, h, mi, 0);
+            if (!Number.isFinite(y + m + d + h + mi) ||
+                dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d ||
+                h < 0 || h > 23 || mi < 0 || mi > 59) {
+                notify(t("settings.time.invalid"));
+                return;
+            }
+            const dateStr = y + "-" + pad2(m) + "-" + pad2(d);
+            const timeStr = pad2(h) + ":" + pad2(mi);
+            ipc.invoke("time:set", { date: dateStr, time: timeStr }).then(r => {
+                notify(r && r.ok ? t("settings.time.applied") : t("settings.time.failed"));
+                // Manual time and NTP are mutually exclusive: a successful set
+                // also disables the sync in the back-end, so flip the dropdown
+                // to OFF right away (refreshTime would read it back on Linux;
+                // this covers the preview and keeps the two controls in sync).
+                if (r && r.ok) syncNtpVisible(false);
+                refreshTime();
+            }).catch(() => {});
+        });
+    }
+    refreshTime();
+
+    // ---- Network category: WiFi (macOS-style: radio, status, IP/router/DNS
+    // info, available list, saved list + auto-join, proxy) and Bluetooth
+    // (power, device list, pair/connect/disconnect/forget). All live system
+    // state over IPC; none of it is persisted to settings.json. ----
+    const netWifiPower = document.getElementById("settingsNetWifiPower");
+    const netWifiStatus = document.getElementById("settingsNetWifiStatus");
+    const netWifiInfo = document.getElementById("settingsNetWifiInfo");
+    const netWifiList = document.getElementById("settingsNetWifiList");
+    const netWifiPassword = document.getElementById("settingsNetWifiPassword");
+    const netWifiSaved = document.getElementById("settingsNetWifiSaved");
+    const netBtPower = document.getElementById("settingsNetBtPower");
+    const netBtStatus = document.getElementById("settingsNetBtStatus");
+    const netBtList = document.getElementById("settingsNetBtList");
+    const netSelected = { value: "" };
+    const ddWrap = el => (el && el.closest ? el.closest(".settings_dd") : null);
+    const escHtml = s => String(s == null ? "" : s).replace(/[<>&"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
+
+    const renderWifiList = networks => {
+        if (!netWifiList) return;
+        if (!networks.length) { netWifiList.innerHTML = "<div class='settings_net_empty'>" + t("settings.network.empty") + "</div>"; return; }
+        netWifiList.innerHTML = networks.map(n => {
+            const bars = n.signal >= 75 ? "▅▅▅" : n.signal >= 50 ? "▅▅▂" : n.signal >= 25 ? "▅▂▂" : "▂▂▂";
+            const sel = netSelected.value === n.ssid;
+            return `<button type="button" class="settings_net_row${sel ? " selected" : ""}" data-ssid="${escHtml(n.ssid)}">
+                <span class="settings_net_bars">${bars}</span>
+                <span class="settings_net_name">${escHtml(n.ssid)}</span>
+                ${n.security ? "<span class='settings_net_lock'>◆</span>" : ""}
+            </button>`;
+        }).join("");
+        netWifiList.querySelectorAll(".settings_net_row").forEach(row => {
+            row.addEventListener("click", () => {
+                netSelected.value = row.dataset.ssid;
+                netWifiList.querySelectorAll(".settings_net_row").forEach(r => r.classList.toggle("selected", r === row));
+                if (netWifiPassword) { netWifiPassword.value = ""; netWifiPassword.placeholder = t("settings.network.pwPh") + " — " + row.dataset.ssid; }
+            });
+        });
+    };
+    const renderWifiSaved = saved => {
+        if (!netWifiSaved) return;
+        if (!saved.length) { netWifiSaved.innerHTML = "<div class='settings_net_empty'>" + t("settings.network.empty") + "</div>"; return; }
+        netWifiSaved.innerHTML = saved.map(s => `
+            <div class="settings_net_saved">
+                <span class="settings_net_name">${escHtml(s.name)}</span>
+                <button type="button" class="settings_net_btn settings_net_mini" data-act="auto" data-name="${escHtml(s.name)}">${s.autoconnect ? t("settings.network.autoOn") : t("settings.network.autoOff")}</button>
+                <button type="button" class="settings_net_btn settings_net_mini" data-act="forget" data-name="${escHtml(s.name)}">${t("settings.network.forget")}</button>
+            </div>`).join("");
+        netWifiSaved.querySelectorAll("button[data-act]").forEach(btn => {
+            btn.addEventListener("click", () => {
+                const name = btn.dataset.name;
+                if (btn.dataset.act === "forget") {
+                    ipc.invoke("wifi:forget", { name }).then(r => {
+                        notify(r && r.ok ? t("settings.network.forgot") + " " + name : t("settings.network.failed"));
+                        refreshWifi();
+                    }).catch(() => {});
+                } else {
+                    const cur = (saved.find(s => s.name === name) || {}).autoconnect;
+                    ipc.invoke("wifi:set-autoconnect", { name, auto: !cur }).then(r => {
+                        notify(r && r.ok ? t("settings.network.autoSet") : t("settings.network.failed"));
+                        refreshWifi();
+                    }).catch(() => {});
+                }
+            });
+        });
+    };
+    const refreshWifi = () => {
+        ipc.invoke("wifi:status").then(r => {
+            if (!r || !r.ok) { if (netWifiStatus) netWifiStatus.textContent = t("settings.network.unavail"); return; }
+            if (netWifiStatus) netWifiStatus.textContent = r.connected
+                ? t("settings.network.connectedTo") + " " + (r.ssid || "")
+                : t("settings.network.notConnected");
+        }).catch(() => {});
+        ipc.invoke("wifi:detail").then(r => {
+            if (!netWifiInfo) return;
+            if (r && r.ok && r.connected) {
+                const parts = ["IP " + (r.ip || "–")];
+                if (r.gateway) parts.push(t("settings.network.router") + " " + r.gateway);
+                if (r.mask) parts.push(t("settings.network.mask") + " " + r.mask);
+                if (r.dns && r.dns.length) parts.push("DNS " + r.dns.join(", "));
+                netWifiInfo.textContent = parts.join(" · ");
+            } else {
+                netWifiInfo.textContent = "";
+            }
+        }).catch(() => {});
+        ipc.invoke("wifi:list").then(r => { if (r && r.ok) renderWifiList(r.networks || []); }).catch(() => {});
+        ipc.invoke("wifi:saved").then(r => { if (r && r.ok) renderWifiSaved(r.saved || []); }).catch(() => {});
+    };
+    if (netWifiPower) {
+        const w = ddWrap(netWifiPower);
+        if (w) {
+            w.addEventListener("click", e => {
+                const opt = e.target.closest ? e.target.closest(".mod_loc_opt") : null;
+                if (!opt) return;
+                const on = opt.dataset.value === "1";
+                ipc.invoke("wifi:radio", on).then(r => {
+                    notify(r && r.ok ? (on ? t("settings.network.wifiOn") : t("settings.network.wifiOff")) : t("settings.network.failed"));
+                    refreshWifi();
+                }).catch(() => {});
+            }, true);
+        }
+        ipc.invoke("wifi:radio").then(r => { if (r && r.ok) setDd(netWifiPower, r.enabled ? "1" : "0"); }).catch(() => {});
+    }
+    const netWifiConnect = document.getElementById("settingsNetWifiConnect");
+    if (netWifiConnect) netWifiConnect.addEventListener("click", () => {
+        if (!netSelected.value) { notify(t("settings.network.pickFirst")); return; }
+        const password = netWifiPassword ? netWifiPassword.value : "";
+        netWifiConnect.disabled = true;
+        ipc.invoke("wifi:connect", { ssid: netSelected.value, password }).then(r => {
+            netWifiConnect.disabled = false;
+            notify(r && r.ok ? t("settings.network.connected") + " " + netSelected.value
+                             : t("settings.network.failed") + (r && r.error ? " — " + r.error : ""));
+            refreshWifi();
+        }).catch(() => { netWifiConnect.disabled = false; });
+    });
+    const netWifiScan = document.getElementById("settingsNetWifiScan");
+    if (netWifiScan) netWifiScan.addEventListener("click", () => { if (netWifiList) netWifiList.innerHTML = "<div class='settings_net_empty'>…</div>"; refreshWifi(); });
+    const netWifiDisc = document.getElementById("settingsNetWifiDisconnect");
+    if (netWifiDisc) netWifiDisc.addEventListener("click", () => {
+        ipc.invoke("wifi:disconnect").then(r => {
+            notify(r && r.ok ? t("settings.network.disconnected") : t("settings.network.failed"));
+            refreshWifi();
+        }).catch(() => {});
+    });
+    // Proxy of the active connection (auto / none / manual + HTTP/HTTPS).
+    const netProxyMethod = document.getElementById("settingsNetWifiProxyMethod");
+    const netProxyHttp = document.getElementById("settingsNetWifiProxyHttp");
+    const netProxyHttps = document.getElementById("settingsNetWifiProxyHttps");
+    ipc.invoke("wifi:proxy").then(r => {
+        if (!r || !r.ok) return;
+        if (netProxyMethod) setDd(netProxyMethod, r.method || "auto");
+        if (netProxyHttp) netProxyHttp.value = r.http || "";
+        if (netProxyHttps) netProxyHttps.value = r.https || "";
+    }).catch(() => {});
+    const netProxyApply = document.getElementById("settingsNetProxyApply");
+    if (netProxyApply) netProxyApply.addEventListener("click", () => {
+        ipc.invoke("wifi:proxy", { method: netProxyMethod ? netProxyMethod.value : "auto",
+                                   http: netProxyHttp ? netProxyHttp.value : "",
+                                   https: netProxyHttps ? netProxyHttps.value : "" }).then(r => {
+            notify(r && r.ok ? t("settings.network.proxyApplied") : t("settings.network.failed"));
+        }).catch(() => {});
+    });
+
+    // ---- Bluetooth ----
+    const renderBtList = devices => {
+        if (!netBtList) return;
+        if (!devices.length) { netBtList.innerHTML = "<div class='settings_net_empty'>" + t("settings.network.btEmpty") + "</div>"; return; }
+        netBtList.innerHTML = devices.map(d => {
+            const badge = d.connected ? " · " + t("settings.network.btConnected") : d.paired ? " · " + t("settings.network.btPaired") : "";
+            let btns = "";
+            if (d.connected) {
+                btns = `<button type="button" class="settings_net_btn settings_net_mini" data-bt="disc" data-addr="${d.address}">${t("settings.network.btDisc")}</button>`;
+            } else {
+                if (!d.paired) btns += `<button type="button" class="settings_net_btn settings_net_mini" data-bt="pair" data-addr="${d.address}">${t("settings.network.btPair")}</button>`;
+                btns += `<button type="button" class="settings_net_btn settings_net_mini" data-bt="conn" data-addr="${d.address}">${t("settings.network.btConn")}</button>`;
+            }
+            btns += `<button type="button" class="settings_net_btn settings_net_mini" data-bt="forget" data-addr="${d.address}">${t("settings.network.forget")}</button>`;
+            return `<div class="settings_net_bt"><span class="settings_net_name">${escHtml(d.name || d.address)}</span><span class="settings_net_badge">${badge}</span><span class="settings_net_actions">${btns}</span></div>`;
+        }).join("");
+        netBtList.querySelectorAll("button[data-bt]").forEach(btn => {
+            btn.addEventListener("click", () => {
+                const act = btn.dataset.bt, addr = btn.dataset.addr;
+                const map = { pair: "bluetooth:pair", conn: "bluetooth:connect", disc: "bluetooth:disconnect", forget: "bluetooth:forget" };
+                ipc.invoke(map[act] || "bluetooth:pair", { address: addr }).then(r => {
+                    notify(r && r.ok ? t("settings.network.btDone") : t("settings.network.failed") + (r && r.error ? " — " + r.error : ""));
+                    refreshBt();
+                }).catch(() => {});
+            });
+        });
+    };
+    const refreshBt = () => {
+        ipc.invoke("bluetooth:status").then(r => {
+            if (!r || !r.ok) { if (netBtStatus) netBtStatus.textContent = t("settings.network.btUnavail"); return; }
+            if (netBtStatus) netBtStatus.textContent = r.name + " (" + (r.address || "") + ")" + (r.powered ? "" : " · " + t("settings.network.btPoweredOff"));
+            if (netBtPower) setDd(netBtPower, r.powered ? "1" : "0");
+        }).catch(() => {});
+        ipc.invoke("bluetooth:devices").then(r => { if (r && r.ok) renderBtList(r.devices || []); }).catch(() => {});
+    };
+    if (netBtPower) {
+        const w = ddWrap(netBtPower);
+        if (w) {
+            w.addEventListener("click", e => {
+                const opt = e.target.closest ? e.target.closest(".mod_loc_opt") : null;
+                if (!opt) return;
+                const on = opt.dataset.value === "1";
+                ipc.invoke("bluetooth:set-power", on).then(r => {
+                    notify(r && r.ok ? (on ? t("settings.network.btOn") : t("settings.network.btOff")) : t("settings.network.failed"));
+                    refreshBt();
+                }).catch(() => {});
+            }, true);
+        }
+    }
+    const netBtScan = document.getElementById("settingsNetBtScan");
+    if (netBtScan) netBtScan.addEventListener("click", () => {
+        ipc.invoke("bluetooth:scan", 8).then(() => {
+            notify(t("settings.network.btScanning"));
+            let n = 0;
+            const timer = setInterval(() => { refreshBt(); if (++n >= 6) clearInterval(timer); }, 1500);
+        }).catch(() => {});
+    });
+    // Arrow-key navigation across the list rows (up/down/Home/End), Enter works
+    // natively on the <button> rows.
+    const wireListKeys = container => {
+        if (!container) return;
+        container.addEventListener("keydown", e => {
+            const rows = Array.from(container.querySelectorAll("button.settings_net_row, button[data-bt], button[data-act]"));
+            if (!rows.length) return;
+            const idx = rows.indexOf(document.activeElement);
+            if (e.key === "ArrowDown") { e.preventDefault(); rows[Math.min(rows.length - 1, idx + 1)].focus(); }
+            else if (e.key === "ArrowUp") { e.preventDefault(); rows[Math.max(0, idx - 1)].focus(); }
+            else if (e.key === "Home") { e.preventDefault(); rows[0].focus(); }
+            else if (e.key === "End") { e.preventDefault(); rows[rows.length - 1].focus(); }
+        });
+    };
+    wireListKeys(netWifiList);
+    wireListKeys(netWifiSaved);
+    wireListKeys(netBtList);
+    refreshWifi();
+    refreshBt();
 };
 
 window.setupSettingsDropdowns = () => {

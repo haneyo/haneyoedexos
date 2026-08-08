@@ -636,8 +636,19 @@ app.on('ready', async () => {
 
     // ---- WiFi (NetworkManager) — the simple-connect panel ----
     const execFile = require("child_process").execFile;
+    // Demo Wi-Fi dataset used on non-Linux so the settings UI is previewable.
+    const mockWifiNetworks = [
+        { ssid: "EDEX-DEMO-5G", signal: 88, security: "WPA2" },
+        { ssid: "EDEX-DEMO-GUEST", signal: 62, security: "" },
+        { ssid: "Cafe_WiFi", signal: 45, security: "WPA2" },
+        { ssid: "Starbucks", signal: 18, security: "WPA3" },
+    ];
+    const mockWifiSaved = [
+        { name: "EDEX-DEMO-5G", autoconnect: true },
+        { name: "EDEX-DEMO-GUEST", autoconnect: false },
+    ];
     ipc.handle("wifi:list", () => new Promise(resolve => {
-        if (process.platform !== "linux") return resolve({ ok: false, error: "linux only" });
+        if (process.platform !== "linux") return resolve({ ok: true, networks: mockWifiNetworks });
         execFile("nmcli", ["-t", "-f", "SSID,SIGNAL,SECURITY", "dev", "wifi", "list", "--rescan", "yes"],
             { timeout: 25000 }, (err, stdout) => {
                 if (err) return resolve({ ok: false, error: (err.stderr || err.message).trim() });
@@ -657,15 +668,213 @@ app.on('ready', async () => {
         });
     }));
     ipc.handle("wifi:status", () => new Promise(resolve => {
-        if (process.platform !== "linux") return resolve({ ok: false });
+        if (process.platform !== "linux") return resolve({ ok: true, connected: true, ssid: "EDEX-DEMO-5G" });
         execFile("nmcli", ["-t", "-f", "ACTIVE,SSID", "dev", "wifi"], { timeout: 10000 }, (err, stdout) => {
             if (err) return resolve({ ok: false });
             const line = (stdout || "").split("\n").find(l => l.startsWith("yes:"));
             resolve({ ok: true, connected: !!line, ssid: line ? line.split(":")[1] : "" });
         });
     }));
+    // Saved (known) WiFi networks and their autoconnect flag.
+    ipc.handle("wifi:saved", () => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve({ ok: true, saved: mockWifiSaved });
+        execFile("nmcli", ["-t", "-f", "NAME,TYPE,AUTOCONNECT", "connection", "show"], { timeout: 10000 },
+            (err, stdout) => {
+                if (err) return resolve({ ok: false, error: (err.stderr || err.message).trim() });
+                const saved = (stdout || "").split("\n").filter(Boolean)
+                    .map(line => line.split(":"))
+                    .filter(p => p[1] === "802-11-wireless")
+                    .map(p => ({ name: p[0], autoconnect: p[2] === "yes" }));
+                resolve({ ok: true, saved });
+            });
+    }));
+    // Forget a saved network: nmcli connection delete <name>.
+    ipc.handle("wifi:forget", (e, { name }) => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve({ ok: false, error: "linux only" });
+        execFile("nmcli", ["connection", "delete", String(name)], { timeout: 15000 },
+            (err, stdout, stderr) => resolve(err ? { ok: false, error: (stderr || err.message).trim() } : { ok: true }));
+    }));
+    // Disconnect the active WiFi interface (nmcli device disconnect <dev>).
+    ipc.handle("wifi:disconnect", () => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve({ ok: true });
+        execFile("nmcli", ["-t", "-f", "DEVICE,TYPE,STATE", "dev"], { timeout: 10000 }, (err, stdout) => {
+            if (err) return resolve({ ok: false, error: (err.stderr || err.message).trim() });
+            const dev = (stdout || "").split("\n").filter(Boolean)
+                .map(line => line.split(":"))
+                .find(p => p[1] === "wifi" && (p[2] === "connected" || p[2] === "connecting"));
+            if (!dev) return resolve({ ok: false, error: "no active wifi" });
+            execFile("nmcli", ["device", "disconnect", dev[0]], { timeout: 15000 },
+                (err2, so, se) => resolve(err2 ? { ok: false, error: (se || err2.message).trim() } : { ok: true }));
+        });
+    }));
+    // WiFi radio on/off (rfkill via NetworkManager): nmcli radio wifi on|off.
+    ipc.handle("wifi:radio", (e, on) => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve(on == null ? { ok: true, enabled: true } : { ok: true, enabled: !!on });
+        if (on == null) {
+            execFile("nmcli", ["radio", "wifi"], { timeout: 8000 }, (err, stdout) =>
+                resolve(err ? { ok: false, error: (err.stderr || err.message).trim() }
+                           : { ok: true, enabled: (stdout || "").trim() === "enabled" }));
+            return;
+        }
+        execFile("nmcli", ["radio", "wifi", on ? "on" : "off"], { timeout: 10000 }, (err, stdout, stderr) =>
+            resolve(err ? { ok: false, error: (stderr || err.message).trim() } : { ok: true, enabled: !!on }));
+    }));
+    // Current connection details (IP / gateway / mask / DNS), macOS-style info card.
+    ipc.handle("wifi:detail", () => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve({ ok: true, connected: true, ssid: "EDEX-DEMO", ip: "192.168.1.42", gateway: "192.168.1.1", mask: "255.255.255.0", dns: ["192.168.1.1", "223.5.5.5"] });
+        const activeWifi = () => new Promise(res2 => {
+            execFile("nmcli", ["-t", "-f", "DEVICE,TYPE,STATE", "dev"], { timeout: 8000 }, (err, stdout) => {
+                if (err) return res2(null);
+                const dev = (stdout || "").split("\n").filter(Boolean).map(l => l.split(":"))
+                    .find(p => p[1] === "wifi" && p[2] === "connected");
+                res2(dev ? dev[0] : null);
+            });
+        });
+        activeWifi().then(dev => {
+            if (!dev) return resolve({ ok: true, connected: false });
+            execFile("nmcli", ["-t", "-f", "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS", "device", "show", dev], { timeout: 10000 },
+                (err, stdout) => {
+                    if (err) return resolve({ ok: true, connected: true, ssid: dev });
+                    const ipM = /^IP4\.ADDRESS\[1\]:([^\n]*)$/m.exec(stdout);
+                    const gwM = /^IP4\.GATEWAY:([^\n]*)$/m.exec(stdout);
+                    const dns = (stdout.match(/^IP4\.DNS\[\d+\]:([^\n]*)$/gm) || []).map(l => l.split(":")[1].trim());
+                    const ip = ipM ? ipM[1].trim().split("/")[0] : "";
+                    const mask = ipM ? ipM[1].trim().split("/")[1] || "" : "";
+                    const gw = gwM ? gwM[1].trim() : "";
+                    const maskIp = mask === "24" ? "255.255.255.0" : mask === "16" ? "255.255.0.0" : mask === "8" ? "255.0.0.0" : mask;
+                    resolve({ ok: true, connected: true, ssid: dev, ip, gateway: gw, mask: maskIp, dns });
+                });
+        });
+    }));
+    // Per-saved-network auto-join: nmcli connection modify <name> connection.autoconnect.
+    ipc.handle("wifi:set-autoconnect", (e, { name, auto }) => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve({ ok: true });
+        execFile("nmcli", ["connection", "modify", String(name), "connection.autoconnect", auto ? "yes" : "no"],
+            { timeout: 10000 }, (err, stdout, stderr) => resolve(err ? { ok: false, error: (stderr || err.message).trim() } : { ok: true }));
+    }));
+    // Proxy config of the active WiFi connection (auto / none / manual).
+    ipc.handle("wifi:proxy", (e, cfg) => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve({ ok: true, method: "auto", http: "", https: "" });
+        const activeConn = () => new Promise(res2 => {
+            execFile("nmcli", ["-t", "-f", "NAME,DEVICE,TYPE", "connection", "show", "--active"], { timeout: 8000 }, (err, stdout) => {
+                if (err) return res2("");
+                const c = (stdout || "").split("\n").filter(Boolean).map(l => l.split(":"))
+                    .find(p => p[2] === "802-11-wireless");
+                res2(c ? c[0] : "");
+            });
+        });
+        activeConn().then(name => {
+            if (!name) return resolve({ ok: true, connected: false });
+            if (cfg) {
+                const args = ["connection", "modify", name,
+                    "proxy.method", cfg.method || "auto",
+                    "proxy.http", cfg.http || "",
+                    "proxy.https", cfg.https || ""];
+                execFile("nmcli", args, { timeout: 10000 }, (err, stdout, stderr) =>
+                    resolve(err ? { ok: false, error: (stderr || err.message).trim() } : { ok: true }));
+                return;
+            }
+            execFile("nmcli", ["-t", "-f", "proxy.method,proxy.http,proxy.https", "connection", "show", name],
+                { timeout: 8000 }, (err, stdout) => {
+                    if (err) return resolve({ ok: true, connected: true });
+                    const parts = (stdout || "").split("\n").filter(Boolean).map(l => l.split(":")[1]).join(",");
+                    const pm = (stdout.match(/^proxy\.method:([^\n]*)$/m) || [])[1] || "auto";
+                    const ph = (stdout.match(/^proxy\.http:([^\n]*)$/m) || [])[1] || "";
+                    const ps = (stdout.match(/^proxy\.https:([^\n]*)$/m) || [])[1] || "";
+                    resolve({ ok: true, connected: true, method: pm.trim(), http: ph.trim(), https: ps.trim() });
+                });
+        });
+    }));
     // Let the renderer open the WiFi panel (floating button / hotkey).
     ipc.on("open-wifi-panel", () => { if (win && !win.isDestroyed()) win.webContents.send("open-wifi-panel"); });
+
+    // ---- Bluetooth (bluez via bluetoothctl). Preview on macOS returns mock data
+    // ---- so the settings UI can be exercised without a Bluetooth adapter.
+    // Device cache used by the macOS mock path so a "scan" grows the list.
+    let mockBtDevices = [
+        { address: "A4:83:E7:12:34:56", name: "Xiaomi Buds 4", paired: true, connected: false },
+        { address: "E4:8D:8C:AB:CD:EF", name: "Logitech MX Keys", paired: true, connected: true },
+    ];
+    let mockBtScanned = false;
+    const btMock = payload => ({ ok: true, ...payload });
+    const bt = (args, timeout, cb) => {
+        execFile("bluetoothctl", args, { timeout }, (err, stdout, stderr) =>
+            cb(err ? { ok: false, error: (stderr || err.message).trim() } : { ok: true, out: stdout || "" }));
+    };
+    const parseBtDevices = out => {
+        const lines = (out || "").split("\n").filter(Boolean);
+        return lines.map(l => {
+            const parts = l.split(/\s+/);
+            // "Device AA:BB:CC:DD:EE:FF Name here"
+            return { address: (parts[1] || "").toUpperCase(), name: parts.slice(2).join(" ") || parts[1] || "" };
+        }).filter(d => d.address);
+    };
+    ipc.handle("bluetooth:status", () => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve(btMock({ powered: true, discoverable: false, name: "Mock Controller", address: "00:11:22:33:44:55" }));
+        bt(["show"], 8000, r => {
+            if (!r.ok) return resolve(r);
+            const nameM = /^\s*Name:\s*(.+)$/m.exec(r.out);
+            resolve({ ok: true, name: nameM ? nameM[1].trim() : "Controller",
+                      powered: /^\s*Powered:\s*yes$/m.test(r.out), discoverable: /^\s*Discoverable:\s*yes$/m.test(r.out) });
+        });
+    }));
+    ipc.handle("bluetooth:set-power", (e, on) => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve(btMock({ powered: !!on }));
+        bt(["power", on ? "on" : "off"], 8000, r => resolve(r.ok ? { ok: true, powered: on } : r));
+    }));
+    // Devices cache: all / connected / paired device rows merged (Linux).
+    ipc.handle("bluetooth:devices", () => new Promise(resolve => {
+        if (process.platform !== "linux") {
+            // Mock: after a scan, drop in two freshly discovered (unpaired) devices.
+            if (mockBtScanned && !mockBtDevices.some(d => d.address === "F8:1A:67:00:11:22")) {
+                mockBtScanned = false; // inject once per scan
+                mockBtDevices = mockBtDevices.concat([
+                    { address: "F8:1A:67:00:11:22", name: "Sony WH-1000XM5", paired: false, connected: false },
+                    { address: "18:9E:FC:88:77:66", name: "Razer Mouse", paired: false, connected: false },
+                ]);
+            }
+            return resolve({ ok: true, devices: mockBtDevices });
+        }
+        execFile("bluetoothctl", ["devices"], { timeout: 8000 }, (err, allOut) => {
+            if (err) return resolve({ ok: false, error: (err.stderr || err.message).trim() });
+            execFile("bluetoothctl", ["devices", "Connected"], { timeout: 8000 }, (err2, connOut) => {
+                execFile("bluetoothctl", ["devices", "Paired"], { timeout: 8000 }, (err3, pairOut) => {
+                    const all = parseBtDevices(allOut);
+                    const connected = new Set(parseBtDevices(connOut).map(d => d.address));
+                    const paired = new Set(parseBtDevices(pairOut).map(d => d.address));
+                    resolve({ ok: true, devices: all.map(d => ({ ...d, connected: connected.has(d.address), paired: paired.has(d.address) })) });
+                });
+            });
+        });
+    }));
+    // Scan for new devices. bluetoothctl scan stays active; run it under a timeout
+    // so a single call discovers for N seconds then returns (UI polls devices).
+    ipc.handle("bluetooth:scan", (e, sec) => new Promise(resolve => {
+        const s = Math.max(2, Math.min(15, parseInt(sec) || 8));
+        if (process.platform !== "linux") { mockBtScanned = true; return resolve(btMock({ scanning: true })); }
+        execFile("timeout", [String(s), "bluetoothctl", "scan", "on"], { timeout: (s + 5) * 1000 }, () => {});
+        resolve({ ok: true, scanning: true });
+    }));
+    ipc.handle("bluetooth:pair", (e, { address }) => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve(btMock({}));
+        bt(["pair", String(address)], 30000, r => resolve(r.ok ? { ok: true } : r));
+    }));
+    ipc.handle("bluetooth:trust", (e, { address }) => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve(btMock({}));
+        bt(["trust", String(address)], 10000, r => resolve(r.ok ? { ok: true } : r));
+    }));
+    ipc.handle("bluetooth:connect", (e, { address }) => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve(btMock({}));
+        bt(["connect", String(address)], 30000, r => resolve(r.ok ? { ok: true } : r));
+    }));
+    ipc.handle("bluetooth:disconnect", (e, { address }) => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve(btMock({}));
+        bt(["disconnect", String(address)], 15000, r => resolve(r.ok ? { ok: true } : r));
+    }));
+    ipc.handle("bluetooth:forget", (e, { address }) => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve(btMock({}));
+        bt(["remove", String(address)], 15000, r => resolve(r.ok ? { ok: true } : r));
+    }));
 
     // System update: sudo apt update && full-upgrade, streaming output to the
     // renderer (needs passwordless sudo + network — both set up at install).
@@ -864,6 +1073,75 @@ app.on('ready', async () => {
             if (m) level = Number(m[1]);
         } catch (err) {}
         return { ok: true, level };
+    });
+
+    // System clock readout + manual time / NTP (settings → Time & Date, #14).
+    // `timedatectl` does the whole job on eDEX-OS; the autologin user has
+    // passwordless sudo, so the set operations fall back to it. On non-Linux
+    // (the macOS preview) the read side still works via plain JS so the UI
+    // renders, but set operations report failure.
+    const parseTimedatectl = out => {
+        const m = {};
+        for (const line of String(out || "").split("\n")) {
+            const mm = /^\s*([^:]+):\s*(.*)$/.exec(line);
+            if (mm) m[mm[1].trim()] = mm[2].trim();
+        }
+        return m;
+    };
+    const runSudo = cmd => new Promise(res => {
+        const { exec } = require("child_process");
+        exec(cmd + " 2>/dev/null", err => {
+            if (!err) return res(true);
+            exec("sudo -n " + cmd + " 2>/dev/null", err2 => res(!err2));
+        });
+    });
+    ipc.handle("time:get", async () => {
+        if (process.platform !== "linux") {
+            const d = new Date();
+            const p = n => String(n).padStart(2, "0");
+            return {
+                ok: true,
+                local: d.toString(),
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
+                date: d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()),
+                clock: p(d.getHours()) + ":" + p(d.getMinutes()),
+                ntp: null
+            };
+        }
+        try {
+            const { execSync } = require("child_process");
+            const out = execSync("timedatectl 2>/dev/null", { timeout: 3000 }).toString();
+            const info = parseTimedatectl(out);
+            const ntpM = /^\s*NTP service:\s+(\S+)/m.exec(out);
+            const ntpVal = ntpM ? ntpM[1].toLowerCase() : "";
+            const dt = /(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}):\d{2}/.exec(info["Local time"] || "");
+            return {
+                ok: true,
+                local: info["Local time"] || "",
+                timezone: info["Time zone"] || "",
+                date: dt ? dt[1] : "",
+                clock: dt ? dt[2] : "",
+                ntp: ntpVal === "active" || ntpVal === "yes" || ntpVal === "enabled"
+            };
+        } catch (e) {
+            return { ok: false };
+        }
+    });
+    ipc.handle("time:set", async (e, payload) => {
+        if (process.platform !== "linux") return { ok: false };
+        if (payload && payload.ntp != null) {
+            return { ok: await runSudo("timedatectl set-ntp " + (payload.ntp ? "true" : "false")) };
+        }
+        if (payload && payload.date && payload.time) {
+            // timedatectl refuses set-time while NTP is active; stop syncing,
+            // set the clock, and leave NTP off so the manual time sticks.
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(payload.date) || !/^\d{2}:\d{2}(:\d{2})?$/.test(payload.time)) {
+                return { ok: false };
+            }
+            await runSudo("timedatectl set-ntp false");
+            return { ok: await runSudo('timedatectl set-time "' + payload.date + " " + payload.time + '"') };
+        }
+        return { ok: false };
     });
 
     // eDEX-UI self-update (GitHub release asset). Only works on the eDEX-OS

@@ -95,7 +95,7 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 libasound2t64 libgbm1 libdrm2 \
     libxkbcommon0 xdg-utils libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 \
     libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 \
-    linux-firmware network-manager \
+    linux-firmware network-manager bluez \
     pulseaudio alsa-utils \
     nodejs npm \
     flatpak xdg-desktop-portal xdg-desktop-portal-gtk \

@@ -11,8 +11,8 @@
 |---|------|----|------|
 | 1 | 开机 GRUB 报 `error: file '/boot/' not found`(不影响引导) | OS/ISO | 已定位:Ubuntu 签名 grubx64.efi 内嵌配置所致,装饰性,暂不改(详见 ubuntu-side-changes.md §3) |
 | 2 | 首启向导中文变方块字,要求改英文界面 | OS | 已修(源码,待装验) |
-| 3 | 搜不到 WiFi | OS(需真机诊断) | 已修(源码,待装验):netplan 双 renderer 冲突 + 关 wifi 电源管理(见 ubuntu-side-changes.md §2) |
-| 4 | 系统时间不对:需要时区 + 手动改时间 + 联网同步功能 | OS + App | 部分修 |
+| 3 | 搜不到 WiFi | OS(需真机诊断) | 已修(源码,待装验):netplan 双 renderer 冲突 + 关 wifi 电源管理(见 ubuntu-side-changes.md §2);设置菜单已加网络分类(连接/断开/已保存/代理/蓝牙),依赖 nmcli + bluetoothctl |
+| 4 | 系统时间不对:需要时区 + 手动改时间 + 联网同步功能 | OS + App | App 已修(源码,待装验):设置加时间分类(实时状态/时区/手动设时间/联网同步 IPC);OS 侧需装验 |
 | 5 | 语音输入按钮按下后卡死,无法再按、无法语音输入 | App | 已修(源码,待装验) |
 | 6 | 输入法切换无反应,一直 EN | OS/App(需诊断) | Rime 引擎缺失:fcitx5-rime 已加入 build(待装验) |
 | 7 | 文件浏览器默认标签连不上(XDG 目录不存在) | OS | 已修(源码,待装验) |
@@ -97,4 +97,10 @@ fcitx5-diagnose | head -60; pgrep -a fcitx5
 
 ### 待用户确认后提交(repo)
 - #10 改 packaging/build-iso.sh(已改:claude 硬校验 + fcitx5-rime)+ .github/workflows/release.yml(需先看现状)
+
+### 2026-08-08 新增(已同步 src,待装验)
+- **设置菜单 UI 升级(赛博科技风)**:侧边栏分类序号、等宽科技标签(◆ WIFI)、网络列表切角卡片(augmented-ui 描边环)、字体统一(数据读取值改 UI 正文字体 United Sans Light)。
+- **设置-网络分类**:WiFi 开关/状态/连接详情(IP·路由器·DNS)/可用列表/已保存+自动连接/忘记/断开/代理(自动|无|手动),蓝牙开关/状态/设备列表/配对/断开/忘记。IPC 走 `nmcli`(network-manager)+ `bluetoothctl`。
+- **设置-时间分类**:实时状态、时区、手动设时间、联网同步(`time:get`/`time:set` IPC)。
+- **bluez OS 侧依赖**:蓝牙分类用 `bluetoothctl`,`bluez` 已加入 packaging/build-iso.sh APTOPTS 预装列表(装机离线也有);若机器无蓝牙适配器,分类显示"不可用"。
 - 本次系统侧改动:install-edex.sh(WiFi/plymouth)+ docs/ubuntu-side-changes.md 新增
