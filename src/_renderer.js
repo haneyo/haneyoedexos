@@ -1372,6 +1372,47 @@ async function initUI() {
             if (!el) return;
             if (el.type === "password") { el.type = "text"; if (btn) btn.textContent = "HIDE"; }
             else { el.type = "password"; if (btn) btn.textContent = "SHOW"; }
+        },
+        // Fill the URL + models from the selected provider preset. The API key
+        // is left untouched (the user pastes their own); every field stays
+        // editable afterwards, so a preset is just a convenience pre-fill.
+        // `overwrite` (default true, i.e. the user just switched provider)
+        // resets the fields to the preset's defaults; false only fills fields
+        // that are still empty (used when the settings dialog opens, so a
+        // previously saved custom value is not clobbered).
+        applyClaudeProvider(overwrite = true) {
+            const id = document.getElementById("settingsEditor-claude-provider").value;
+            const p = (window.CLAUDE_PROVIDERS || []).find(x => x.id === id);
+            if (!p) return;
+            // Rebuild a model combo box's option list from the provider's
+            // models; the highlight follows the current input value when it is
+            // one of the listed models (otherwise the preset default).
+            const fillPick = (inputId, models, def) => {
+                const inputEl = document.getElementById(inputId);
+                if (!inputEl) return;
+                const box = inputEl.closest(".settings_combobox");
+                const listEl = box && box.querySelector(".mod_loc_list");
+                const cur = inputEl.value;
+                const val = (models || []).indexOf(cur) >= 0 ? cur : (def || "");
+                if (listEl) {
+                    listEl.innerHTML = "";
+                    (models || []).forEach(m => {
+                        const d = document.createElement("div");
+                        d.className = "mod_loc_opt" + (m === val ? " mod_loc_opt_active" : "");
+                        d.dataset.value = m;
+                        d.textContent = m;
+                        listEl.appendChild(d);
+                    });
+                }
+            };
+            const baseUrl = document.getElementById("settingsEditor-claude-baseUrl");
+            const model = document.getElementById("settingsEditor-claude-model");
+            const haiku = document.getElementById("settingsEditor-claude-haikuModel");
+            if (overwrite || (baseUrl && !baseUrl.value)) baseUrl.value = p.baseUrl || "";
+            if (overwrite || (model && !model.value)) model.value = p.model || "";
+            if (overwrite || (haiku && !haiku.value)) haiku.value = p.haikuModel || "";
+            fillPick("settingsEditor-claude-model", p.models, p.model);
+            fillPick("settingsEditor-claude-haikuModel", p.haikuModels, p.haikuModel);
         }
     };
 
@@ -1976,13 +2017,29 @@ window.openSettings = async () => {
                 <option>${(window.settings.claude || {}).enabled}</option>
                 <option>${!(window.settings.claude || {}).enabled}</option>
             </select>`, "settings.claude.enabled.help"),
+            settingsRow("settings.claude.provider", `<select id="settingsEditor-claude-provider" onchange="window.sysCmd.applyClaudeProvider()">
+                ${(window.CLAUDE_PROVIDERS || []).map(p => `<option value="${p.id}"${(window.settings.claude && window.settings.claude.provider === p.id) ? " selected" : ""}>${(window.settings.language === "zh") ? p.label : p.labelEn}</option>`).join("")}
+            </select>`, "settings.claude.provider.help"),
             settingsRow("settings.claude.baseUrl", `<input type="text" id="settingsEditor-claude-baseUrl" value="${(window.settings.claude || {}).baseUrl || ''}">`, "settings.claude.baseUrl.help"),
             settingsRow("settings.claude.apiKey", `<div class="settings_api_pw">
                 <input type="password" id="settingsEditor-claude-apiKey" autocomplete="off" value="${(window.settings.claude || {}).apiKey || ''}">
                 <button type="button" id="settingsEditor-claude-apiKey-toggle" class="settings_pw_toggle" onclick="window.sysCmd.toggleClaudeKey()">SHOW</button>
             </div>`, "settings.claude.apiKey.help"),
-            settingsRow("settings.claude.model", `<input type="text" id="settingsEditor-claude-model" value="${(window.settings.claude || {}).model || ''}">`, "settings.claude.model.help"),
-            settingsRow("settings.claude.haikuModel", `<input type="text" id="settingsEditor-claude-haikuModel" value="${(window.settings.claude || {}).haikuModel || ''}">`, "settings.claude.haikuModel.help"),
+            // Model fields are editable combo boxes: one text input holds the
+            // real value (editable, so any model name can be typed) with a
+            // dropdown arrow that lists the active provider's models for quick
+            // picking. The list is (re)built when a provider is chosen; picking
+            // fills the input, which stays editable afterwards.
+            settingsRow("settings.claude.model", `<div class="settings_combobox">
+                <input type="text" id="settingsEditor-claude-model" value="${(window.settings.claude || {}).model || ''}" placeholder="${t("settings.claude.modelPlaceholder")}" autocomplete="off">
+                <button type="button" class="mod_loc_btn" title="${t("settings.claude.modelPlaceholder")}"></button>
+                <div class="mod_loc_list"></div>
+            </div>`, "settings.claude.model.help"),
+            settingsRow("settings.claude.haikuModel", `<div class="settings_combobox">
+                <input type="text" id="settingsEditor-claude-haikuModel" value="${(window.settings.claude || {}).haikuModel || ''}" placeholder="${t("settings.claude.modelPlaceholder")}" autocomplete="off">
+                <button type="button" class="mod_loc_btn" title="${t("settings.claude.modelPlaceholder")}"></button>
+                <div class="mod_loc_list"></div>
+            </div>`, "settings.claude.haikuModel.help"),
             section("settings.section.claudeNote"),
         ].join("") },
         { id: "power", titleKey: "settings.cat.power", html: () => [
@@ -2130,6 +2187,17 @@ window.openSettings = async () => {
     setTimeout(() => {
         window.setupSettingsDropdowns();
         window.populatePowerControls();
+        // The provider <select> is replaced by a custom dropdown (above); hook
+        // its 'change' event here to auto-fill the URL + models. Fires from the
+        // dropdown's list click via the change dispatch in setupSettingsDropdowns.
+        const claudeProvider = document.getElementById("settingsEditor-claude-provider");
+        if (claudeProvider) claudeProvider.addEventListener("change", () => window.sysCmd.applyClaudeProvider());
+        // The model combo boxes are bound here too (open/close, pick, keyboard).
+        // Then re-sync everything from the saved provider (fill defaults only
+        // where a field is still empty, so a saved custom model name is not
+        // clobbered).
+        if (window.setupSettingsComboboxes) window.setupSettingsComboboxes();
+        if (window.sysCmd.applyClaudeProvider) window.sysCmd.applyClaudeProvider(false);
         const active = document.querySelector("#settingsSide .settings_cat_btn.active");
         if (active) active.focus();
         // Lock passcode field: digits only, 4-8 characters. Fewer than 4 turns
@@ -2733,6 +2801,10 @@ window.setupSettingsDropdowns = () => {
             if (!opt) return;
             e.stopPropagation();
             setValue(opt.dataset.value);
+            // A native <select> fires 'change' on user selection; this custom
+            // replacement must too, so onchange-style hooks (e.g. the Claude
+            // provider auto-fill) keep working.
+            input.dispatchEvent(new Event("change", { bubbles: true }));
             list.classList.remove("mod_loc_open");
         });
 
@@ -2744,10 +2816,68 @@ window.setupSettingsDropdowns = () => {
     if (!window._settingsDropdownCloseBound) {
         window._settingsDropdownCloseBound = true;
         document.addEventListener("click", e => {
-            if (e.target.closest && e.target.closest(".settings_dd")) return;
+            if (e.target.closest && e.target.closest(".settings_dd, .settings_combobox")) return;
             document.querySelectorAll("#settingsEditor .mod_loc_list.mod_loc_open").forEach(l => l.classList.remove("mod_loc_open"));
         });
     }
+};
+
+// Claude model fields are editable combo boxes: the <input> is the real value,
+// the arrow button opens a list of the active provider's models (rebuilt by
+// applyClaudeProvider) for quick picking. Picking fills the input, which stays
+// editable afterwards. Keyboard: Enter/Space on the arrow toggles the list;
+// ArrowUp/Down move the highlight, Enter confirms, Esc closes.
+window.setupSettingsComboboxes = () => {
+    document.querySelectorAll("#settingsEditor .settings_combobox").forEach(box => {
+        if (box.dataset.cbxBound) return;
+        box.dataset.cbxBound = "1";
+        const input = box.querySelector("input");
+        const btn = box.querySelector("button");
+        const list = box.querySelector(".mod_loc_list");
+        const openList = () => {
+            const isOpen = !list.classList.contains("mod_loc_open");
+            document.querySelectorAll("#settingsEditor .mod_loc_list.mod_loc_open").forEach(l => l.classList.remove("mod_loc_open"));
+            list.classList.toggle("mod_loc_open", isOpen);
+            if (isOpen) {
+                const active = list.querySelector(".mod_loc_opt_active");
+                if (active) active.scrollIntoView({ block: "nearest" });
+            }
+        };
+        const closeList = () => list.classList.remove("mod_loc_open");
+        const pick = opt => {
+            if (!opt) return;
+            input.value = opt.dataset.value;
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+            list.querySelectorAll(".mod_loc_opt").forEach(o => o.classList.toggle("mod_loc_opt_active", o === opt));
+            closeList();
+        };
+        btn.addEventListener("click", e => { e.stopPropagation(); openList(); });
+        list.addEventListener("click", e => {
+            const opt = e.target.closest(".mod_loc_opt");
+            if (!opt) return;
+            e.stopPropagation();
+            pick(opt);
+        });
+        box.addEventListener("keydown", e => {
+            if (!list.classList.contains("mod_loc_open")) return;
+            const opts = Array.from(list.querySelectorAll(".mod_loc_opt"));
+            if (!opts.length) return;
+            if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeList(); return; }
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault(); e.stopPropagation();
+                let idx = opts.findIndex(o => o.classList.contains("mod_loc_opt_active"));
+                idx = (idx < 0 ? (e.key === "ArrowDown" ? -1 : 0) : idx);
+                idx = e.key === "ArrowDown" ? (idx + 1) % opts.length : (idx - 1 + opts.length) % opts.length;
+                opts.forEach((o, i) => o.classList.toggle("mod_loc_opt_active", i === idx));
+                opts[idx].scrollIntoView({ block: "nearest" });
+                return;
+            }
+            if (e.key === "Enter") {
+                e.preventDefault(); e.stopPropagation();
+                pick(opts.find(o => o.classList.contains("mod_loc_opt_active")));
+            }
+        });
+    });
 };
 
 window.writeFile = (path) => {
@@ -2813,6 +2943,7 @@ window.writeSettingsFile = () => {
     s.language = document.getElementById("settingsEditor-language").value;
     s.claude = {
         enabled: (document.getElementById("settingsEditor-claude-enabled").value === "true"),
+        provider: document.getElementById("settingsEditor-claude-provider").value,
         baseUrl: document.getElementById("settingsEditor-claude-baseUrl").value,
         apiKey: document.getElementById("settingsEditor-claude-apiKey").value,
         model: document.getElementById("settingsEditor-claude-model").value,

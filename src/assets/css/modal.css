@@ -789,6 +789,42 @@ div.modal_popup div.settings_dd div.mod_loc_opt {
     letter-spacing: 0.05vh;
 }
 
+/* Claude model fields: one editable combo box. The text input is the real
+   value (any model name can be typed); the arrow button opens a list of the
+   active provider's models (rebuilt by applyClaudeProvider) for quick picking.
+   Positioned like the settings dropdowns so the shared .mod_loc_list rule
+   anchors its list below the input. */
+div.modal_popup #settingsEditor .settings_combobox {
+    position: relative;
+    display: flex;
+    gap: 0.4vh;
+    align-items: stretch;
+    width: 100%;
+    min-width: 0;
+}
+div.modal_popup #settingsEditor .settings_combobox > input[type="text"] {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: auto; /* flex sizing, not the standalone input's width:100% */
+    margin: 0;
+}
+div.modal_popup #settingsEditor .settings_combobox > .mod_loc_btn {
+    flex: 0 0 auto;
+    width: 3.4vh;
+    padding: 0;
+    font-size: 1.6vh; /* match the sibling input so heights are pixel-identical */
+    line-height: 1.4;
+    text-align: center;
+}
+div.modal_popup #settingsEditor .settings_combobox > .mod_loc_btn::after {
+    content: "▾";
+}
+div.modal_popup #settingsEditor .settings_combobox > .mod_loc_list {
+    left: 0;
+    width: 100%;
+    min-width: 0;
+}
+
 /* Settings slider rows (volume, cursor size, wheel speed, pointer speed):
    the <input type=range> plus a live %/×/px readout on the right. */
 div.modal_popup div.settings_slider {
