@@ -13,6 +13,19 @@ const os = require("os");
 
 const CUSTOM_FILE = "appmonitor-apps.json";
 
+// System plumbing that must never appear in the user's app launcher: terminal
+// emulators we ship for setup, the input-method, X.org helpers and GNOME/KDE
+// admin utilities. The launcher is for the user's GUI apps, not the distro's.
+// Matched against both the .desktop Name and the Exec basename.
+const SYSTEM_APP_RE = /(^|[\s_.\/-])(uxterm|xterm|x-terminal-emulator|fcitx5|fcitx|gsettings|gdbus|dbus-|gnome-terminal|gnome-control-center|gnome-system-monitor|gnome-software|gnome-disks|gnome-calculator|gnome-calendar|gnome-characters|gnome-clocks|gnome-connections|gnome-contacts|gnome-documents|gnome-files|gnome-fonts|gnome-logs|gnome-maps|gnome-music|gnome-photos|gnome-power-statistics|gnome-screenshot|gnome-tweaks|gnome-weather|gnome-text-editor|gedit|nautilus|yelp|blueman|onboard|openbox|pcmanfm|thunar|xfce4-terminal|mousepad|picom|compton|avahi-|python3|konsole|dolphin|kwrite|ark|kcalc|kgpg|kcolorchooser|kcharselect|kfind|kolourpaint|systemsettings|org\.gnome\.|org\.kde\.)([\s_.\/-]|$)/i;
+// Web-search launcher entries ("Google", "Bing") belong to the browser's webapp
+// list, not the native app monitors.
+function isSearchLauncher(a) {
+    if (/^(google|bing)$/i.test(a.name)) return true;
+    if (/\/search[^\s]*?(google|bing)\./i.test(a.exec || "")) return true;
+    return false;
+}
+
 /* Parse one .desktop file into { id, name, exec, icon } or null. */
 function parseDesktopFile(file) {
     let content = "";
@@ -114,7 +127,7 @@ function saveCustom(userData, list) {
 }
 
 function listNativeApps(opts) {
-    // opts: { userData, appImageDirs: string }
+    // opts: { userData, appImageDirs: string, appFilter?: string }
     const apps = process.platform === "linux"
         ? scanDesktopDirs().concat(scanAppImages(splitDirs(opts.appImageDirs)))
         : [];
@@ -122,10 +135,19 @@ function listNativeApps(opts) {
         id: "custom:" + c.name, name: c.name, exec: c.value, icon: null, custom: true,
         installed: c.added || 0
     }));
+    // User-supplied filter from settings (extra entries to hide), plus the
+    // built-in system-tool / search-launcher denylist.
+    let userRe = null;
+    if (opts.appFilter) { try { userRe = new RegExp(opts.appFilter, "i"); } catch (e) {} }
     const seen = new Set();
     return apps.concat(custom).filter(a => {
         if (seen.has(a.name)) return false;
         seen.add(a.name);
+        // Never hide the user's own custom entries.
+        if (a.custom) return true;
+        if (isSearchLauncher(a)) return false;
+        if (SYSTEM_APP_RE.test(a.name) || SYSTEM_APP_RE.test(a.exec || "")) return false;
+        if (userRe && (userRe.test(a.name) || userRe.test(a.exec || ""))) return false;
         return true;
     });
 }

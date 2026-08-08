@@ -1126,20 +1126,72 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
 /* ---- Lock screen (fullscreen sci-fi lock) ---- */
 #lock_screen {
     position: fixed; inset: 0; z-index: 10000;
-    background: #05080d;
+    /* Same dot-grid as the desktop, so the lock looks like part of the UI. */
+    background: linear-gradient(90deg, var(--color_light_black) 1.85vh, transparent 1%) center, linear-gradient(var(--color_light_black) 1.85vh, transparent 1%) center, var(--color_grey);
+    background-size: 2.04vh 2.04vh;
     display: flex; align-items: center; justify-content: center;
 }
 #lock_canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+/* Software screen-off: idle past screenOffIdle blanks the whole display. Sits
+   above the matrix screensaver canvas (z 9999); any input fades it back out. */
+#screen_off {
+    position: fixed; inset: 0; z-index: 10000;
+    background: #000;
+    animation: screen_off_fade_in 0.5s ease-out;
+}
+#screen_off.screen_off_fade_out {
+    animation: screen_off_fade_out 0.42s ease-in forwards;
+    opacity: 0;
+}
+@keyframes screen_off_fade_in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+@keyframes screen_off_fade_out {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}
 
 /* code-mode terminal lock: full-screen blocking overlay + command-line panel.
    Only the passcode terminal, the clock and the on-screen keyboard (all raised
    above the block) stay interactive while locked. */
 #lock_block {
     position: fixed; inset: 0; z-index: 3000;
-    /* slight dim over everything else; the terminal (z 3001), the DATA panel
-       + keyboard (z 3005, lifted in JS) and the clock (z 3100) are raised
-       above this overlay so they stay fully visible */
+    /* Light dim over everything else: the raised terminal (z 3200), the DATA
+       panel + keyboard (z 3005) and the clock (z 3100) stay above it, while the
+       side modules and the body's dot-grid remain visible underneath. The BOOT
+       lock never uses this — it uses the opaque fullscreen #lock_screen. */
     background: rgba(5, 8, 13, 0.42);
+    /* The darkening eases in when the lock raises over the screensaver instead
+       of popping in (the .lock_panel already fades). Opacity animates; the
+       background's alpha stays put so nothing else is re-computed. */
+    animation: lock_block_fade_in 0.45s ease-out;
+}
+/* Lock → unlock: the overlay fades to transparent before being removed, so the
+   UI brightens gradually instead of snapping back. The class is added by
+   _teardownLock; removal is deferred until the animation finishes. */
+#lock_block.lock_block_fade_out {
+    animation: lock_block_fade_out 0.42s ease-in forwards;
+    opacity: 0;
+}
+@keyframes lock_block_fade_in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+@keyframes lock_block_fade_out {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}
+/* While the code lock is up, keep the tab strip visible (hiding it entirely
+   made the shell look broken) but mute the filled active-tab chip — its solid
+   theme-colour parallelogram is the bright sliver that read as a stray line
+   left of the passcode box (#70). The inactive tabs' dark fill already blends
+   into the dimmed lock. */
+body:has(#lock_block) #main_shell_tabs > li.active {
+    background: transparent;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-weight: normal;
 }
 .lock_terminal {
     position: fixed;
@@ -1176,9 +1228,27 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
     position: relative; z-index: 2;
     display: flex; flex-direction: column; align-items: center; gap: 1.6vh;
     padding: 4vh 5vh;
-    background: rgba(5, 8, 13, 0.72);
+    /* password box background matches the UI's dot-grid */
+    background: linear-gradient(90deg, var(--color_light_black) 1.85vh, transparent 1%) center, linear-gradient(var(--color_light_black) 1.85vh, transparent 1%) center, var(--color_grey);
+    background-size: 2.04vh 2.04vh;
     border: 0.2vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
     box-shadow: 0 0 4vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.25);
+    /* passcode panel fades in over the (still-falling) matrix rain; on a
+       30s-idle timeout it fades back out (lock_fade_out) before the rain
+       takes the screen again (#88) */
+    animation: lock_fade_in 0.45s ease-out;
+}
+.lock_panel.lock_fade_out {
+    animation: lock_fade_out 0.42s ease-in forwards;
+    opacity: 0;
+}
+@keyframes lock_fade_in {
+    from { opacity: 0; transform: scale(0.96); }
+    to { opacity: 1; transform: scale(1); }
+}
+@keyframes lock_fade_out {
+    from { opacity: 1; transform: scale(1); }
+    to { opacity: 0; transform: scale(0.96); }
 }
 .lock_title {
     font-size: 2.6vh; letter-spacing: 0.35em; font-weight: bold;
@@ -1193,7 +1263,13 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
     width: 26vh; text-align: center;
     background: rgba(5, 8, 13, 0.9);
     border: 0.15vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    /* The static placeholder dots were removed (they leaked the passcode's
+       length); the bullets that appear while typing are kept as normal
+       password-field feedback. The field sits on a near-black background, so
+       the text colour is pinned to the theme colour — inherited black bullets
+       would be invisible. */
     color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    caret-color: rgb(var(--color_r), var(--color_g), var(--color_b));
     font-family: var(--font_main_light); font-size: 2.4vh; letter-spacing: 0.6em;
     padding: 1vh; outline: none;
 }
@@ -1215,6 +1291,83 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
 .lock_err {
     min-height: 1.6vh; font-size: 1.1vh; letter-spacing: 0.25em;
     color: #ff6b6b; text-shadow: 0 0 0.8vh rgba(255, 107, 107, 0.6);
+}
+
+/* ---- CRT-TV power-off after the boot/matrix lock clears ----
+   The screen collapses to a bright horizontal centre line then goes dark,
+   like an old tube TV switching off. Two opaque curtains close from the top
+   and bottom (the visible picture narrows to a line), the line flashes, then
+   everything sits dark until window.playCrtShutdown() removes the overlay.
+   The overlay is added from lockScreen.unlock() and runs purely in parallel
+   with replayBoot/initUI — it never lengthens the password→welcome-back time. */
+#crt_off {
+    position: fixed;
+    inset: 0;
+    z-index: 9999999;
+    pointer-events: none;
+    overflow: hidden;
+    /* NO background here: the two dark panels below are the only things that
+       cover the screen, so as they converge the visible picture narrows to a
+       horizontal line (the classic tube-TV collapse) instead of just going
+       dark all at once. */
+    background: transparent;
+}
+#crt_off .crt_panel {
+    position: absolute;
+    left: 0; right: 0;
+    height: 50.5%;
+    background: #05080d;
+    will-change: transform;
+}
+#crt_off .crt_top { top: 0; transform-origin: top; animation: crt_converge 0.30s cubic-bezier(0.7, 0, 0.9, 0.35) forwards; }
+#crt_off .crt_bot { bottom: 0; transform-origin: bottom; animation: crt_converge 0.30s cubic-bezier(0.7, 0, 0.9, 0.35) forwards; }
+#crt_off .crt_line {
+    position: absolute;
+    left: 0; right: 0;
+    top: 50%; height: 0.2vh;
+    margin-top: -0.1vh;
+    background: #fff;
+    opacity: 0;
+    animation: crt_flash 0.60s linear forwards;
+}
+@keyframes crt_converge {
+    from { transform: scaleY(0); }
+    to { transform: scaleY(1); }
+}
+@keyframes crt_flash {
+    0%, 42% { opacity: 0; }
+    52% { opacity: 1; }
+    72% { opacity: 0.3; }
+    100% { opacity: 0; }
+}
+
+/* ---- Welcome-back after the matrix lock clears ----
+   The matrix unlock no longer replays the boot logo; it shows the same
+   "Welcome back" greeting as the boot-time welcome, on a dark overlay that
+   sits just under the CRT-off overlay (z 9999999) and above everything else
+   (the lock itself is z 10000). The real UI stays covered until the greeting
+   has faded and the overlay is removed (#80). */
+#welcome_back {
+    position: fixed;
+    inset: 0;
+    z-index: 9999998;
+    background: #05080d;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+}
+#welcome_back_greeting {
+    font-size: 3.9vh;
+    font-weight: normal;
+    margin: auto;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    opacity: 0;
+    transition: opacity .5s cubic-bezier(0.4, 0, 1, 1);
+}
+#welcome_back_greeting > em {
+    font-style: normal;
+    font-weight: bold;
 }
 
 /* ---- Lock screen numeric PIN keypad (feature-phone 9-grid, scrambled) ---- */
@@ -1287,7 +1440,49 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
     overflow: visible;
 }
 #keyboard_layer #keyboard div.keyboard_row#row_1 > div.keyboard_enter h1 {
-    top: 2.8vh;
+    /* keep the label inside the cap (upper half), away from the seam — the
+       old 2.8vh put it exactly on the seam where it flashed as a line during
+       the press blink */
+    top: 0.8vh;
+}
+/* L-shape (seam-free): the bottom half paints as the narrower right leg again
+   (7.78vh wide, matching the original keyboard.css geometry), pulled up so its
+   top tucks behind the cap's solid fill. With border:0 and the same generous
+   overlap (-2.2vh, vs. the original ~2px) the pressed highlight is one solid
+   L — the only horizontal edge is the L's own inner corner, no stray middle
+   line. The LEG KEEPS THE FULL 9.72vh BOX (clip the left 20% instead of
+   shrinking it): narrowing the flex item re-centers it inside the row and
+   unhooks it from the cap's right edge across the aspect-ratio media queries
+   in extra_ratios.css, whereas clipping keeps it flush while only the right
+   7.78vh of its fill shows. */
+#keyboard_layer #keyboard div.keyboard_row#row_2 > div.keyboard_enter {
+    width: 9.72vh;
+    min-width: 9.72vh;
+    right: 0;
+    top: -2.2vh;
+    height: 7.94vh;
+    margin-top: 0vh;
+    /* left 20% of the leg is the L's notch — don't paint it */
+    clip-path: inset(0 0 0 20%);
+}
+/* Pressed state: same solid fill as the other keys (outranks the
+   background:transparent above so the Enter highlights as one rectangle). */
+#keyboard_layer #keyboard div.keyboard_enter.keyboard_key:active,
+#keyboard_layer #keyboard div.keyboard_enter.keyboard_key.active {
+    background-color: rgba(var(--color_r), var(--color_g), var(--color_b), 1);
+}
+/* Both halves get an "ENTER" label; the bottom half's copy is drawn exactly
+   at the seam, so hide it — the top half's label (moved back up to sit inside
+   the cap) is the only one shown. */
+#keyboard_layer #keyboard div.keyboard_row#row_2 > div.keyboard_enter h1 {
+    display: none;
+}
+/* While the key is pressed (or in the 100ms blink after release), the label
+   must not show: it sits across the seam and reads as a stray horizontal line
+   through the middle of the highlight. Only the idle state shows it. */
+#keyboard_layer #keyboard div.keyboard_enter.keyboard_key.active h1,
+#keyboard_layer #keyboard div.keyboard_enter.keyboard_key.blink h1 {
+    opacity: 0;
 }
 
 /* With the keyboard on, the DATA content compresses into a top strip above

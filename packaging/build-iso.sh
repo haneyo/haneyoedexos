@@ -174,6 +174,11 @@ fi
 sudo mkdir -p "$WORK/rootfs/opt/edex"
 sudo cp "$EDEX_APPIMAGE" "$WORK/rootfs/opt/edex/eDEX-UI.AppImage"
 sudo chmod 755 "$WORK/rootfs/opt/edex/eDEX-UI.AppImage"
+# Never ship a pre-created /home: a leftover directory from the build host (e.g.
+# /home/runner on a GitHub Actions runner) would leak into the squashfs, get
+# copied to every target disk, and then be mistaken for the real user by naive
+# `ls /home` detection. The installed user is created at install time.
+sudo rm -rf "$WORK/rootfs/home"/* 2>/dev/null || true
 for m in /proc /sys /dev; do sudo umount "$WORK/rootfs$m" 2>/dev/null || true; done
 sudo rm -f "$SQUASHFS"
 df -h "$WORK" | tail -1
@@ -195,18 +200,25 @@ cp "$REPO_DIR/packaging/install/install-edex.sh"   "$EXTRACT/nocloud/install-ede
 
 echo "[edex] enabling autoinstall on the kernel command line"
 # Append  autoinstall ds=nocloud\;s=/cdrom/nocloud/  just before the '---'
-# separator on every /casper/vmlinuz line of the GRUB configs. console=ttyS0 is
-# added too so the installer's kernel output reaches the serial port — needed
-# for headless installs and for the CI QEMU boot smoke test.
+# separator on every /casper/vmlinuz line of the GRUB configs. These extra
+# params were worked out on real hardware (ThinkPad E580): 8250.nr_uarts=0 skips
+# the serial-port probe that stalls boot, systemd.unit=multi-user.target boots
+# the installer straight to a TTY (no GUI needed, and no lightdm hang), and
+# pci=noaer silences the "AER: Corrected error" flood.
 for cfg in boot/grub/grub.cfg boot/grub/loopback.cfg; do
     if [[ -f "$EXTRACT/$cfg" ]]; then
-        sed -i '/casper\/vmlinuz/ s/ ---/ autoinstall ds=nocloud\\;s=\/cdrom\/nocloud\/ console=ttyS0,115200n8 ---/' "$EXTRACT/$cfg"
+        sed -i '/casper\/vmlinuz/ s/ ---/ autoinstall ds=nocloud\\;s=\/cdrom\/nocloud\/ 8250.nr_uarts=0 systemd.unit=multi-user.target pci=noaer ---/' "$EXTRACT/$cfg"
     fi
 done
 grep -q "autoinstall" "$EXTRACT/boot/grub/grub.cfg" || { echo "ERROR: autoinstall not injected into grub.cfg"; exit 1; }
 
 echo "[edex] regenerating md5sum.txt"
-( cd "$EXTRACT" && find . -type f -print0 | xargs -0 md5sum > md5sum.txt )
+# boot.catalog and the El-Torito boot image live under [BOOT]/ and are rewritten
+# by xorriso at ISO build time — their checksums computed here would be stale on
+# the finished disc, so exclude them by name.
+( cd "$EXTRACT" && find . -type f \
+    ! -name boot.catalog ! -name eltorito.img \
+    -print0 | xargs -0 md5sum > md5sum.txt )
 
 echo "[edex] rebuilding bootable ISO"
 # MBR boot code template comes from the stock ISO itself (GRUB2 hybrid layout).

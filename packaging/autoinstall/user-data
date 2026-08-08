@@ -19,6 +19,18 @@ autoinstall:
     - network
     - storage
     - identity
+  # Defaults for the interactive identity step. Because identity is interactive,
+  # subiquity PRE-FILLS this screen and the installer's answer overrides these —
+  # but if the interactive answer is ever lost (e.g. the installer process was
+  # restarted after a crash), these defaults guarantee a login user still exists
+  # in /etc/passwd. install-edex.sh otherwise self-heals if none is found.
+  # NOTE: "edex" is the documented default password for the kiosk user (the
+  # machine is autologin + passwordless sudo; the real security boundary is the
+  # lock PIN set by the first-boot wizard). Change it by regenerating the hash.
+  identity:
+    hostname: edex-os
+    username: edex
+    password: "$6$edexsalt$23fUeSTeDjOCjbsHEVnUxLtCq5kfafUO9xqfFe8ZvfPqBJGwsOXt27x7ajmLFQo.RrjCZEUU47o4I4Yz/u.p.0"
   apt:
     fallback: offline-install
   late-commands:

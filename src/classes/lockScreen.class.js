@@ -4,7 +4,8 @@
 //              stays interactive for power options). Entering the passcode is
 //              the only way back.
 //   "matrix" → the original fullscreen matrix-rain canvas + passcode panel.
-//              Unlocking plays the eDEX startup animation (replayBoot).
+//              Unlocking plays the CRT-off animation + "Welcome back" greeting
+//              (welcomeBack) and only then reveals the real UI (#80).
 //
 // Entry points: the gear menu's 锁屏 button, Ctrl+Shift+O, or idle when
 // settings.lockOnIdle is on.
@@ -20,6 +21,13 @@ class LockScreen {
         this._drops = [];
         this._cols = 0;
         this._matrixTimer = null;
+        // which lock UI is up ("code" | "matrix"); gates the idle-timeout path
+        this._mode = "code";
+        // while true, passcode input is dropped — during the box decrypt-in and
+        // during any lock→screensaver / lock→greeting transition
+        this._boxAnimating = false;
+        // 30s-idle timeout back to the screensaver (lockIdleTimeout, default 30)
+        this._idleTimer = null;
     }
 
     // Locking hides (not destroys) every open window — settings editor, WiFi,
@@ -33,10 +41,10 @@ class LockScreen {
         Object.keys(window.modals || {}).forEach(id => {
             const el = document.getElementById("modal_" + id);
             if (!el) return;
-            // The CLOCK & POWER menu is transient — locking from it (its Lock
-            // Screen button) must not bring it back on unlock. Hide it like
+            // The POWER menu is transient — locking from it (its Lock Screen
+            // button) must not bring it back on unlock. Hide it like
             // everything else, but leave it out of the restore list.
-            if (window.modals[id] && window.modals[id].title === "CLOCK & POWER") {
+            if (window.modals[id] && window.modals[id].title === "POWER") {
                 el.style.display = "none";
                 return;
             }
@@ -64,7 +72,7 @@ class LockScreen {
         }
         Object.keys(window.modals || {}).forEach(id => {
             const m = window.modals[id];
-            if (!m || m.title !== "CLOCK & POWER") return;
+            if (!m || m.title !== "POWER") return;
             const el = document.getElementById("modal_" + id);
             if (el) el.remove();
             if (typeof m.onclose === "function") { try { m.onclose(); } catch (e) {} }
@@ -79,13 +87,32 @@ class LockScreen {
             if (window.cover && !window.cover.isActive()) window.cover.set(true);
             return;
         }
+        // Boot-phase guard: before the real UI exists (initUI finished) the only
+        // legitimate lock is the boot lock, created by bootLockThenRun → bootShow.
+        // Every other pre-uiReady request — idle dismiss, resumeFromSuspend on
+        // visibilitychange, a lock-screen IPC during startup — would either build
+        // a code lock against a not-yet-created terminal (a broken/empty box) or
+        // re-lock during the welcome / UI-build right after the boot unlock.
+        // Ignore them all: the boot sequence owns the screen until _uiReady.
+        if (!window._uiReady) {
+            return;
+        }
         // Remember where the user was: the tab they were on and every window
         // they had open. The lock itself runs on tab 0 and hides those windows,
         // and unlock must put everything back exactly as it was.
         this._prevTerm = window.currentTerm;
         this._snapshotWindows();
+        // The app-monitor dropdowns are body-level menus, not modals — hide
+        // them too so no app list lingers over the lock (#22).
+        [window.appmonitorA, window.appmonitorB].forEach(p => {
+            if (p && typeof p.closeMenu === "function") { try { p.closeMenu(); } catch (e) {} }
+        });
+        // The lock hides the cursor outright; moving the mouse shows it (see
+        // cursorTrap in _renderer.js).
+        if (window.cursorTrap) window.cursorTrap.hide();
         this.active = true;
         const style = window.settings.screensaverStyle || "code";
+        this._mode = style;
         if (style === "matrix") this._showFullscreen();
         else this._showTerminalLock();
         // While locked, eDEX wears its cover identity (fake tabs / filesystem /
@@ -93,9 +120,38 @@ class LockScreen {
         if (window.cover) window.cover.set(true);
     }
 
+    // Lock with the screensaver-first flow: the screensaver animation plays
+    // until any mouse/key activity (bumpActivity) dismisses it into the real
+    // password lock. Used by the lock IPC and by resume-from-suspend; the boot
+    // lock and the power menu's Lock Screen keep their own flows.
+    engage() {
+        if (this.active) return;         // password UI already up
+        if (!window._uiReady) return;    // boot phase: the boot lock owns the screen
+        if (window.screensaver) {
+            window.screensaver.forceLockOnDismiss = true;
+            if (!window.screensaver.isActive()) window.screensaver.show();
+        } else {
+            this.show();
+        }
+    }
+
     hide() {
         if (!this.active) return;
+        this._teardownLock(true);
+    }
+
+    // Tear the lock UI down and release every raise the lock applied (clock,
+    // shell, DATA panel + keyboard, terminal pty hooks). `restoreWindows` is a
+    // REAL unlock: put the windows that were open before the lock back on
+    // screen, drop cover mode (which re-lists the real files), return to the
+    // pre-lock tab and focus the terminal. `false` is a timeout back to the
+    // screensaver: the lock yields the screen to the (re)started screensaver,
+    // so windows stay hidden, cover stays on, the cursor stays hidden and the
+    // pty is not asked for a fresh prompt — the screensaver re-owns the
+    // terminal and streams fresh content anyway (#88).
+    _teardownLock(restoreWindows) {
         this.active = false;
+        this._boxAnimating = false;
         clearInterval(this._timer);
         clearInterval(this._focusRet);
         clearInterval(this._matrixTimer);
@@ -103,11 +159,15 @@ class LockScreen {
         this._lockAnim = null;
         clearTimeout(this._shakeTimer);
         this._shakeTimer = null;
+        if (this._idleTimer) { clearInterval(this._idleTimer); this._idleTimer = null; }
+        if (window.cursorTrap && restoreWindows) window.cursorTrap.show();
         const clock = document.getElementById("mod_clock");
         if (clock) {
             clock.style.zIndex = "";
             clock.style.position = this._origClockPos || "";
         }
+        const title = document.getElementById("main_shell_title");
+        if (title) title.style.zIndex = this._origTitleZ || "";
         const shell = document.getElementById("main_shell");
         if (shell) {
             shell.style.zIndex = this._origShellZ || "";
@@ -133,8 +193,19 @@ class LockScreen {
             try {
                 if (this._origSend) this._term.socket.send = this._origSend;
                 if (this._term.term) {
+                    // un-hook the output interceptor first so the fresh prompt
+                    // (requested below) reaches the xterm normally
+                    if (this._origTermWrite) this._term.term.write = this._origTermWrite;
+                    this._suppressOutput = false;
                     this._term.term.reset();
                     this._term.term.write("\x1b[?25h");
+                }
+                // term.reset() wiped the shell's prompt off the screen and the
+                // idle shell will not redraw it on its own — ask the pty for a
+                // fresh prompt so the tab is not left blank after unlock (#62).
+                // On a timeout the screensaver re-owns the terminal instead.
+                if (restoreWindows && this._term.socket && this._term.socket.readyState === 1) {
+                    try { this._term.socket.send("\r"); } catch (e) {}
                 }
             } catch (e) {}
         }
@@ -143,26 +214,47 @@ class LockScreen {
         this._restoreKeyboard();
         const el = document.getElementById("lock_screen");
         if (el) el.remove();
-        const block = document.getElementById("lock_block");
-        if (block) block.remove();
         this._canvas = null; this._ctx = null;
-        // Put back every window that was open before the lock (settings editor,
-        // CLOCK & POWER, …) in its exact spot — the lock only hid them.
-        this._restoreWindows();
-        // Leave cover mode: restore the real tabs / filesystem / IP / procs.
-        if (window.cover) window.cover.set(false);
-        // Return to the tab the user was on before the lock. The lock ran on
-        // tab 0, so currentTerm differs whenever the user was elsewhere; leave
-        // it alone otherwise (matrix mode never switched tabs).
-        if (this._prevTerm != null && this._prevTerm !== window.currentTerm) {
-            try { if (window.focusShellTab) window.focusShellTab(this._prevTerm); } catch (e) {}
+        // Dark overlay: everything above has already been released (shell/panel
+        // z-indexes, terminal hooks, windows, cover), so this overlay now dims
+        // the REAL UI underneath. Fade it to transparent and only then remove it,
+        // so the lock→unlock (and the lock→screensaver idle timeout) brightening
+        // is gradual instead of a hard pop. Timing mirrors .lock_panel's
+        // lock_fade_out (0.42s) so the whole unlock feels like one motion.
+        const block = document.getElementById("lock_block");
+        if (block) {
+            block.classList.add("lock_block_fade_out");
+            clearTimeout(this._fadeTimer);
+            this._fadeTimer = setTimeout(() => {
+                this._fadeTimer = null;
+                if (block.isConnected) block.remove();
+            }, 430);
         }
-        this._prevTerm = null;
-        try { if (window.term && window.term[window.currentTerm]) window.term[window.currentTerm].term.focus(); } catch (e) {}
+        if (restoreWindows) {
+            // Put back every window that was open before the lock (settings
+            // editor, CLOCK & POWER, …) in its exact spot — the lock only hid them.
+            this._restoreWindows();
+            // Leave cover mode: restore the real tabs / filesystem / IP / procs.
+            if (window.cover) window.cover.set(false);
+            // Return to the tab the user was on before the lock. The lock ran
+            // on tab 0, so currentTerm differs whenever the user was elsewhere;
+            // leave it alone otherwise (matrix mode never switched tabs).
+            if (this._prevTerm != null && this._prevTerm !== window.currentTerm) {
+                try { if (window.focusShellTab) window.focusShellTab(this._prevTerm); } catch (e) {}
+            }
+            this._prevTerm = null;
+            try { if (window.term && window.term[window.currentTerm]) window.term[window.currentTerm].term.focus(); } catch (e) {}
+        }
     }
 
     // ---- code mode: the lock is drawn entirely by the real terminal ----
     _showTerminalLock() {
+        // If a previous lock is mid-fade-out, finish it now so there is exactly
+        // one overlay on screen — the new block fades in over the screensaver.
+        clearTimeout(this._fadeTimer);
+        this._fadeTimer = null;
+        const stale = document.getElementById("lock_block");
+        if (stale) stale.remove();
         const block = document.createElement("div");
         block.id = "lock_block";
         block.className = "lock_block";
@@ -175,6 +267,16 @@ class LockScreen {
             this._origClockPos = clock.style.position;
             clock.style.position = "relative";
             clock.style.zIndex = "3100";
+        }
+        // The TERMINAL / MAIN SHELL title bar floats above the shell frame (it
+        // lives outside #main_shell so the shell's clip-path cannot paint it
+        // away, #96). It is not inside the raised shell, so lift it above the
+        // blocking overlay while locked — exactly like the clock above — so it
+        // stays visible in the lock (and the code screensaver) view.
+        const title = document.getElementById("main_shell_title");
+        if (title) {
+            this._origTitleZ = title.style.zIndex;
+            title.style.zIndex = "3100";
         }
         // The terminal is the lock screen — raise it above the blocking overlay
         // so the command-line UI stays fully visible (only the side columns are
@@ -203,6 +305,20 @@ class LockScreen {
         const t = window.term[0];
         this._term = t;
         this._codeBuf = "";
+        // The shell keeps running underneath the fake lock UI. On ws connect —
+        // and again when hide() asks the pty for a fresh prompt — the shell
+        // re-emits its PS1, and that output lands inside the box if it arrives
+        // mid-draw. Intercept term.write so real output is dropped while locked;
+        // the box itself draws through the saved raw writer (`_w`) instead.
+        if (t && t.term) {
+            this._origTermWrite = t.term.write;
+            this._rawWrite = t.term.write.bind(t.term);
+            t.term.write = data => {
+                if (this.active && this._suppressOutput) return;
+                this._rawWrite(data);
+            };
+        }
+        this._suppressOutput = true;
         if (t) {
             try {
                 // Intercept every keystroke that would reach the shell — physical
@@ -210,10 +326,11 @@ class LockScreen {
                 // (term.write → socket.send) both land here while locked.
                 this._origSend = t.socket.send.bind(t.socket);
                 t.socket.send = data => this._termKey(data);
-                this._drawLockBox();
-                if (this._lockAnim) clearInterval(this._lockAnim);
-                this._lockAnim = setInterval(() => this._lockAnimTick(), 250);
-                t.term.focus();
+                // The box decrypts in over the cleared terminal (the fake code
+                // scrolled away accelerated); input is dropped until it has fully
+                // materialised, then _startLockAnim hands over focus (#88).
+                this._boxAnimating = true;
+                this._drawLockBox(true);
             } catch (e) {}
         }
         // Force the on-screen keyboard so the password can be typed on a touch
@@ -258,17 +375,28 @@ class LockScreen {
         this._focusRet = setInterval(() => {
             if (this.active && this._term && this._term.term) this._term.term.focus();
         }, 500);
+        // 30 s with no passcode input and no mouse/keyboard activity hands the
+        // screen back to the screensaver (code box dissolves, then the fake
+        // code resumes) (#88).
+        this._armIdleTimeout();
     }
 
     // Any input typed during the lock (from either input path) lands here.
     _termKey(data) {
-        if (!this.active) return;
+        if (!this.active || this._boxAnimating) return;
         const s = String(data == null ? "" : data);
         for (const ch of s) {
             if (ch === "\r" || ch === "\n") { this._codeSubmit(); return; }
             else if (ch === "\x7f" || ch === "\b") { this._codeBuf = this._codeBuf.slice(0, -1); this._codeRedraw(); }
             else if (ch >= " " && ch !== "\x1b") { this._codeBuf += ch; this._codeRedraw(); }
         }
+    }
+
+    // Draw through the raw xterm writer. Real shell output is dropped by the
+    // write interceptor while locked, so the box itself must bypass it — every
+    // term.write in the drawing methods below goes through here.
+    _w(data) {
+        if (this._rawWrite) this._rawWrite(data);
     }
 
     // Build the 22 lock-box rows. `redFlag` paints the whole outer frame red
@@ -339,8 +467,11 @@ class LockScreen {
         ];
     }
 
-    // Draw the sci-fi lock banner centered in the terminal window.
-    _drawLockBox() {
+    // Draw the sci-fi lock banner centered in the terminal window. `animateIn`
+    // decrypts the box from noise one random cell at a time instead of drawing
+    // it in one shot — the reverse of the garble-out that plays when the lock
+    // times out (#88).
+    _drawLockBox(animateIn) {
         const term = this._term && this._term.term;
         if (!term) return;
         const cols = term.cols || 80, rows = term.rows || 24;
@@ -353,8 +484,6 @@ class LockScreen {
         this._lockLeftPad = leftPad;
         this._boxTop = topPad + 1;   // 1-based row of the box's top border
         term.reset();
-        for (let i = 0; i < topPad; i++) term.write("\r\n");
-        L.forEach(l => term.write(" ".repeat(leftPad) + l + "\r\n"));
         // passcode input sits on the "    PASSCODE:  " line (0-based 16)
         this._codeRow = topPad + 17;   // 1-based row
         this._codeCol = leftPad + 17;  // 1-based col after "    PASSCODE:  "
@@ -364,12 +493,163 @@ class LockScreen {
         // ASCII padlock lines (L indices 6..10 → 1-based rows), swept by the
         // scan animation in _padlockTick.
         this._padRows = [7, 8, 9, 10, 11].map(n => topPad + n);
+        // Hide the xterm cursor up front: every in-place line write leaves it
+        // sitting right after the box's right border, where it would blink.
+        this._w("\x1b[?25l");
+        if (animateIn) { this._garbleBoxIn(); return; }
+        for (let i = 0; i < topPad; i++) this._w("\r\n");
+        L.forEach(l => this._w(" ".repeat(leftPad) + l + "\r\n"));
         // draw the passcode input through the same in-place line writer so the
         // framed entry (and its right border) matches what typing redraws
         this._codeRedraw();
-        // Hide the xterm cursor: every in-place line write leaves it sitting
-        // right after the box's right border, where it would blink visibly.
-        term.write("\x1b[?25l");
+        // The code screensaver streams into this same terminal right up until
+        // the lock draws; its last frame can leave stale pixels that xterm's
+        // diff renderer skips on refresh (cache == buffer, canvas already stale).
+        // Clear the renderer's cell cache and repaint everything from the buffer
+        // so the box is guaranteed to sit on a clean canvas (#82).
+        this._forceCleanCanvas();
+    }
+
+    // Force xterm's canvas layers back in sync with the buffer. The diff
+    // renderer keeps a per-cell cache and only repaints cells whose buffer
+    // content changed since the last draw — so a stale glyph (canvas pixel
+    // where the buffer is now blank) survives term.refresh(). Clearing the
+    // renderer's cache makes every layer forget what it drew, and the follow-up
+    // refresh repaints the whole grid from the buffer, wiping the remnant.
+    // Cheap here: the terminal is one 154×31 grid.
+    _forceCleanCanvas() {
+        const term = this._term && this._term.term;
+        if (!term) return;
+        try {
+            const rs = term._core && term._core._renderService;
+            if (rs && typeof rs.clear === "function") rs.clear();
+            if (typeof term.refresh === "function") term.refresh(0, term.rows - 1);
+        } catch (e) {}
+    }
+
+    // Kick the handshake / padlock animation off and hand the terminal focus to
+    // the passcode box — called once the decrypt-in animation has finished so
+    // the animation lines never fight the reveal.
+    _startLockAnim() {
+        this._boxAnimating = false;
+        if (this._lockAnim) clearInterval(this._lockAnim);
+        this._lockAnim = setInterval(() => this._lockAnimTick(), 250);
+        const t = this._term && this._term.term;
+        if (t) { try { t.focus(); } catch (e) {} }
+    }
+
+    // Decrypt the lock box in from noise, one random cell at a time (#88). The
+    // screensaver's fake code scrolled away (accelerated); the box area starts
+    // as a dim blob of random glyphs and the real box "materialises" over it as
+    // its cells reveal in a shuffled order — the reverse of the garble-out that
+    // plays when the lock times out. Revealed cells carry the SGR that produced
+    // them, so the box keeps its colours while it assembles.
+    _garbleBoxIn() {
+        const frame = this;
+        const term = this._term && this._term.term;
+        const W = this._lockW || 54;
+        const left = this._lockLeftPad || 0;
+        const top = this._boxTop || 1;
+        const rows = this._buildBoxRows(false);
+        const H = rows.length;
+        const finish = () => { this._forceCleanCanvas(); this._startLockAnim(); };
+        if (!term) { finish(); return; }
+        try {
+            // parse each row into per-cell { ch, sgr } so revealed cells keep colour
+            const parse = s => {
+                const cells = [];
+                let sgr = "";
+                const re = /\x1b\[([0-9;]*)m/g;
+                let last = 0, m;
+                while ((m = re.exec(s))) {
+                    for (const ch of s.slice(last, m.index)) cells.push({ ch, sgr });
+                    sgr = "\x1b[" + m[1] + "m";
+                    last = m.index + m[0].length;
+                }
+                for (const ch of s.slice(last)) cells.push({ ch, sgr });
+                return cells;
+            };
+            const grid = rows.map(parse);
+            const glyphs = "▓▒░#%&+=<>*$@";
+            // shuffled order for every box cell — reused by both phases
+            const cells = [];
+            for (let i = 0; i < H; i++) for (let j = 0; j < W; j++) cells.push([i, j]);
+            for (let i = cells.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1)); [cells[i], cells[k]] = [cells[k], cells[i]]; }
+            // Phase 1 — the static POPULATES gradually instead of painting the
+            // whole band at once: it starts with a few dim glyphs and the per-tick
+            // batch grows, so the box "fills with noise" from few to many (#95).
+            let noiseIdx = 0;
+            let batch = 3; // sparse start: 3 glyphs on the first tick
+            const noiseTick = () => {
+                if (!frame.active) return;
+                const end = Math.min(noiseIdx + batch, cells.length);
+                for (; noiseIdx < end; noiseIdx++) {
+                    const [i, j] = cells[noiseIdx];
+                    frame._w(`\x1b[${top + i};${left + 1 + j}H` + "\x1b[2m" + glyphs[Math.floor(Math.random() * glyphs.length)] + "\x1b[0m");
+                }
+                batch = Math.min(batch + 3, 110); // density ramps up toward full static
+                if (noiseIdx < cells.length) setTimeout(noiseTick, 28);
+                else reveal();
+            };
+            // Phase 2 — the real box cells "materialise" over the noise, one
+            // random cell at a time, keeping their colours (the reverse of the
+            // garble-out that plays when the lock times out / is unlocked).
+            let idx = 0;
+            const reveal = () => {
+                if (!frame.active) return;
+                const end = Math.min(idx + 40, cells.length);
+                for (; idx < end; idx++) {
+                    const [i, j] = cells[idx];
+                    const c = (grid[i] && grid[i][j]) || { ch: " ", sgr: "" };
+                    frame._w(`\x1b[${top + i};${left + 1 + j}H` + c.sgr + c.ch + "\x1b[0m");
+                }
+                if (idx < cells.length) setTimeout(reveal, 28);
+                else finish();
+            };
+            noiseTick();
+        } catch (e) { finish(); }
+    }
+
+    // Scramble the whole lock box away one random cell at a time (#88). First
+    // every cell turns to a random glyph (the box "dissolves"), then the glyphs
+    // blank out. cb runs once the box band is empty. Shared by the
+    // correct-passcode unlock (#87) and by the 30s-idle timeout back to the
+    // screensaver — the "characters randomly disappear one by one" effect.
+    _garbleBoxOut(cb) {
+        const term = this._term && this._term.term;
+        const W = this._lockW || 54;
+        const left = this._lockLeftPad || 0;
+        const top = this._boxTop || 1;
+        const H = this._buildBoxRows(false).length;
+        if (!term) { if (cb) cb(); return; }
+        if (this._lockAnim) { clearInterval(this._lockAnim); this._lockAnim = null; }
+        const glyphs = "▓▒░@#$%&*+=?<>0123456789ABCDEF";
+        const cells = [];
+        for (let i = 0; i < H; i++) for (let j = 0; j < W; j++) cells.push([i, j]);
+        for (let i = cells.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1)); [cells[i], cells[k]] = [cells[k], cells[i]]; }
+        let idx = 0;
+        const frame = this;
+        const garble = () => {
+            if (!frame.active) { if (cb) cb(); return; }
+            const end = Math.min(idx + 45, cells.length);
+            for (; idx < end; idx++) {
+                const [i, j] = cells[idx];
+                frame._w(`\x1b[${top + i};${left + 1 + j}H` + "\x1b[2m" + glyphs[Math.floor(Math.random() * glyphs.length)] + "\x1b[0m");
+            }
+            if (idx < cells.length) setTimeout(garble, 28);
+            else { idx = 0; blank(); }
+        };
+        const blank = () => {
+            if (!frame.active) { if (cb) cb(); return; }
+            const end = Math.min(idx + 45, cells.length);
+            for (; idx < end; idx++) {
+                const [i, j] = cells[idx];
+                frame._w(`\x1b[${top + i};${left + 1 + j}H` + " ");
+            }
+            if (idx < cells.length) setTimeout(blank, 22);
+            else { frame._forceCleanCanvas(); if (cb) cb(); }
+        };
+        setTimeout(garble, 120);
     }
 
     // Rebuild the whole lock box in place (no reset), used to flash the outer
@@ -386,9 +666,12 @@ class LockScreen {
         const rows = this._buildBoxRows(red, passMsg);
         for (let i = 0; i < rows.length; i++) {
             const r = top + i;
-            term.write(`\x1b[${r};${clearCol}H` + " ".repeat(W + 4));
-            term.write(`\x1b[${r};${col}H` + rows[i]);
+            this._w(`\x1b[${r};${clearCol}H` + " ".repeat(W + 4));
+            this._w(`\x1b[${r};${col}H` + rows[i]);
         }
+        // Same cache/buffer resync as _drawLockBox, so a redraw never leaves a
+        // half-erased cell behind either (#82).
+        this._forceCleanCanvas();
     }
 
     // Rewrite one box line in place, keeping both borders intact. (The previous
@@ -403,8 +686,8 @@ class LockScreen {
             s = String(s == null ? "" : s);
             return s + " ".repeat(Math.max(0, W - 2 - vis(s).length));
         };
-        term.write(`\x1b[${row};${leftPad + 1}H`);
-        term.write("║" + pad(content) + "║");
+        this._w(`\x1b[${row};${leftPad + 1}H`);
+        this._w("║" + pad(content) + "║");
     }
 
     // Random hex fragment for the animated "handshake" line.
@@ -516,16 +799,91 @@ class LockScreen {
     }
 
     _codeSubmit() {
+        // Unlock in progress — stop the 30s idle timeout so it can't fire
+        // mid-garble and race the teardown.
+        if (this._idleTimer) { clearInterval(this._idleTimer); this._idleTimer = null; }
         const code = String(window.settings.lockCode || "0000");
         const term = this._term && this._term.term;
         if (this._codeBuf === code) {
             this._codeBuf = "";
             if (window.audioManager) window.audioManager.granted.play();
             if (term) this._redrawBox(0, false, "ACCESS GRANTED");
-            setTimeout(() => this.hide(), 500);
+            // Grant animation: the passcode input turns to noise, then the whole
+            // box dissolves before the lock is lifted (#87).
+            this._garbleUnlock();
         } else {
             this._codeDenied();
         }
+    }
+
+    // Correct passcode in code mode: briefly hold "ACCESS GRANTED", then the
+    // lock box's characters scramble away one random cell at a time before
+    // hide() drops the lock — the same dissolve the 30s-idle timeout uses, so a
+    // successful unlock and a timeout both read as "characters randomly
+    // disappear" (#87 / #88).
+    _garbleUnlock() {
+        const frame = this;
+        const term = this._term && this._term.term;
+        if (!term || !this.active) { this.hide(); return; }
+        // Drop passcode input for the whole grant animation (#87).
+        this._boxAnimating = true;
+        // Hold "ACCESS GRANTED" ~350 ms, then let the box chars scramble out.
+        setTimeout(() => {
+            frame._garbleBoxOut(() => {
+                frame._w(`\x1b[${frame._boxTop || 1};1H` + " ".repeat((frame._lockW || 54) + 12));
+                setTimeout(() => { if (frame.active) frame.hide(); }, 120);
+            });
+        }, 350);
+    }
+
+    // 30s idle timeout (#88): with no passcode typed and no mouse/keyboard
+    // activity while the lock is up, hand the screen back to the screensaver —
+    // code mode dissolves the box then resumes the fake code, matrix mode fades
+    // the passcode panel and lets the (adopted) rain keep falling. The length
+    // comes from settings.lockIdleTimeout (seconds), default 30.
+    _armIdleTimeout() {
+        if (this._idleTimer) clearInterval(this._idleTimer);
+        this._idleTimer = setInterval(() => {
+            if (!this.active) return;
+            const idleMs = (Number(window.settings.lockIdleTimeout) || 30) * 1000;
+            const last = (typeof window._lastActivityTime === "function") ? window._lastActivityTime() : Date.now();
+            if (Date.now() - last >= idleMs) {
+                clearInterval(this._idleTimer);
+                this._idleTimer = null;
+                if (this._mode === "matrix") this._timeoutToScreensaverMatrix();
+                else this._timeoutToScreensaverCode();
+            }
+        }, 1000);
+    }
+
+    // Idle timeout, code mode: the box chars scramble away (same dissolve as a
+    // successful unlock), then the fake code resumes streaming. Input is dropped
+    // for the whole transition.
+    _timeoutToScreensaverCode() {
+        const frame = this;
+        this._boxAnimating = true;
+        this._garbleBoxOut(() => {
+            frame._teardownLock(false);
+            if (window.screensaver && typeof window.screensaver.resumeCode === "function") {
+                window.screensaver.resumeCode();
+            }
+        });
+    }
+
+    // Idle timeout, matrix mode: the passcode panel fades out, then the rain the
+    // lock adopted (or created) is handed back to the screensaver so the
+    // waterfall keeps falling where it was, and the lock overlay drops.
+    _timeoutToScreensaverMatrix() {
+        const frame = this;
+        this._boxAnimating = true;
+        const panel = document.querySelector("#lock_screen .lock_panel");
+        if (panel) panel.classList.add("lock_fade_out");
+        setTimeout(() => {
+            if (window.screensaver && typeof window.screensaver.returnMatrixRain === "function" && frame._canvas) {
+                window.screensaver.returnMatrixRain(frame._canvas, frame._drops);
+            }
+            frame._teardownLock(false);
+        }, 430);
     }
 
     // The on-screen keyboard was forced for the lock; put it back to the user's
@@ -547,12 +905,11 @@ class LockScreen {
         el.id = "lock_screen";
         const digits = this._shuffled();
         el.innerHTML = `
-            <canvas id="lock_canvas"></canvas>
             <div class="lock_panel">
                 <div class="lock_title">SYSTEM LOCKED</div>
                 <div class="lock_sub">ENTER PIN TO RESUME</div>
                 <input id="lock_pass" type="password" inputmode="numeric" pattern="[0-9]*"
-                       autocomplete="off" maxlength="16" placeholder="····">
+                       autocomplete="off" maxlength="16">
                 <div class="lock_keypad">
                     ${digits.slice(0, 9).map(d => `<button class="lock_key" data-d="${d}" onclick="window.lockScreen.keypadPress(${d})">${d}</button>`).join("")}
                     <button class="lock_key lock_key_fn" onclick="window.lockScreen.keypadPress(-1)">⌫</button>
@@ -563,11 +920,83 @@ class LockScreen {
                 <div class="lock_err" id="lock_err"></div>
             </div>`;
         document.body.appendChild(el);
-        this._canvas = el.querySelector("#lock_canvas");
-        this._ctx = this._canvas.getContext("2d");
-        this._resize();
-        window.addEventListener("resize", this._resizeBound = () => this._resize());
-        this._startMatrix();
+        // When the lock is raised straight from the running Matrix screensaver,
+        // adopt its canvas + drop state so the waterfall keeps falling where it
+        // was instead of restarting fresh (#86). The screensaver's draw timer
+        // keeps running; this._matrixTimer holds it so hide() can stop it.
+        const adopted = window.screensaver && typeof window.screensaver.adoptMatrixRain === "function"
+            ? window.screensaver.adoptMatrixRain() : null;
+        if (adopted) {
+            this._canvas = adopted.canvas;
+            this._ctx = adopted.ctx;
+            this._drops = adopted.drops;
+            this._cols = adopted.cols;
+            this._grid = adopted.GRID;
+            this._matrixTimer = adopted.mTimer;
+            // The canvas was appended to <body> by the screensaver (position:
+            // fixed, z 9999). Move it inside the lock so it sits above the
+            // lock's own dot-grid background but under the passcode panel.
+            el.insertBefore(adopted.canvas, el.firstChild);
+            adopted.canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;z-index:1;background:#05080d;";
+        } else {
+            const cv = document.createElement("canvas");
+            cv.id = "lock_canvas";
+            el.insertBefore(cv, el.firstChild);
+            this._canvas = cv;
+            this._ctx = cv.getContext("2d");
+            this._resize();
+            window.addEventListener("resize", this._resizeBound = () => this._resize());
+            this._startMatrix();
+        }
+        const input = el.querySelector("#lock_pass");
+        input.focus();
+        input.onkeydown = e => { if (e.key === "Enter") this.unlock(); };
+        this._focusRet = setInterval(() => {
+            if (this.active && document.activeElement !== input) input.focus();
+        }, 500);
+        // 30s idle timeout: if no passcode is typed and the computer is left
+        // untouched, hand back to the screensaver (#88). Only for the lock raised
+        // from the screensaver — the boot lock has no screensaver to return to.
+        this._armIdleTimeout();
+    }
+
+    // ---- boot-time lock: always Matrix-style, never touches the terminal ----
+    // At boot the desktop must not show its real face before the passcode is
+    // entered, so the boot lock is the Matrix-style fullscreen overlay REGARDLESS
+    // of the user's screensaverStyle setting (#60). Drawing the code-mode box
+    // into the real terminal let the shell's real prompt bleed in below it, so
+    // the boot lock never goes near the terminal — it is an opaque overlay, and
+    // the (fake) UI simply lives underneath. The matrix rain is omitted: just
+    // the passcode panel on a dark screen. Because the rain timer never starts,
+    // this._matrixTimer stays null, which makes unlock() skip the replay-boot
+    // animation (the boot animation has already played by the time this lock
+    // appears).
+    bootShow() {
+        if (this.active) return;
+        if (window.cursorTrap) window.cursorTrap.hide();
+        this.active = true;
+        this._buildBootLock();
+        if (window.cover) window.cover.set(true);
+    }
+
+    _buildBootLock() {
+        const el = document.createElement("div");
+        el.id = "lock_screen";
+        const digits = this._shuffled();
+        el.innerHTML = `
+            <div class="lock_panel">
+                <div class="lock_title">SYSTEM LOCKED</div>
+                <input id="lock_pass" type="password" inputmode="numeric" pattern="[0-9]*"
+                       autocomplete="off" maxlength="16">
+                <div class="lock_keypad">
+                    ${digits.slice(0, 9).map(d => `<button class="lock_key" data-d="${d}" onclick="window.lockScreen.keypadPress(${d})">${d}</button>`).join("")}
+                    <button class="lock_key lock_key_fn" onclick="window.lockScreen.keypadPress(-1)">⌫</button>
+                    <button class="lock_key" data-d="${digits[9]}" onclick="window.lockScreen.keypadPress(${digits[9]})">${digits[9]}</button>
+                    <button class="lock_key lock_key_fn" onclick="window.lockScreen.unlock()">↵</button>
+                </div>
+                <div class="lock_err" id="lock_err"></div>
+            </div>`;
+        document.body.appendChild(el);
         const input = el.querySelector("#lock_pass");
         input.focus();
         input.onkeydown = e => { if (e.key === "Enter") this.unlock(); };
@@ -577,18 +1006,49 @@ class LockScreen {
     }
 
     unlock() {
+        // Drop any input while the box is mid-transition (garbling in/out,
+        // welcome-back greeting) — unlocking then would double-run hide().
+        if (this._boxAnimating) return;
         const input = document.getElementById("lock_pass");
         if (!input) return;
         const code = String(window.settings.lockCode || "0000");
         const err = document.getElementById("lock_err");
         if (input.value === code) {
             if (window.audioManager) window.audioManager.granted.play();
+            // No longer need the 30s idle timeout once the passcode matches.
+            if (this._idleTimer) { clearInterval(this._idleTimer); this._idleTimer = null; }
+            // CRT-TV power-off after the boot/matrix lock clears. It is a
+            // parallel overlay — replayBoot()/initUI() below keep running at
+            // their normal pace underneath, so the password→welcome-back time
+            // is unchanged. The code-mode lock (_codeSubmit) never reaches here.
+            if (typeof window.playCrtShutdown === "function") window.playCrtShutdown();
             const matrix = this._matrixTimer !== null;
-            this.hide();
-            // matrix mode plays the eDEX startup animation after unlock (unless
-            // the user disabled "play boot animation" in settings).
-            if (matrix && window.settings.bootAnimAfterUnlock !== false && typeof window.replayBoot === "function") {
-                setTimeout(() => window.replayBoot(), 300);
+            if (matrix && window.settings.bootAnimAfterUnlock !== false
+                && typeof window.welcomeBack === "function") {
+                try {
+                    // The greeting is shown over a dark overlay; only once it has
+                    // faded does the real UI start LOADING (its entrance
+                    // animation) — the same order as a fresh boot (#81). The lock
+                    // itself (and its cover→real-file listing) is also deferred
+                    // until the greeting is gone, so the file-browser reload
+                    // sound only plays AFTER welcome-back has appeared AND faded
+                    // (#90).
+                    this._boxAnimating = true;
+                    window.welcomeBack(() => {
+                        this.hide();
+                        if (typeof window.reRevealUI === "function") window.reRevealUI();
+                    });
+                } catch (e) { this.hide(); }
+            } else {
+                this.hide();
+            }
+            // Boot-time lock unlock (queued via bootLockThenRun): the desktop
+            // build is deferred until now — run the continuation (initUI), which
+            // plays the welcome greeting and then assembles the real desktop.
+            if (this._onUnlocked) {
+                const cb = this._onUnlocked;
+                this._onUnlocked = null;
+                cb();
             }
         } else {
             input.value = "";
@@ -603,6 +1063,8 @@ class LockScreen {
 
     // Numeric keypad: press a digit (d>=0) appends it, d=-1 backspaces.
     keypadPress(d) {
+        // Drop keypad taps while the box is mid-transition (#88).
+        if (this._boxAnimating) return;
         const input = document.getElementById("lock_pass");
         if (!input || !this.active) return;
         if (d === -1) {

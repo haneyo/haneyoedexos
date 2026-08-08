@@ -283,6 +283,59 @@ div.modal_popup .settings_info_btn:hover { background: rgba(var(--color_r), var(
     color: rgb(var(--color_r), var(--color_g), var(--color_b));
 }
 
+/* Embedded performance controller: 省电/平衡/性能 governor buttons */
+.settings_power_modes {
+    display: flex;
+    gap: 0.5vh;
+}
+.settings_power_modes button {
+    flex: 1 1 0;
+    padding: 0.5vh 0;
+    border: 0.15vh solid rgb(var(--color_r), var(--color_g), var(--color_b));
+    background: transparent;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: inherit;
+    font-size: 1.6vh; /* match the UI text, not the old smaller control font */
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.settings_power_modes button:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.18);
+}
+.settings_power_modes button.active {
+    background: rgb(var(--color_r), var(--color_g), var(--color_b));
+    color: #05080d;
+}
+#settingsPowerReadout {
+    font-family: var(--font_mono), monospace;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+}
+
+/* Brightness / volume sliders (theme-styled range inputs) */
+#settingsEditor input[type="range"] {
+    width: 100%;
+    height: 2vh;
+    margin: 0;
+    background: transparent;
+    -webkit-appearance: none;
+    appearance: none;
+    cursor: pointer;
+}
+#settingsEditor input[type="range"]::-webkit-slider-runnable-track {
+    height: 0.5vh;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
+}
+#settingsEditor input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 1.8vh;
+    height: 1.8vh;
+    margin-top: -0.65vh;
+    border-radius: 50%;
+    background: rgb(var(--color_r), var(--color_g), var(--color_b));
+    box-shadow: 0 0 1vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.7);
+}
+
 div.modal_popup table:not(#settingsEditor) td:first-child {
     text-align: center;
 }
@@ -292,7 +345,7 @@ div.modal_popup textarea {
     color: rgb(var(--color_r), var(--color_g), var(--color_b));
     border: 0.15vh solid rgb(var(--color_r), var(--color_g), var(--color_b));
     padding: 0.4vh 0.2vh;
-    font-size: 1.4vh;
+    font-size: 1.6vh; /* match the UI text, not the old smaller control font */
     resize: none;
 }
 
@@ -307,7 +360,7 @@ div.modal_popup td input {
     color: rgb(var(--color_r), var(--color_g), var(--color_b));
     border: 0.15vh solid rgb(var(--color_r), var(--color_g), var(--color_b));
     padding: 0.4vh 0.2vh;
-    font-size: 1.4vh;
+    font-size: 1.6vh; /* match the UI text, not the old smaller control font */
     line-height: 1.4; /* match the custom dropdown buttons */
     box-sizing: border-box;
 }
@@ -334,7 +387,7 @@ div.modal_popup td select {
     color: rgb(var(--color_r), var(--color_g), var(--color_b));
     border: 0.15vh solid rgb(var(--color_r), var(--color_g), var(--color_b));
     padding: 0.4vh;
-    font-size: 1.4vh;
+    font-size: 1.6vh; /* match the UI text, not the old smaller control font */
 }
 
 /* Settings editor rows are divs (not table cells), so the td rules above don't
@@ -348,15 +401,73 @@ div.modal_popup #settingsEditor input[type="password"] {
     color: rgb(var(--color_r), var(--color_g), var(--color_b));
     border: 0.15vh solid rgb(var(--color_r), var(--color_g), var(--color_b));
     padding: 0.4vh 0.2vh;
-    font-size: 1.4vh;
+    font-size: 1.6vh; /* match the UI text, not the old smaller control font */
     line-height: 1.4;
 }
 
-div.modal_popup #settingsEditor input:active,
-div.modal_popup #settingsEditor input:focus {
+div.modal_popup #settingsEditor input:not([type="range"]):active,
+div.modal_popup #settingsEditor input:not([type="range"]):focus {
     outline: none !important;
     background: rgb(var(--color_r), var(--color_g), var(--color_b));
     color: var(--color_light_black);
+}
+
+/* Passcode field validation (settings → lock screen): a red border while the
+   value is not 4-8 digits, plus a shake on each keystroke rejected past 8. */
+div.modal_popup #settingsEditor input.settings_invalid {
+    border-color: #e03030 !important;
+}
+div.modal_popup #settingsEditor input.settings_shake {
+    animation: settings_shake 0.25s ease-in-out;
+}
+@keyframes settings_shake {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-0.5vh); }
+    40% { transform: translateX(0.5vh); }
+    60% { transform: translateX(-0.3vh); }
+    80% { transform: translateX(0.3vh); }
+}
+/* Dimmed, unclickable Save button while the passcode is shorter than 4 digits. */
+div.modal_popup button.settings_btn_disabled {
+    opacity: 0.35;
+    pointer-events: none;
+    cursor: default;
+    filter: saturate(0.4);
+}
+
+/* API key show/hide toggle — the password input and its SHOW/HIDE button sit
+   in a flex row so the button never pushes the input off the row. The input
+   keeps its 100% width rule but shrinks to make room (flex-shrink + min-width:0). */
+div.modal_popup .settings_api_pw {
+    display: flex;
+    align-items: stretch;
+    gap: 0.4vh;
+}
+
+div.modal_popup .settings_api_pw input[type="password"],
+div.modal_popup .settings_api_pw input[type="text"] {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+div.modal_popup button.settings_pw_toggle {
+    flex: 0 0 auto;
+    width: 7vh;
+    margin: 0; /* override the modal button's default left margin */
+    padding: 0 0.4vh;
+    border: 0.15vh solid rgb(var(--color_r), var(--color_g), var(--color_b));
+    background: var(--color_light_black);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_mono);
+    font-size: 1.4vh;
+    line-height: 1.4; /* match the sibling inputs so heights are pixel-identical */
+    letter-spacing: 0.06em;
+    text-align: center;
+    cursor: pointer;
+}
+
+div.modal_popup button.settings_pw_toggle:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.2);
 }
 
 /* Settings editor: theme-styled custom dropdowns (replaces native <select>).
@@ -370,7 +481,7 @@ div.modal_popup div.settings_dd {
 div.modal_popup div.settings_dd > .mod_loc_btn {
     width: 100%;
     margin: 0; /* override the modal button's left margin (1.5vh) that would push it out of the cell */
-    font-size: 1.4vh;
+    font-size: 1.6vh; /* match the sibling inputs so heights are pixel-identical */
     line-height: 1.4; /* match the sibling inputs so heights are pixel-identical */
     padding: 0.4vh 0.2vh;
     border: 0.15vh solid rgb(var(--color_r), var(--color_g), var(--color_b));
@@ -388,6 +499,40 @@ div.modal_popup div.settings_dd > .mod_loc_list {
     max-height: 16vh;
     z-index: 400;
     background: var(--color_light_black);
+}
+
+/* The shared .mod_loc_opt rule (mod_netstat.css) sizes the dropdown list at
+   0.95vh — far smaller than the 1.6vh select/input text in the settings
+   editor. Size the open-list options to match the controls they belong to. */
+div.modal_popup div.settings_dd div.mod_loc_opt {
+    font-size: 1.6vh;
+    letter-spacing: 0.05vh;
+}
+
+/* Settings slider rows (volume, cursor size, wheel speed, pointer speed):
+   the <input type=range> plus a live %/×/px readout on the right. */
+div.modal_popup div.settings_slider {
+    display: flex;
+    align-items: center;
+    gap: 0.6vh;
+    width: 100%;
+}
+
+div.modal_popup div.settings_slider input[type="range"] {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: auto;
+    margin: 0;
+    accent-color: rgb(var(--color_r), var(--color_g), var(--color_b));
+}
+
+div.modal_popup div.settings_slider span.settings_slider_label {
+    flex: 0 0 auto;
+    min-width: 4.5vh;
+    text-align: right;
+    font-family: var(--font_mono);
+    font-size: 1.5vh;
+    color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.9);
 }
 
 div.modal_popup summary {

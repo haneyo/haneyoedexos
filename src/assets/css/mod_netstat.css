@@ -16,7 +16,7 @@ div#mod_netstat::before {
        otherwise shrink #mod_netstat_inner and pull its borders off the edge). */
     position: absolute;
     left: -0.092vh;
-    top: -1.111vh;
+    top: -0.5vh;
     height: 0.833vh;
 }
 
@@ -25,7 +25,7 @@ div#mod_netstat::after {
     border-right: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
     position: absolute;
     right: -0.092vh;
-    top: -1.111vh;
+    top: -0.5vh;
     height: 0.833vh;
 }
 

@@ -1,4 +1,5 @@
 div#mod_sysinfo {
+    position: relative;
     display: flex;
     flex-direction: row;
     align-items: center;
@@ -13,18 +14,18 @@ div#mod_sysinfo {
 div#mod_sysinfo::before {
     content: "";
     border-left: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
-    position: relative;
+    position: absolute;
     left: -0.092vh;
-    top: -2.87vh;
+    top: -0.5vh;
     height: 0.833vh;
 }
 
 div#mod_sysinfo::after {
     content: "";
     border-right: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
-    position: relative;
+    position: absolute;
     right: -0.092vh;
-    top: -2.87vh;
+    top: -0.5vh;
     height: 0.833vh;
 }
 

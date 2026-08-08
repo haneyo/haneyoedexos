@@ -28,6 +28,15 @@ export DISPLAY=:0
 export GTK_IM_MODULE=fcitx
 export QT_IM_MODULE=fcitx
 export XMODIFIERS=@im=fcitx
+# Wake the wireless radio: rfkill can leave it soft-blocked right after a fresh
+# install (and some EFI firmware settings hard-block it). NetworkManager handles
+# scanning from here on; the WIFI button in eDEX drives nmcli.
+rfkill unblock all 2>/dev/null || true
+nmcli radio wifi on 2>/dev/null || true
+# Turn on the keyboard backlight: many ThinkPads boot with it off.
+if [ -d /sys/class/leds/tpacpi::kbd_backlight ]; then
+    echo 2 > /sys/class/leds/tpacpi::kbd_backlight/brightness 2>/dev/null || true
+fi
 openbox --replace >/dev/null 2>&1 &
 fcitx5 -d >/dev/null 2>&1 &
 sleep 1
@@ -48,8 +57,57 @@ QT_IM_MODULE=fcitx
 XMODIFIERS=@im=fcitx
 IMENV
 
-echo "[edex] openbox config (undecorated everywhere)"
+echo "[edex] touchpad tap-to-click (libinput)"
+# Without this the touchpad's tap does nothing (users expect tap = click).
+mkdir -p /etc/X11/xorg.conf.d
+cat > /etc/X11/xorg.conf.d/40-libinput.conf <<'XCONF'
+Section "InputClass"
+    Identifier "libinput touchpad catchall"
+    MatchIsTouchpad "on"
+    MatchDevicePath "/dev/input/event*"
+    Driver "libinput"
+    Option "Tapping" "on"
+    Option "NaturalScrolling" "true"
+    Option "ClickMethod" "clickfinger"
+EndSection
+XCONF
+
+echo "[edex] openbox config (undecorated everywhere + Fn volume/brightness keys)"
 mkdir -p /etc/xdg/openbox
+cat > /usr/local/sbin/edex-volume.sh <<'VOL'
+#!/usr/bin/env bash
+# System volume helper for the Fn keys and the eDEX settings slider.
+# Usage: edex-volume.sh up|down|mute|set <pct>
+case "${1:-}" in
+    up)   pactl set-sink-volume @DEFAULT_SINK@ +5% 2>/dev/null || amixer -q sset Master 5%+ || true ;;
+    down) pactl set-sink-volume @DEFAULT_SINK@ -5% 2>/dev/null || amixer -q sset Master 5%- || true ;;
+    mute) pactl set-sink-mute @DEFAULT_SINK@ toggle 2>/dev/null || amixer -q sset Master toggle || true ;;
+    set)  pactl set-sink-volume @DEFAULT_SINK@ "${2:-50}%" 2>/dev/null || amixer -q sset Master "${2:-50}%" || true ;;
+    *)    exit 0 ;;
+esac
+VOL
+chmod +x /usr/local/sbin/edex-volume.sh
+cat > /usr/local/sbin/edex-brightness.sh <<'BRI'
+#!/usr/bin/env bash
+# Backlight helper for the Fn keys and the eDEX settings slider.
+# Usage: edex-brightness.sh up|down|set <pct>
+B=""
+for d in /sys/class/backlight/*/brightness; do [ -f "$d" ] && B="$d" && break; done
+[ -n "$B" ] || exit 0
+MAX=$(cat "${B%/brightness}/max_brightness" 2>/dev/null || echo 100)
+CUR=$(cat "$B" 2>/dev/null || echo 0)
+case "${1:-}" in
+    up)   VAL=$((CUR + MAX / 20)) ;;
+    down) VAL=$((CUR - MAX / 20)) ;;
+    set)  VAL=$((MAX * ${2:-50} / 100)) ;;
+    *)    exit 0 ;;
+esac
+[ "$VAL" -lt 0 ] && VAL=0
+[ "$VAL" -gt "$MAX" ] && VAL=$MAX
+if [ -w "$B" ]; then echo "$VAL" > "$B" 2>/dev/null || true
+else echo "$VAL" | sudo -n tee "$B" >/dev/null 2>&1 || true; fi
+BRI
+chmod +x /usr/local/sbin/edex-brightness.sh
 cat > /etc/xdg/openbox/rc.xml <<'OPENBOX'
 <?xml version="1.0" encoding="UTF-8"?>
 <openbox_config xmlns="http://openbox.org/3.4/rc">
@@ -59,15 +117,52 @@ cat > /etc/xdg/openbox/rc.xml <<'OPENBOX'
       <decor>no</decor>
     </application>
   </applications>
+  <keyboard>
+    <keybind key="XF86AudioRaiseVolume"><action name="Execute"><command>/usr/local/sbin/edex-volume.sh up</command></action></keybind>
+    <keybind key="XF86AudioLowerVolume"><action name="Execute"><command>/usr/local/sbin/edex-volume.sh down</command></action></keybind>
+    <keybind key="XF86AudioMute"><action name="Execute"><command>/usr/local/sbin/edex-volume.sh mute</command></action></keybind>
+    <keybind key="XF86MonBrightnessUp"><action name="Execute"><command>/usr/local/sbin/edex-brightness.sh up</command></action></keybind>
+    <keybind key="XF86MonBrightnessDown"><action name="Execute"><command>/usr/local/sbin/edex-brightness.sh down</command></action></keybind>
+  </keyboard>
 </openbox_config>
 OPENBOX
 
+echo "[edex] logind: suspend on lid close"
+# Laptops must suspend when the lid closes (on AC too — eDEX runs in a terminal
+# anyway, so there is no "docked monitor" use case). On resume the eDEX app
+# re-locks the screen when a passcode is configured.
+mkdir -p /etc/systemd/logind.conf.d
+cat > /etc/systemd/logind.conf.d/edex.conf <<'LOGIND'
+[Login]
+HandleLidSwitch=suspend
+HandleLidSwitchExternalPower=suspend
+HandleLidSwitchDocked=ignore
+LOGIND
+
 echo "[edex] detecting installed user"
-U="$(ls /home 2>/dev/null | head -1 || true)"
+# Find the real login user via /etc/passwd, NOT by listing /home: the ISO's live
+# rootfs can carry leftover home dirs (e.g. /home/runner leaked in from the CI
+# builder) that get copied into every install and would otherwise win `head -1`,
+# which then made chown fail and abort the whole install.
+U="$(getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1; exit}')"
 if [ -z "$U" ]; then
-    echo "[edex] ERROR: no /home user found — did the interactive identity step run?"
-    exit 1
+    # No login user was created — the interactive identity answer can be lost on
+    # an installer restart. Self-heal so the system still boots to a usable
+    # autologin desktop. The password is a documented kiosk default (autologin +
+    # passwordless sudo); edex-first-setup.sh rekeys root + the lock PIN on the
+    # first boot.
+    echo "[edex] WARN: no login user in /etc/passwd — creating default user 'edex'"
+    U="edex"
+    if ! id "$U" >/dev/null 2>&1; then
+        useradd -m -s /bin/bash "$U"
+    fi
+    echo "$U:edex" | chpasswd
+    usermod -aG sudo "$U"
 fi
+# Backlight is owned by the `video` group — the autologin user must be in it or
+# the Fn brightness keys / settings slider fall back to sudo (passwordless).
+usermod -aG video "$U" 2>/dev/null || true
+echo "[edex] configured for user: $U"
 
 echo "[edex] NetworkManager as the network stack (WiFi via nmcli)"
 cat > /etc/netplan/01-network-manager-all.yaml <<'NETPLAN'
@@ -77,18 +172,44 @@ network:
 NETPLAN
 systemctl enable NetworkManager.service 2>/dev/null || true
 
+echo "[edex] timezone Asia/Shanghai + NTP sync"
+# Fresh installs boot on UTC with no timezone, so the clock is wrong until the
+# user fixes it. Set Asia/Shanghai as the default and let systemd-timesyncd sync
+# it over the network. The settings UI can override both later via timedatectl.
+echo "Asia/Shanghai" > /etc/timezone
+ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+systemctl enable systemd-timesyncd.service 2>/dev/null || true
+
 echo "[edex] lightdm autologin"
 mkdir -p /etc/lightdm/lightdm.conf.d
-cat > /etc/lightdm/lightdm.conf.d/50-edex-autologin.conf <<CONF
+# CRITICAL: this file must sort AFTER the lightdm-autologin-greeter package's own
+# /etc/lightdm/lightdm.conf.d/lightdm-autologin-greeter.conf, which ships a
+# placeholder autologin-user=AUTOLOGIN-USER-NOT-CONFIGURED. lightdm reads conf.d
+# files in lexicographic order with later files overriding earlier ones, so a name
+# starting with 'z' (after 'l') guarantees OUR autologin-user wins — otherwise
+# lightdm tries to autologin as the placeholder user, fails, and the installed
+# system drops to a text console instead of eDEX. Pin the greeter explicitly for
+# the same reason (default would be lightdm-gtk-greeter, which is NOT installed).
+cat > /etc/lightdm/lightdm.conf.d/zz-edex-autologin.conf <<CONF
 [Seat:*]
 autologin-user=$U
 autologin-session=edex
 user-session=edex
+greeter-session=lightdm-autologin-greeter
+autologin-user-timeout=0
 CONF
 
 echo "[edex] creating the ~/Applications folder (drop .AppImage files here)"
 mkdir -p "/home/$U/Applications"
-chown "$U":"$U" "/home/$U/Applications"
+chown "$U":"$U" "/home/$U/Applications" || echo "[edex] WARN: chown ~/Applications failed"
+
+echo "[edex] standard user directories (file-browser tabs)"
+# Ubuntu Server creates none of ~/Desktop, ~/Documents, ... by default; the file
+# browser's default tabs point at them and would report "cannot connect".
+for d in Desktop Documents Downloads Music Pictures Public Templates Videos; do
+    mkdir -p "/home/$U/$d"
+    chown "$U":"$U" "/home/$U/$d" 2>/dev/null || true
+done
 
 # House rules for the built-in Claude Code assistant (~/CLAUDE.md is read
 # automatically): how to install apps, where AppImages go, wifi, updates.
@@ -117,7 +238,7 @@ cat > "/home/$U/CLAUDE.md" <<'RULES'
 - 系统自带 Firefox(/opt/firefox)与 eDEX 终端(tab 1/2)与虚拟显示器(tab 4/5)。
 - 交互时用中文,简洁说明你做了什么。
 RULES
-chown "$U":"$U" "/home/$U/CLAUDE.md"
+chown "$U":"$U" "/home/$U/CLAUDE.md" || echo "[edex] WARN: chown ~/CLAUDE.md failed"
 
 # Let the autologin user update the baked-in Firefox and Claude CLI in place
 # (their updaters write into /opt/firefox and the npm global dir).
@@ -128,6 +249,10 @@ echo "$U ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/edex-user
 chmod 440 /etc/sudoers.d/edex-user
 
 # apt must point at the Ubuntu archive so 'sudo apt update && upgrade' works.
+# Ubuntu 24.04 writes the same repos as /etc/apt/sources.list.d/ubuntu.sources at
+# install time; keeping both makes apt warn about duplicate sources on every login
+# MOTD. Drop the deb822 file and keep our plain sources.list as the single source.
+rm -f /etc/apt/sources.list.d/ubuntu.sources
 cat > /etc/apt/sources.list <<'SOURCES'
 deb http://archive.ubuntu.com/ubuntu noble main universe multiverse restricted
 deb http://security.ubuntu.com/ubuntu noble-security main universe multiverse restricted
@@ -180,8 +305,8 @@ cat > "/home/$U/.config/eDEX-UI/settings.json" <<'SETTINGS'
 }
 SETTINGS
 # fix the seeded cwd to the real home dir
-sed -i "s|/home/edex|/home/$U|" "/home/$U/.config/eDEX-UI/settings.json"
-chown -R "$U":"$U" "/home/$U/.config"
+sed -i "s|/home/edex|/home/$U|" "/home/$U/.config/eDEX-UI/settings.json" || true
+chown -R "$U":"$U" "/home/$U/.config" || echo "[edex] WARN: chown ~/.config failed"
 
 # First-boot setup wizard. The autoinstall's late-commands run in the chroot
 # with no interactive stdin, so the root password + unlock PIN cannot be asked
@@ -204,33 +329,53 @@ fi
 echo
 echo "================================================================"
 echo "    eDEX-OS · SYSTEM INITIALIZATION"
-echo "    设置 root 密码 和 解锁 PIN(两者都输入两次以确认)"
+echo "    Set the root password and the unlock PIN (enter each twice)"
 echo "================================================================"
 echo
 
+# --- timezone ---
+echo "Select timezone (default 1 = Asia/Shanghai):"
+echo "   1) Asia/Shanghai       5) Europe/Berlin"
+echo "   2) Asia/Tokyo          6) Europe/London"
+echo "   3) Asia/Singapore      7) America/New_York"
+echo "   4) Asia/Seoul          8) America/Los_Angeles"
+read -rp "Choice [1-8, default 1]: " TZCHOICE
+case "${TZCHOICE:-1}" in
+    2) TZ="Asia/Tokyo";;
+    3) TZ="Asia/Singapore";;
+    4) TZ="Asia/Seoul";;
+    5) TZ="Europe/Berlin";;
+    6) TZ="Europe/London";;
+    7) TZ="America/New_York";;
+    8) TZ="America/Los_Angeles";;
+    *) TZ="Asia/Shanghai";;
+esac
+sudo timedatectl set-timezone "$TZ" 2>/dev/null || sudo ln -sf "/usr/share/zoneinfo/$TZ" /etc/localtime
+echo "  Timezone set to $TZ"
+
 # --- root password (any non-empty value, entered twice) ---
 while :; do
-    read -sp "设置 root 密码: " R1; echo
-    read -sp "再次输入确认:   " R2; echo
+    read -sp "Set root password: " R1; echo
+    read -sp "Confirm root password: " R2; echo
     if [ -n "$R1" ] && [ "$R1" = "$R2" ]; then
         break
     fi
-    echo "  两次输入不一致或为空,请重试。"
+    echo "  Empty or mismatched. Try again."
 done
 echo "root:$R1" | sudo chpasswd
 unset R1 R2
 
 # --- unlock PIN (4-8 digits, entered twice) ---
 while :; do
-    read -sp "设置解锁 PIN(4-8 位数字): " P1; echo
-    read -sp "再次输入确认:               " P2; echo
+    read -sp "Set unlock PIN (4-8 digits): " P1; echo
+    read -sp "Confirm PIN: " P2; echo
     if [[ "$P1" =~ ^[0-9]{4,8}$ ]] && [ "$P1" = "$P2" ]; then
         break
     fi
     if ! [[ "$P1" =~ ^[0-9]{4,8}$ ]]; then
-        echo "  PIN 必须是 4-8 位数字,请重试。"
+        echo "  PIN must be 4-8 digits. Try again."
     else
-        echo "  两次输入不一致,请重试。"
+        echo "  Mismatched. Try again."
     fi
 done
 
@@ -251,8 +396,8 @@ unset P1 P2
 sudo touch /etc/edex-setup-done
 
 echo
-echo "  ✓ 系统初始化完成。即将启动 eDEX。"
-read -rp "  按回车继续…" _ || true
+echo "  ✓ System initialized. eDEX will start now."
+read -rp "  Press Enter to continue…" _ || true
 exit 0
 WIZARD
 chmod +x /usr/local/sbin/edex-first-setup.sh

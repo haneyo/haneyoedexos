@@ -163,6 +163,24 @@ class Terminal {
             let ligaturesAddon = new LigaturesAddon();
             this.term.loadAddon(ligaturesAddon);
             this.term.attachCustomKeyEventHandler(e => {
+                if (e.type === "keydown") {
+                    const buf = this.term.buffer && this.term.buffer.active;
+                    // Alternate-screen apps (vim, htop, …) get the keys untouched.
+                    if (buf && buf.type === "normal") {
+                        const rows = this.term.rows || 24;
+                        // PgUp/PgDn always scroll the scrollback; Up/Down only
+                        // once the user has scrolled up (at the bottom they fall
+                        // through to the shell, e.g. bash history). Returning
+                        // false swallows the key so it never reaches the pty.
+                        if (e.key === "PageUp") { this.term.scrollLines(-rows); return false; }
+                        if (e.key === "PageDown") { this.term.scrollLines(rows); return false; }
+                        const scrolledUp = buf.viewportY > buf.baseY;
+                        if ((e.key === "ArrowUp" || e.key === "ArrowDown") && scrolledUp) {
+                            this.term.scrollLines(e.key === "ArrowUp" ? -1 : 1);
+                            return false;
+                        }
+                    }
+                }
                 return true;
             });
             // Prevent the soft-keyboard on touch devices #733 - but ONLY there.
@@ -206,6 +224,9 @@ class Terminal {
                 let attachAddon = new AttachAddon(this.socket);
                 this.term.loadAddon(attachAddon);
                 this.fit();
+                // Re-assert keyboard focus once the pty link is up, so the very
+                // first keystroke after a slow tab spawn isn't lost (#13).
+                try { this.term.focus(); } catch (e) {}
             };
             this.socket.onerror = e => {throw JSON.stringify(e)};
             this.socket.onclose = e => {
@@ -238,9 +259,27 @@ class Terminal {
             });
 
             let parent = document.getElementById(opts.parentId);
+            // Wheel scrolling is owned here so speed/direction can be configured
+            // (settings.terminalScrollSensitivity / .terminalScrollDirection).
+            // Capture phase + stopPropagation so xterm's built-in viewport
+            // handler does not also scroll (that double-scrolled before, and
+            // the old Math.round(deltaY/10) snapped small trackpad deltas to 0).
+            // Deltas are accumulated so smooth trackpad scrolling works.
             parent.addEventListener("wheel", e => {
-                this.term.scrollLines(Math.round(e.deltaY/10));
-            });
+                e.preventDefault();
+                e.stopPropagation();
+                const sens = Number(window.settings.terminalScrollSensitivity);
+                const wheel = Number(window.settings.mouseWheelSpeed);
+                const speed = ((isFinite(sens) && sens > 0) ? sens : 1)
+                    * ((isFinite(wheel) && wheel > 0) ? wheel : 1);
+                const dir = window.settings.terminalScrollDirection === "reversed" ? -1 : 1;
+                this._wheelAcc = (this._wheelAcc || 0) + e.deltaY * speed;
+                const lines = Math.trunc(this._wheelAcc / 8);
+                if (lines !== 0) {
+                    this.term.scrollLines(dir * lines);
+                    this._wheelAcc -= lines * 8;
+                }
+            }, { capture: true, passive: false });
             this._lastTouchY = null;
             parent.addEventListener("touchstart", e => {
                 this._lastTouchY = e.targetTouches[0].screenY;
@@ -260,7 +299,12 @@ class Terminal {
                 this._lastTouch = null;
             });
 
-            document.querySelector(".xterm-helper-textarea").addEventListener("keydown", e => {
+            // Scope to THIS terminal's helper textarea: the old code took the
+            // first .xterm-helper-textarea on the page, so every terminal tab
+            // attached its F11 handler to tab 0's textarea. Guard the lookup so
+            // a missing element can't crash the constructor (#13/#14).
+            const helperTextarea = this.term.element && this.term.element.querySelector(".xterm-helper-textarea");
+            if (helperTextarea) helperTextarea.addEventListener("keydown", e => {
                 if (e.key === "F11" && window.settings.allowWindowed) {
                     e.preventDefault();
                     window.toggleFullScreen();
@@ -482,6 +526,13 @@ class Terminal {
                         // Websocket closed
                     }
                 });
+                // The pty is spawned at app startup, so its opening prompt is
+                // emitted before any renderer connects and is consumed by
+                // nobody — the MAIN SHELL tab then boots blank. Send an empty
+                // line so the shell redraws its prompt on this fresh connection
+                // (harmless if it is already mid-command). Runs after onData is
+                // wired so the redrawn prompt is not lost again.
+                try { this.tty.write("\r"); } catch (e) {}
             });
 
             this.close = () => {

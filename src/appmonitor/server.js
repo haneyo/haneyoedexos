@@ -48,7 +48,8 @@ const wsUrlFor = m => MODE === "real"
     ? "ws://127.0.0.1:" + m.rfbPort + m.wsPath
     : "ws://127.0.0.1:" + HTTP_PORT + "/" + m.id;
 
-const opts = { userData: USERDATA, appImageDirs: APPM_IMAGE_DIRS };
+const APPM_APP_FILTER = process.env.EDEX_APPMONITOR_APP_FILTER || "";
+const opts = { userData: USERDATA, appImageDirs: APPM_IMAGE_DIRS, appFilter: APPM_APP_FILTER };
 
 let scenes = null;
 if (MODE === "real") {

@@ -137,6 +137,12 @@ function realBackend(deps) {
         return /(chrome|chromium|brave|vivaldi|edge|opera|electron|\.appimage)/i.test(cmd);
     }
 
+    // Firefox (the system distro build) also refuses to run its content sandbox
+    // inside a nested X display; it takes an env var, not --no-sandbox.
+    function isFirefox(cmd) {
+        return /(firefox|iceweasel|librewolf|waterfox)/i.test(cmd);
+    }
+
     function buildCommand(app) {
         if (app.exec) {
             const t = tokenizeExec(app.exec);
@@ -182,6 +188,10 @@ function realBackend(deps) {
             });
             if (isChromium(cmd.cmd)) {
                 env.ELECTRON_DISABLE_SANDBOX = "1";
+            }
+            if (isFirefox(cmd.cmd)) {
+                env.MOZ_DISABLE_CONTENT_SANDBOX = "1";
+                env.MOZ_DISABLE_GMP_SANDBOX = "1";
             }
             // Give the display a moment to be ready before spawning the app.
             const doSpawn = () => {
@@ -244,6 +254,10 @@ function realBackend(deps) {
             exitFullscreenApp();           // clear any previous fullscreen app
             const env = Object.assign({}, process.env, { DISPLAY: ":0" });
             if (isChromium(cmd.cmd)) env.ELECTRON_DISABLE_SANDBOX = "1";
+            if (isFirefox(cmd.cmd)) {
+                env.MOZ_DISABLE_CONTENT_SANDBOX = "1";
+                env.MOZ_DISABLE_GMP_SANDBOX = "1";
+            }
             const child = spawn(cmd.cmd, cmd.args, { env, stdio: "ignore" });
             child.on("error", e => console.error("[appmonitor] fullscreen spawn:", e.message));
             fullscreenPid = child.pid;

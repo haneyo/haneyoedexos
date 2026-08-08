@@ -9,6 +9,7 @@ class Clock {
         this.parent = document.getElementById(parentId);
         this.parent.innerHTML += `<div id="mod_clock" class="${(this.twelveHours) ? "mod_clock_twelve" : ""}">
             <h1 id="mod_clock_text"><span>?</span><span>?</span><span>:</span><span>?</span><span>?</span><span>:</span><span>?</span><span>?</span></h1>
+            <div id="mod_clock_date"></div>
         </div>`;
 
         this.lastTime = new Date();
@@ -45,6 +46,16 @@ class Clock {
         if (this.twelveHours) clockString += `<span>${this.ampm}</span>`;
 
         document.getElementById("mod_clock_text").innerHTML = clockString;
+
+        // Current date, rendered under the time (absolute-positioned, so the
+        // centered clock text never shifts — same pattern as the battery).
+        const dateEl = document.getElementById("mod_clock_date");
+        if (dateEl) {
+            const DAYS = ["SUN","MON","TUE","WED","THU","FRI","SAT"];
+            const pad = n => String(n).padStart(2, "0");
+            dateEl.textContent = `${time.getFullYear()}.${pad(time.getMonth() + 1)}.${pad(time.getDate())} ${DAYS[time.getDay()]}`;
+        }
+
         this.lastTime = time;
     }
 }

@@ -56,6 +56,8 @@ const kblayoutsDir = path.join(electron.app.getPath("userData"), "keyboards");
 const innerKblayoutsDir = path.join(__dirname, "assets/kb_layouts");
 const fontsDir = path.join(electron.app.getPath("userData"), "fonts");
 const innerFontsDir = path.join(__dirname, "assets/fonts");
+const cursorsDir = path.join(electron.app.getPath("userData"), "cursors");
+const innerCursorsDir = path.join(__dirname, "assets/cursors");
 
 // Unset proxy env variables to avoid connection problems on the internal websockets
 // See #222
@@ -102,12 +104,24 @@ if (!fs.existsSync(settingsFile)) {
         fsQuickLinks: null,
         screensaverEnabled: true,
         screensaverIdle: 300,
+        screenOffIdle: 1800,                 // seconds without input → blank the display (software screen-off); never below screensaverIdle
         screensaverStyle: "code",
         lockCode: "0000",
         lockOnIdle: true,
+        lockIdleTimeout: 30,               // seconds without input while locked → back to the screensaver
         showKeyboard: false,
         appSort: "name-asc",                 // app-monitor list order: name|install|freq + asc|desc
         bootAnimAfterUnlock: true,           // play the boot animation after a matrix lock/screensaver unlock
+        terminalScrollSensitivity: 1,        // terminal scroll speed multiplier (mouse/trackpad wheel)
+        terminalScrollDirection: "normal",   // "normal" | "reversed"
+        cursorAutoHide: true,                // hide the cursor after cursorAutoHideDelay s of inactivity
+        cursorAutoHideDelay: 10,             // seconds without mouse movement before the cursor hides
+        cursorStyle: "lightech",             // pointer look: "lightech" (bundled WP7 .ani set) | "scifi" (theme chevron)
+        cursorSize: 28,                      // LightechRE pointer size in px (16-64)
+        mouseWheelSpeed: 1,                  // global wheel scroll multiplier (0.25x-4x; 1 = default)
+        cursorSpeed: 1,                      // pointer speed multiplier (0.25x-4x) — applied to the device, not the preview
+        batteryAlways: false,                // show a simulated battery readout on machines without one (desktops/mac mini)
+        performanceMode: "",                 // CPU governor to apply at boot: "powersave" | "schedutil" | "performance" ("" = leave as-is)
         claude: {
             enabled: false,
             baseUrl: "",
@@ -179,6 +193,14 @@ try {
 fs.readdirSync(innerFontsDir).forEach(e => {
     fs.writeFileSync(path.join(fontsDir, e), fs.readFileSync(path.join(innerFontsDir, e)));
 });
+try {
+    fs.mkdirSync(cursorsDir);
+} catch(e) {
+    // Folder already exists
+}
+fs.readdirSync(innerCursorsDir).forEach(e => {
+    fs.writeFileSync(path.join(cursorsDir, e), fs.readFileSync(path.join(innerCursorsDir, e)));
+});
 
 // Version history logging
 const versionHistoryPath = path.join(electron.app.getPath("userData"), "versions_log.json");
@@ -193,6 +215,24 @@ if (typeof versionHistory[version] === "undefined") {
 	versionHistory[version].lastSeen = Date.now();
 }
 fs.writeFileSync(versionHistoryPath, JSON.stringify(versionHistory, 0, 2), {encoding:"utf-8"});
+
+// CPU governor helpers (module scope — used by the power:governor IPC handler
+// AND re-applied on boot when settings.performanceMode is saved).
+const readSys = f => { try { return fs.readFileSync(f, "utf8").trim(); } catch (e) { return null; } };
+const applyGovernor = governor => {
+    const online = readSys("/sys/devices/system/cpu/online") || "0";
+    const cpus = [];
+    for (const part of online.split(",")) {
+        const m = /^(\d+)-(\d+)$/.exec(part);
+        if (m) { for (let i = +m[1]; i <= +m[2]; i++) cpus.push(i); }
+        else if (/^\d+$/.test(part)) cpus.push(+part);
+    }
+    const { exec } = require("child_process");
+    cpus.forEach(n => {
+        const f = "/sys/devices/system/cpu/cpu" + n + "/cpufreq/scaling_governor";
+        exec("echo " + governor + " | sudo -n tee " + f + " >/dev/null 2>&1");
+    });
+};
 
 function createWindow(settings) {
     signale.info("Creating window...");
@@ -345,6 +385,7 @@ async function startAppMonitor(settings, cleanEnv) {
             EDEX_APPMONITOR_WS_PORT: String(wsPort),
             EDEX_APPMONITOR_USERDATA: electron.app.getPath("userData"),
             EDEX_APPMONITOR_APPIMAGE_DIRS: am.appImageDirs || "",
+            EDEX_APPMONITOR_APP_FILTER: am.appFilter || "",
             EDEX_APPMONITOR_THEME_R: String(tr),
             EDEX_APPMONITOR_THEME_G: String(tg),
             EDEX_APPMONITOR_THEME_B: String(tb)
@@ -645,6 +686,127 @@ app.on('ready', async () => {
     // running from src/ during development there is no file to replace.
     ipc.handle("app:env", () => ({ isAppImage: !!process.env.APPIMAGE }));
 
+    // Laptop battery for the clock's battery readout. Desktops (no battery)
+    // report present:false and the renderer hides the indicator.
+    ipc.handle("battery:level", () => {
+        try {
+            const pm = require("electron").powerMonitor;
+            const level = pm.getSystemBatteryLevel();
+            let charging = false;
+            if (typeof pm.getBatteryState === "function") {
+                const st = pm.getBatteryState();
+                charging = st === "charging" || st === "full";
+            }
+            const present = typeof level === "number" && level >= 0;
+            return { present, level: present ? level : -1, charging };
+        } catch (e) {
+            return { present: false, level: -1, charging: false };
+        }
+    });
+
+    // Pointer speed (settings.cursorSpeed, 0.25x-4x). Applied at the OS level
+    // on the eDEX-OS device via xinput (X11) — the same trick the governors
+    // use — so a faster/slower mouse actually sticks across apps. On macOS the
+    // preview just stores the value (the OS owns pointer acceleration there).
+    ipc.handle("mouse:speed", async (e, mult) => {
+        const m = Number(mult);
+        if (!isFinite(m) || m <= 0) return { applied: false };
+        if (process.platform !== "linux") return { applied: false };
+        try {
+            const { execSync } = require("child_process");
+            const devices = execSync("xinput list --id-only 2>/dev/null").toString().trim().split("\n");
+            let applied = 0;
+            for (const id of devices) {
+                if (!id) continue;
+                try {
+                    // libinput: AccelSpeed in [-1,1]; xinput legacy: "libinput Accel Speed".
+                    // Map 0.25x-4x onto [-1,1]: 1x → 0, 4x → 1, 0.25x → -1.
+                    const accel = Math.max(-1, Math.min(1, Math.log2(m)));
+                    execSync(`xinput set-prop ${id} "libinput Accel Speed" ${accel.toFixed(3)} 2>/dev/null`);
+                    applied++;
+                } catch (err) {}
+            }
+            return { applied, count: devices.length };
+        } catch (err) {
+            return { applied: false };
+        }
+    });
+
+    // Laptop lid close (suspend) and wake: on resume the renderer must tear down
+    // any stale full-screen overlay (a screensaver canvas or lock block left in
+    // place after suspend swallows every click — the lid-open "can't click"
+    // bug) and re-lock when a passcode is configured.
+    try {
+        const pm = require("electron").powerMonitor;
+        pm.on("resume", () => {
+            if (win && !win.isDestroyed()) win.webContents.send("pm:resume");
+        });
+    } catch (e) {}
+
+    // Embedded performance controller: read/write the CPU scaling governor so
+    // the user can trade a little throughput for a quiet fan on laptops
+    // (powersave/schedutil vs performance). Applied to every online CPU.
+    ipc.handle("power:governor", async (e, payload) => {
+        const base = "/sys/devices/system/cpu/cpu0/cpufreq";
+        const want = payload && payload.governor ? String(payload.governor) : "";
+        if (want) applyGovernor(want);
+        const available = readSys(path.join(base, "scaling_available_governors"));
+        const current = readSys(path.join(base, "scaling_governor"));
+        const freq = readSys(path.join(base, "scaling_cur_freq"));
+        return {
+            ok: true,
+            available: available ? available.split(/\s+/) : [],
+            current: current || "",
+            freqMHz: freq ? Math.round(Number(freq) / 1000) : null
+        };
+    });
+
+    // Brightness control (settings slider) — same helper script the Fn keys use,
+    // so both paths behave identically.
+    const backlightFile = () => {
+        try {
+            for (const d of fs.readdirSync("/sys/class/backlight")) {
+                const b = "/sys/class/backlight/" + d + "/brightness";
+                if (fs.existsSync(b)) return b;
+            }
+        } catch (e) {}
+        return null;
+    };
+    ipc.handle("power:brightness", async (e, payload) => {
+        const { exec } = require("child_process");
+        const run = cmd => new Promise(res => exec(cmd, err => res(!err)));
+        const want = payload && payload.set != null ? Math.min(100, Math.max(0, Number(payload.set))) : null;
+        if (want != null) await run("/usr/local/sbin/edex-brightness.sh set " + want);
+        const b = backlightFile();
+        let max = 100, cur = 0;
+        if (b) {
+            try { max = Number(fs.readFileSync(b.replace(/\/brightness$/, "/max_brightness"), "utf8").trim()) || max; } catch (e) {}
+            try { cur = Number(fs.readFileSync(b, "utf8").trim()) || 0; } catch (e) {}
+        }
+        return { ok: true, percent: max ? Math.round(cur / max * 100) : 0 };
+    });
+
+    // System volume control (settings slider) — pactl with an amixer fallback.
+    ipc.handle("power:volume", async (e, payload) => {
+        const { exec } = require("child_process");
+        const run = cmd => new Promise(res => exec(cmd, err => res(!err)));
+        const want = payload && payload.set != null ? Math.min(100, Math.max(0, Number(payload.set))) : null;
+        if (want != null) await run("/usr/local/sbin/edex-volume.sh set " + want);
+        const get = () => new Promise(res => {
+            exec("pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null", (e, so) => {
+                if (!e) {
+                    const m = /(\d{1,3})%/.exec(so || "");
+                    if (m) return res(Number(m[1]));
+                }
+                exec("amixer sget Master 2>/dev/null", (e2, so2) => {
+                    const m2 = /\[(\d{1,3})%\]/.exec(so2 || "");
+                    res(m2 ? Number(m2[1]) : 0);
+                });
+            });
+        });
+        return { ok: true, percent: await get() };
+    });
+
     // eDEX-UI self-update (GitHub release asset). Only works on the eDEX-OS
     // install: when running from an AppImage, download the new .AppImage, verify
     // its sha256 (a sibling release asset), atomically replace the running
@@ -733,6 +895,11 @@ app.on('ready', async () => {
     }));
 
     startAppMonitor(settings, cleanEnv);
+
+    // Re-apply the saved CPU performance mode (governor) on every boot.
+    if (settings.performanceMode) {
+        try { applyGovernor(String(settings.performanceMode)); } catch (e) {}
+    }
 
     createWindow(settings);
 

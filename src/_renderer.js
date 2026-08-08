@@ -63,6 +63,11 @@ window.cover = (() => {
     // can be restored verbatim when the cover is released.
     const realProc = { 0: null, 1: null };
     let prevFsDir = null; // directory the file browser showed before covering
+    // The fabricated process list is minted ONCE per cover session (screensaver
+    // → lock both wear the same cover) and frozen, so the TOP PROCESSES panel
+    // does not reshuffle every refresh cycle and "suddenly change" at the
+    // screensaver→lock handover (#92). Cleared when the cover lifts.
+    let coverProcs = null;
 
     // ---- fake filesystem ----
     const fakeFile = (dir, name, maxSize) => ({
@@ -80,34 +85,64 @@ window.cover = (() => {
         dir = String(dir || "/").replace(/\/+$/, "") || "/";
         const out = [];
         if (dir === "/") {
-            ["bin", "launch", "warheads", "targets", "keys", "logs", "telemetry", "systems"]
+            ["bin", "launch", "warheads", "targets", "keys", "logs", "telemetry", "systems", "crypto", "ops", "archive"]
                 .forEach(n => out.push(fakeFolder("/", n)));
             out.push(fakeFile("/", "launch_auth.sig"));
             out.push(fakeFile("/", "boot_checksum.bin", 1 << 10));
+            out.push(fakeFile("/", "silo_manifest.enc", 1 << 12));
+            out.push(fakeFile("/", "crypto_root.key", 1 << 8));
+            out.push(fakeFile("/", "ops_summary.cfg"));
         } else if (dir === "/bin") {
-            ["diag", "redundancy"].forEach(n => out.push(fakeFolder("/bin", n)));
-            ["bootstrap.elf", "watchdog"].forEach(n => out.push(fakeFile("/bin", n, 1 << 16)));
+            ["diag", "redundancy", "core_dump"].forEach(n => out.push(fakeFolder("/bin", n)));
+            ["bootstrap.elf", "watchdog", "diag_agent.elf", "redundancy_link", "telemetry_relay", "checksum_tool", "secure_erase"]
+                .forEach(n => out.push(fakeFile("/bin", n, 1 << 16)));
         } else if (dir === "/launch") {
-            ["sequence.dat", "arm_switch.ctl", "auth_checksum.sig", "two_person_rule.log"]
+            ["sequence.dat", "arm_switch.ctl", "auth_checksum.sig", "two_person_rule.log", "launch_keys.bin", "countdown.db", "guidance_lock.cfg", "fire_order.enc"]
                 .forEach(n => out.push(fakeFile("/launch", n)));
         } else if (dir === "/warheads") {
-            for (let i = 1; i <= 6; i++) out.push(fakeFolder("/warheads", "warhead_0" + i));
+            for (let i = 1; i <= 12; i++) out.push(fakeFolder("/warheads", "warhead_0" + i));
+            out.push(fakeFile("/warheads", "inventory_manifest.enc"));
         } else if (/^\/warheads\/warhead_\d+$/.test(dir)) {
-            ["state.bin", "yield.cfg", "arming_cert.sig"].forEach(n => out.push(fakeFile(dir, n)));
+            ["state.bin", "yield.cfg", "arming_cert.sig", "core_temp.log", "fuel_purity.snapshot", "serial.key", "veto_record.bin", "casing_id.txt"]
+                .forEach(n => out.push(fakeFile(dir, n)));
         } else if (dir === "/targets") {
-            ["target_list.enc", "coordinates.bin", "reentry_schedule.dat", "priority_matrix.cfg"]
+            ["target_list.enc", "coordinates.bin", "reentry_schedule.dat", "priority_matrix.cfg", "strike_order.seq", "trajectory_table.csv", "impact_model.bin", "drone_assignments.cfg"]
                 .forEach(n => out.push(fakeFile("/targets", n)));
         } else if (dir === "/keys") {
             out.push(fakeFile("/keys", "launch_keys.enc"));
+            out.push(fakeFile("/keys", "master_key.der", 1 << 8));
+            out.push(fakeFile("/keys", "rotating_cypher.key", 1 << 8));
             out.push(fakeFolder("/keys", "key_fragments"));
+            out.push(fakeFolder("/keys", "backup_custody"));
         } else if (dir === "/keys/key_fragments") {
-            for (let i = 1; i <= 4; i++) out.push(fakeFile("/keys/key_fragments", "frag_0" + i + ".key", 1 << 8));
+            for (let i = 1; i <= 8; i++) out.push(fakeFile("/keys/key_fragments", "frag_0" + i + ".key", 1 << 8));
+        } else if (dir === "/keys/backup_custody") {
+            for (let i = 1; i <= 5; i++) out.push(fakeFile("/keys/backup_custody", "custody_" + i + ".kf", 1 << 8));
         } else if (dir === "/logs") {
-            ["access_audit.log", "telemetry.log", "handshake_trail.log"].forEach(n => out.push(fakeFile("/logs", n)));
+            ["access_audit.log", "telemetry.log", "handshake_trail.log", "perimeter_watch.log", "comm_sweep.log", "failsafe_checks.log", "rotation_audit.log", "temp_probe.log"]
+                .forEach(n => out.push(fakeFile("/logs", n)));
         } else if (dir === "/telemetry") {
-            ["downlink_stream.buf", "silo_state.snapshot"].forEach(n => out.push(fakeFile("/telemetry", n)));
+            ["downlink_stream.buf", "silo_state.snapshot", "uplink_buffer.dat", "relay_status.snap", "telemetry_archive.enc", "sensor_grid.csv", "comms_log.bin", "beacon_ping.log"]
+                .forEach(n => out.push(fakeFile("/telemetry", n)));
         } else if (dir === "/systems") {
-            ["integrity_scan.cfg", "failover.ctl", "mesh_topology.json"].forEach(n => out.push(fakeFile("/systems", n)));
+            ["integrity_scan.cfg", "failover.ctl", "mesh_topology.json", "power_distribution.map", "coolant_pressure.dat", "uplink_antennas.cfg", "self_test.suite", "redundancy_matrix.json"]
+                .forEach(n => out.push(fakeFile("/systems", n)));
+        } else if (dir === "/crypto") {
+            ["root_cert.pem", "signing_key.pub", "cipher_suites.cfg", "session_tokens.enc", "key_bundle.bin"].forEach(n => out.push(fakeFile("/crypto", n)));
+        } else if (dir === "/ops") {
+            ["current_deployment.cfg", "roster.enc", "duty_rotation.sched", "clearance_matrix.json", "incident_reports.log"].forEach(n => out.push(fakeFile("/ops", n)));
+        } else if (dir === "/archive") {
+            ["payload_schematics.bin", "historical_targets.enc", "engineering_notes.pdf", "migration_backup.tgz", "legacy_arm_codes.key"].forEach(n => out.push(fakeFile("/archive", n)));
+        } else if (dir === "/operations" || dir.startsWith("/operations")) {
+            // Every real path the cover didn't plan lands here (fakePath maps
+            // unknown dirs → /operations), so this must be as rich as the real
+            // roots — a sparse listing read as "only one fake file".
+            ["bootstrap_state.cfg", "sync_manifest.enc", "operator_schedule.sched", "cleared_badge.key", "sector_handshake.bin", "verify_token.sig", "watchdog_heartbeat.log", "cold_standby.dat", "runbook_rev.txt", "access_levels.json", "mission_ledger.bin", "drift_calibration.csv"]
+                .forEach(n => out.push(fakeFile(dir, n)));
+            out.push(fakeFolder(dir, "systems"));
+            out.push(fakeFolder(dir, "archive"));
+            out.push(fakeFolder(dir, "logs"));
+            out.push(fakeFolder(dir, "crypto"));
         } else {
             // Fallback for any path the cover didn't plan: sparse generic dir.
             out.push(fakeFile(dir, "state.bin"));
@@ -126,8 +161,14 @@ window.cover = (() => {
     };
 
     const fakeProcesses = () => {
+        // Return the frozen list while covered — the toplist polls every 2s, and
+        // re-rolling it each time made the panel look like it "refreshes" at the
+        // screensaver→lock handover. Only the first request in a cover session
+        // mints a fresh list.
+        if (active && coverProcs) return coverProcs;
         const names = FAKE_PROCS.slice().sort(() => Math.random() - 0.5).slice(0, 5);
-        return names.map(name => ({ pid: R(1024, 4096), name, cpu: R(0, 90), mem: R(1, 38) }));
+        coverProcs = names.map(name => ({ pid: R(1024, 4096), name, cpu: R(0, 90), mem: R(1, 38) }));
+        return coverProcs;
     };
 
     const fakeMonitorLabel = monitorId => monitorId === "a" ? "WARHEAD A" : "WARHEAD B";
@@ -189,6 +230,10 @@ window.cover = (() => {
                 if (window.mods && window.mods.toplist) window.mods.toplist.updateList();
                 if (window.mods && window.mods.netstat) window.mods.netstat.updateInfo();
             } else {
+                // Cover lifted: forget the fabricated process list so the next
+                // cover session mints a fresh one (the real toplist re-engages
+                // through its normal updateList() path below).
+                coverProcs = null;
                 for (let n = 0; n <= 4; n++) renderTab(n);
                 if (window.fsDisp && typeof window.fsDisp.readFS === "function") {
                     window.fsDisp.readFS(prevFsDir || (window.settings && window.settings.cwd) || "/");
@@ -211,6 +256,79 @@ window.cover = (() => {
     };
 })();
 
+// Created up-front so the boot-time lock (bootShow) can fire as soon as the
+// boot animation ends — before initUI builds any UI — without a real-UI flash.
+window.lockScreen = new LockScreen();
+
+// CRT-TV power-off: collapse the screen to a bright horizontal centre line and
+// go dark, like an old tube TV switching off. Called from lockScreen.unlock()
+// after the boot lock and the matrix lock clear. It is a pure overlay that runs
+// in PARALLEL with replayBoot()/initUI() (the welcome-back flow continues
+// underneath at its normal pace), so the password→welcome-back time is
+// unchanged — the animation only covers the first ~0.6s of that window.
+window.playCrtShutdown = () => {
+    if (document.getElementById("crt_off")) return;
+    const el = document.createElement("div");
+    el.id = "crt_off";
+    el.innerHTML = '<div class="crt_panel crt_top"></div><div class="crt_panel crt_bot"></div><div class="crt_line"></div>';
+    document.body.appendChild(el);
+    setTimeout(() => {
+        const e = document.getElementById("crt_off");
+        if (e) e.remove();
+    }, 800);
+};
+
+// "Welcome back" greeting after the matrix lock clears. The matrix unlock no
+// longer replays the boot logo (#80) — instead, like the boot-time welcome, a
+// dark overlay holds a "Welcome back, <user>" greeting and the real UI is only
+// revealed once it has faded out. The overlay sits one step under the CRT-off
+// overlay (z 9999999) and above every UI element (the lock itself is z 10000),
+// so the desktop is never exposed mid-sequence. In sync with playCrtShutdown:
+// the greeting fades in as the CRT collapse finishes (~0.65 s) and the overlay
+// drops after the fade-out, revealing the already-built UI underneath.
+window.welcomeBack = (onComplete) => {
+    if (document.getElementById("welcome_back")) return;
+    const el = document.createElement("div");
+    el.id = "welcome_back";
+    el.innerHTML = '<h1 id="welcome_back_greeting"></h1>';
+    document.body.appendChild(el);
+    const greet = el.querySelector("#welcome_back_greeting");
+    getDisplayName().then(user => {
+        greet.innerHTML = user ? `Welcome back, <em>${user}</em>` : "Welcome back";
+        setTimeout(() => { greet.style.opacity = "1"; }, 650);
+        setTimeout(() => { greet.style.opacity = "0"; }, 2100);
+        setTimeout(() => {
+            if (el.parentNode) el.parentNode.removeChild(el);
+            // The greeting is gone — hand back to the caller (the matrix unlock
+            // uses this to start LOADING the real UI, #81).
+            if (typeof onComplete === "function") {
+                try { onComplete(); } catch (e) {}
+            }
+        }, 2650);
+    });
+};
+
+// False until initUI has finished building the real desktop. While false, any
+// lock request (idle dismiss, resumeFromSuspend on visibilitychange — both can
+// fire during startup) is redirected to the Matrix boot lock instead of a code
+// lock, which needs a live terminal and produced a broken box during boot.
+window._uiReady = false;
+
+// Boot sequence: the boot lock comes FIRST, before any of the desktop is built,
+// so nothing real is ever exposed pre-unlock. On unlock (or immediately, when
+// no passcode is configured) the deferred `then` runs — initUI, which builds
+// the shell frame, plays the "Welcome back" greeting, and only then assembles
+// the real desktop. bootShow() queues the continuation via lockScreen._onUnlocked.
+function bootLockThenRun(then) {
+    if (String(window.settings.lockCode || "").length > 0) {
+        if (window.cover && !window.cover.isActive()) window.cover.set(true);
+        window.lockScreen._onUnlocked = () => { then(); };
+        window.lockScreen.bootShow();
+    } else {
+        then();
+    }
+}
+
 // Initiate basic error handling
 window.onerror = (msg, path, line, col, error) => {
     document.getElementById("boot_screen").innerHTML += `${error} :  ${msg}<br/>==> at ${path}  ${line}:${col}`;
@@ -226,6 +344,7 @@ const settingsDir = remote.app.getPath("userData");
 const themesDir = path.join(settingsDir, "themes");
 const keyboardsDir = path.join(settingsDir, "keyboards");
 const fontsDir = path.join(settingsDir, "fonts");
+const cursorsDir = path.join(settingsDir, "cursors");
 const settingsFile = path.join(settingsDir, "settings.json");
 const shortcutsFile = path.join(settingsDir, "shortcuts.json");
 const lastWindowStateFile = path.join(settingsDir, "lastWindowState.json");
@@ -267,8 +386,201 @@ ipc.once("getKbOverride", (e, layout) => {
 });
 ipc.send("getKbOverride");
 
+// Sci-fi cursor: a minimal 45° "<" chevron drawn in the theme accent colour
+// with a soft glow, so the pointer echoes the UI. Rebuilt whenever the theme
+// changes (see _loadTheme). Hotspot is the chevron's apex (2,2).
+const scifiCursor = () => {
+    const r = window.theme && window.theme.r != null ? window.theme.r : 64;
+    const g = window.theme && window.theme.g != null ? window.theme.g : 224;
+    const b = window.theme && window.theme.b != null ? window.theme.b : 255;
+    const hex = v => ("0" + Math.min(255, Math.max(0, Math.round(v))).toString(16)).slice(-2);
+    const color = "#" + hex(r) + hex(g) + hex(b);
+    const svg =
+        "<svg xmlns='http://www.w3.org/2000/svg' width='26' height='26' viewBox='0 0 26 26'>" +
+        "<g transform='rotate(-45 2 2)'>" +
+        "<path d='M2 2 L24 13 L2 24' fill='none' stroke='" + color + "' stroke-width='7' stroke-linecap='round' stroke-linejoin='round' opacity='0.15'/>" +
+        "<path d='M2 2 L24 13 L2 24' fill='none' stroke='" + color + "' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round' opacity='0.95'/>" +
+        "</g></svg>";
+    return "url(\"data:image/svg+xml;utf8," + encodeURIComponent(svg) + "\") 2 2, default";
+};
+
+// ---- WP7 pointer set (assets/cursors/*.ani) ----
+// The bundled .ani files are Windows cursor resources: a RIFF "ACON" wrapper
+// holding per-frame ICO cursors, each a 32bpp DIB (BITMAPINFOHEADER with the
+// height doubled for the AND mask). Chromium can load one via `cursor: url()`,
+// but then the pointer size is chosen by the OS, not the user. So each frame is
+// parsed here, blitted to a canvas at the configured size (settings.cursorSize),
+// and emitted as a data-URI PNG with the hotspot scaled proportionally. A
+// `#cursor_style` block then maps the pointer roles (default / hand / text / …)
+// to those data URIs. Native CSS cursors mean the OS still does the hit-testing
+// — no overlay div.
+const CURSOR_ROLES = {
+    // .ani frames carry no hotspot in the ICO entries (that lives in the ACON
+    // header), so each role's click point is pinned here instead of read from
+    // the file (measured from the 32×32 first frame of the WP7 pack).
+    default:     { file: "WP7Cursor.ani", hotX: 2, hotY: 5 },
+    hand:        { file: "WP7Links.ani", hotX: 2, hotY: 5 },
+    text:        { file: "WP7Text.ani", hotX: 6, hotY: 11 },
+    crosshair:   { file: "WP7Precision.ani", hotX: 10, hotY: 10 },
+    notallowed:  { file: "WP7Unavail.ani", hotX: 15, hotY: 15 },
+    move:        { file: "WP7Move.ani", hotX: 13, hotY: 13 },
+    ns:          { file: "WP7Vert.ani", hotX: 13, hotY: 13 },
+    ew:          { file: "WP7Hor.ani", hotX: 13, hotY: 13 },
+    nwse:        { file: "WP7Nwse.ani", hotX: 20, hotY: 10 },
+    nesw:        { file: "WP7Nesw.ani", hotX: 10, hotY: 10 }
+};
+
+// Pick the frame closest to (but ≥) the target size — downscaling from a
+// larger frame is sharper than upscaling from a smaller one. Returns the
+// ICONDIRENTRY, or null when the file is not a .cur.
+function _curPickEntry(dv, count, target) {
+    let best = null, bestFallback = null;
+    for (let i = 0; i < count; i++) {
+        const off = 6 + i * 16;
+        const w = dv.getUint8(off) || 256;
+        const h = dv.getUint8(off + 1) || 256;
+        if (!bestFallback || w < bestFallback.w) bestFallback = { w, h, off, hotX: dv.getUint16(off + 4, true), hotY: dv.getUint16(off + 6, true), size: dv.getUint32(off + 8, true), imgOff: dv.getUint32(off + 12, true) };
+        if (w >= target && (!best || w < best.w)) {
+            best = { w, h, off, hotX: dv.getUint16(off + 4, true), hotY: dv.getUint16(off + 6, true), size: dv.getUint32(off + 8, true), imgOff: dv.getUint32(off + 12, true) };
+        }
+    }
+    return best || bestFallback;
+}
+
+// Resolve a cursor resource to its ICONDIR, returning {dv, count} or null.
+// Accepts a Windows .cur (ICONDIR at offset 0) and an animated .ani — a RIFF
+// "ACON" wrapper whose first "icon" chunk holds a self-contained ICONDIR.
+// .ani frames carry no hotspot in the ICO entries (that lives in the ACON
+// header), so roles built from .ani sources rely on the hotX/hotY overrides
+// in CURSOR_ROLES.
+function _curIconDir(buf) {
+    const dv = new DataView(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+    // .cur / .ico — ICONDIR right at the start
+    if (dv.getUint16(0, true) === 0 && dv.getUint16(2, true) === 2) {
+        return { dv, count: dv.getUint16(4, true) };
+    }
+    // .ani — RIFF "ACON" wrapper; the frames live as "icon" sub-chunks inside a
+    // LIST ("fram") chunk. Walk the top level, then descend into any LIST.
+    if (dv.getUint32(0, true) === 0x46464952 && dv.getUint32(8, true) === 0x4e4f4341) {
+        let off = 12;
+        const end = dv.byteLength;
+        while (off + 8 <= end) {
+            const id = dv.getUint32(off, true);
+            const size = dv.getUint32(off + 4, true);
+            if (id === 0x5453494c) {                    // "LIST" → "fram" frames
+                const subEnd = off + 8 + size;
+                let sub = off + 12;                     // skip the 4-byte form type
+                while (sub + 8 <= subEnd) {
+                    const sid = dv.getUint32(sub, true);
+                    const ssize = dv.getUint32(sub + 4, true);
+                    if (sid === 0x6e6f6369) {           // "icon" — first frame wins
+                        const c = new DataView(dv.buffer.slice(sub + 8, sub + 8 + ssize));
+                        if (c.getUint16(0, true) === 0 && c.getUint16(2, true) === 2) {
+                            return { dv: c, count: c.getUint16(4, true) };
+                        }
+                    }
+                    sub += 8 + ssize + (ssize & 1);
+                }
+            }
+            off += 8 + size + (size & 1);               // RIFF chunks are word-aligned
+        }
+    }
+    return null;
+}
+
+// Decode one 32bpp DIB frame into an <img>-ready canvas (already has correct
+// alpha from the DIB's 0xABGR pixels; bottom-up rows are flipped here).
+function _curFrameToCanvas(dv, entry) {
+    const base = entry.imgOff;
+    if (dv.getUint32(base, true) < 40) return null;      // not a BITMAPINFOHEADER
+    const w = dv.getInt32(base + 4, true);
+    const h = dv.getInt32(base + 8, true) / 2;           // height doubled for the AND mask
+    if (w <= 0 || h <= 0) return null;
+    if (dv.getUint16(base + 12, true) !== 1) return null; // planes
+    if (dv.getUint16(base + 14, true) !== 32) return null; // 32bpp only
+    const xorOff = base + dv.getUint32(base, true);
+    const rowBytes = w * 4;
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const img = canvas.getContext("2d").createImageData(w, h);
+    const px = img.data;
+    for (let y = 0; y < h; y++) {
+        const srcRow = h - 1 - y;                        // DIB is bottom-up
+        const si = xorOff + srcRow * rowBytes;
+        const di = y * w * 4;
+        for (let x = 0; x < w; x++) {
+            const s = si + x * 4;
+            px[di + x * 4]     = dv.getUint8(s + 2);     // B→R
+            px[di + x * 4 + 1] = dv.getUint8(s + 1);     // G
+            px[di + x * 4 + 2] = dv.getUint8(s);         // R→B
+            px[di + x * 4 + 3] = dv.getUint8(s + 3);     // A
+        }
+    }
+    canvas.getContext("2d").putImageData(img, 0, 0);
+    return { canvas, w, h };
+}
+
+// Render role cursors at the configured size and rebuild the #cursor_style
+// block. Appended to <head> AFTER the theming style so its rules win the
+// cascade; the idle-hide guard (body.cursor_hidden) is emitted last so it
+// beats every role rule. Emits nothing for the scifi style or nocursor.
+window._refreshCursor = () => {
+    const old = document.getElementById("cursor_style");
+    if (old) old.remove();
+    if (window.settings.nocursor || window.settings.nocursorOverride) return;
+    if ((window.settings.cursorStyle || "lightech") !== "lightech") return;
+    const size = Math.max(16, Math.min(64, Math.round(Number(window.settings.cursorSize) || 28)));
+    const dataUris = {};
+    for (const [role, spec] of Object.entries(CURSOR_ROLES)) {
+        const p = path.join(cursorsDir, spec.file);
+        let buf;
+        try { buf = fs.readFileSync(p); } catch (e) { continue; }
+        try {
+            const icon = _curIconDir(buf);
+            if (!icon || !icon.count) continue;
+            const entry = _curPickEntry(icon.dv, icon.count, size);
+            const frame = _curFrameToCanvas(icon.dv, entry);
+            if (!frame) continue;
+            const scale = size / entry.w;
+            const cw = Math.max(1, Math.round(entry.w * scale));
+            const ch = Math.max(1, Math.round(entry.h * scale));
+            const out = document.createElement("canvas");
+            out.width = cw; out.height = ch;
+            const ctx = out.getContext("2d");
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = "high";
+            ctx.drawImage(frame.canvas, 0, 0, cw, ch);
+            const hotX = spec.hotX != null ? spec.hotX : entry.hotX; // .ani frames have no hotspot
+            const hotY = spec.hotY != null ? spec.hotY : entry.hotY;
+            dataUris[role] = {
+                url: `url("${out.toDataURL("image/png")}") ${Math.round(hotX * scale)} ${Math.round(hotY * scale)}`,
+                fallback: (role === "default") ? "default" : (role === "hand" ? "pointer" : (role === "text" ? "text" : role))
+            };
+        } catch (e) {}
+    }
+    if (!dataUris.default) return;                       // no cursors on disk → keep scifi
+    const cur = role => dataUris[role] ? `${dataUris[role].url}, ${dataUris[role].fallback}` : "";
+    const css = [];
+    css.push(`html, body, body * { cursor: ${cur("default")} !important; }`);
+    css.push(`a, button, select, summary, label, [role="button"], [onclick], .clickable, input[type="button"], input[type="submit"], input[type="reset"], input[type="checkbox"], input[type="radio"], input[type="color"], input[type="file"] { cursor: ${cur("hand")} !important; }`);
+    css.push(`input:not([type="range"]), textarea, [contenteditable] { cursor: ${cur("text")} !important; }`);
+    css.push(`input[type="range"] { cursor: ${cur("default")} !important; }`);
+    css.push(`[disabled], button:disabled, .disabled { cursor: ${cur("notallowed")} !important; }`);
+    css.push(`[draggable="true"], .grabbable, .mod_handle, .mod_h, .modal_title, .mod_title { cursor: ${cur("move")} !important; }`);
+    // idle-hide guard — last so it beats every role rule on specificity ties
+    css.push(`body.cursor_hidden, body.cursor_hidden * { cursor: none !important; }`);
+    const st = document.createElement("style");
+    st.id = "cursor_style";
+    st.textContent = css.join("\n");
+    document.head.appendChild(st);
+};
+
 // Load UI theme
 window._loadTheme = theme => {
+    window.theme = theme;
+    window.theme.r = theme.colors.r;
+    window.theme.g = theme.colors.g;
+    window.theme.b = theme.colors.b;
 
     if (document.querySelector("style.theming")) {
         document.querySelector("style.theming").remove();
@@ -305,20 +617,21 @@ window._loadTheme = theme => {
 
     body {
         font-family: var(--font_main), sans-serif;
-        cursor: ${(window.settings.nocursorOverride || window.settings.nocursor) ? "none" : "default"} !important;
+        cursor: ${(window.settings.nocursorOverride || window.settings.nocursor) ? "none" : scifiCursor()} !important;
     }
 
     * {
    	   ${(window.settings.nocursorOverride || window.settings.nocursor) ? "cursor: none !important;" : ""}
 	}
 
+    /* auto-hide the cursor after a quiet period — see cursorTrap below */
+    .cursor_hidden, .cursor_hidden * { cursor: none !important; }
+
     ${window._purifyCSS(theme.injectCSS || "")}
     </style>`;
-
-    window.theme = theme;
-    window.theme.r = theme.colors.r;
-    window.theme.g = theme.colors.g;
-    window.theme.b = theme.colors.b;
+    // The cursor-role style must stay AFTER the theming style so its rules win
+    // the cascade; re-append it now that the theming block was rebuilt.
+    if (window._refreshCursor) window._refreshCursor();
 };
 
 function initGraphicalErrorHandling() {
@@ -394,7 +707,8 @@ if (window.settings.nointro || window.settings.nointroOverride) {
     initSystemInformationProxy();
     document.getElementById("boot_screen").remove();
     document.body.setAttribute("class", "");
-    waitForFonts().then(initUI);
+    // no boot animation — lock before initUI reveals anything
+    bootLockThenRun(() => waitForFonts().then(initUI));
 } else {
     displayLine();
 }
@@ -509,7 +823,10 @@ async function displayTitleScreen() {
     initSystemInformationProxy();
     waitForFonts().then(() => {
         bootScreen.remove();
-        initUI();
+        // Boot lock FIRST, before the desktop is built — nothing real is shown
+        // pre-unlock. On unlock (or immediately, with no passcode) bootLockThenRun
+        // runs initUI: shell frame → "Welcome back" → the real desktop assembles.
+        bootLockThenRun(() => initUI());
     });
 }
 
@@ -522,22 +839,25 @@ async function getDisplayName() {
     try {
         user = await require("username")();
     } catch (e) {}
+    if (user) settings.username = user; // remember it so the settings UI shows a real name
 
     return user;
 }
 
 // Create the UI's html structure and initialize the terminal client and the keyboard
 async function initUI() {
-    document.body.innerHTML += `<section class="mod_column" id="mod_column_left">
+    // insertAdjacentHTML (not innerHTML +=) so a pre-existing #lock_screen
+    // overlay survives the UI build — innerHTML += would rebuild <body>.
+    document.body.insertAdjacentHTML("beforeend", `<section class="mod_column" id="mod_column_left">
         <h3 class="title"><p>PANEL</p><p>SYSTEM</p></h3>
     </section>
+    <h3 class="title" id="main_shell_title" style="opacity:0;"><p>TERMINAL</p><p>MAIN SHELL</p></h3>
     <section id="main_shell" style="height:0%;width:0%;opacity:0;margin-bottom:30vh;" augmented-ui="bl-clip tr-clip exe">
-        <h3 class="title" style="opacity:0;"><p>TERMINAL</p><p>MAIN SHELL</p></h3>
         <h1 id="main_shell_greeting"></h1>
     </section>
     <section class="mod_column" id="mod_column_right">
         <h3 class="title"><p>PANEL</p><p>NETWORK</p></h3>
-    </section>`;
+    </section>`);
 
     await _delay(10);
 
@@ -547,18 +867,18 @@ async function initUI() {
     await _delay(500);
 
     document.getElementById("main_shell").setAttribute("style", "margin-bottom: 30vh;");
-    document.querySelector("#main_shell > h3.title").setAttribute("style", "");
+    document.getElementById("main_shell_title").setAttribute("style", "");
 
     await _delay(700);
 
     document.getElementById("main_shell").setAttribute("style", "opacity: 0;");
-    document.body.innerHTML += `
+    document.body.insertAdjacentHTML("beforeend", `
     <div id="bottom_row">
         <section id="filesystem" style="width: 0px;" class="${window.settings.hideDotfiles ? "hideDotfiles" : ""} ${window.settings.fsListView ? "list-view" : ""}">
         </section>
         <section id="cyber_panel" style="opacity:0;" augmented-ui="bl-clip tr-clip exe">
         </section>
-    </div>`;
+    </div>`);
     window.cyberPanel = new CyberPanel({
         container: "cyber_panel"
     });
@@ -642,6 +962,9 @@ async function initUI() {
 
     await _delay(400);
 
+    // (The boot lock ran before initUI — see bootLockThenRun — so the welcome
+    // plays right after unlock, and this point simply continues into the real
+    // desktop build below.)
     greeter.remove();
 
     // Initialize modules
@@ -649,6 +972,52 @@ async function initUI() {
 
     // Left column
     window.mods.clock = new Clock("mod_column_left");
+
+    // Laptop battery readout pinned to the clock's top-left corner. Absolutely
+    // positioned so the centered clock text never shifts; desktops (powerMonitor
+    // reports no battery) hide it entirely.
+    const batteryEl = document.createElement("div");
+    batteryEl.id = "edex_battery";
+    batteryEl.className = "battery_hidden";
+    const clockHost = document.getElementById("mod_clock");
+    if (clockHost) {
+        clockHost.appendChild(batteryEl);
+        const battery = {
+            async refresh() {
+                try {
+                    // Re-query each tick: the clock module may re-render its
+                    // subtree, leaving a captured element detached.
+                    const el = document.getElementById("edex_battery");
+                    if (!el) return;
+                    let b = await ipc.invoke("battery:level");
+                    // Desktops / the mac mini report no battery. When
+                    // settings.batteryAlways is on, show a steady simulated
+                    // readout so the indicator (and its placement) can be seen
+                    // on machines without one.
+                    if ((!b || !b.present) && window.settings.batteryAlways) {
+                        b = { present: true, level: 0.87, charging: true };
+                    }
+                    if (!b || !b.present) { el.className = "battery_hidden"; return; }
+                    const pct = Math.max(0, Math.min(100, Math.round((b.level || 0) * 100)));
+                    el.className = b.charging ? "battery_charging" : "";
+                    el.title = `${pct}% ${b.charging ? "(charging)" : "(battery)"}`;
+                    el.innerHTML =
+                        `<svg viewBox="0 0 32 14" class="battery_ico">` +
+                        `<rect x="1" y="1" width="25" height="12" rx="2" class="battery_out"/>` +
+                        `<rect x="3" y="3" width="${(23 * pct / 100).toFixed(1)}" height="8" rx="1" class="battery_fill"/>` +
+                        `<path d="M28 5v4" class="battery_cap"/>` +
+                        `<path d="${b.charging ? 'M11 8l2-3 2 3' : 'M9 8l2 1 1-4 2 3'}" class="battery_bolt"/>` +
+                        `</svg>`;
+                } catch (e) {}
+            }
+        };
+        battery.refresh();
+        setInterval(() => battery.refresh(), 30000);
+        // Refresh soon after (un)plug transitions too.
+        setTimeout(() => battery.refresh(), 4000);
+        window.battery = battery; // exposed so the settings save can re-run it
+    }
+
     window.mods.sysinfo = new Sysinfo("mod_column_left");
     window.mods.hardwareInspector = new HardwareInspector("mod_column_left");
     window.mods.cpuinfo = new Cpuinfo("mod_column_left");
@@ -788,9 +1157,22 @@ async function initUI() {
                 }
                 await this._ctx.resume();
                 this._recording = true;
+                this._setUi(true);
                 await ipc.invoke("voice:start");
-            } catch (e) { console.warn("voice start failed:", e && e.message); }
-            this._setUi(true);
+            } catch (e) {
+                console.warn("voice start failed:", e && e.message);
+                // Roll back partial state so the button never sticks in a
+                // "recording" state it can't exit (#5). The old code only
+                // toggled the UI after the try — a failed getUserMedia still
+                // painted "recording" while _recording stayed false.
+                this._recording = false;
+                if (this._stream) {
+                    try { this._stream.getTracks().forEach(tr => tr.stop()); } catch (e) {}
+                    this._stream = null;
+                }
+                try { await ipc.invoke("voice:stop"); } catch (e) {}
+                this._setUi(false);
+            }
         },
         async stop() {
             if (!this._recording) return;
@@ -869,6 +1251,18 @@ async function initUI() {
             const ks = Object.keys(window.modals);
             if (ks.length) { try { window.modals[ks[ks.length - 1]].close(); } catch (e) {} }
         },
+        // Start the screensaver from the power menu: close the menu first so the
+        // animation isn't covered by the modal. With lockAfter the dismiss
+        // (any mouse/key input via bumpActivity) always leads into the lock
+        // screen — that's what the power menu's "Lock Screen" does now.
+        startScreensaver(lockAfter) {
+            const ks = Object.keys(window.modals);
+            if (ks.length) { try { window.modals[ks[ks.length - 1]].close(); } catch (e) {} }
+            if (window.screensaver) {
+                if (lockAfter) window.screensaver.forceLockOnDismiss = true;
+                window.screensaver.show();
+            }
+        },
         // Open a modal that runs a command and shows its output; Refresh re-runs it.
         open(title, cmd) {
             const id = "mod_" + require("nanoid").nanoid().slice(0, 6);
@@ -894,20 +1288,6 @@ async function initUI() {
         },
         refresh(id) { if (this._last && this._last.id === id) this._render(id, this._last.cmd); },
         _closeTop() { const ks = Object.keys(window.modals); if (ks.length) { try { window.modals[ks[ks.length - 1]].close(); } catch (e) {} } },
-        // Toggle 12/24-hour in place on the existing clock — re-creating the
-        // module would re-parse the whole left column and break every other
-        // module's DOM/instance references.
-        setClockFormat(hours) {
-            window.settings.clockHours = hours;
-            const c = window.mods.clock;
-            if (c) {
-                c.twelveHours = (hours === 12);
-                const el = document.getElementById("mod_clock");
-                if (el) el.className = (hours === 12) ? "mod_clock_twelve" : "";
-                c.updateClock();
-            }
-            this._closeTop();
-        },
         formatDialog() {
             new Modal({
                 type: "custom", title: "FORMAT DISK",
@@ -928,6 +1308,16 @@ async function initUI() {
             const fs = ((document.getElementById("sysfmt_fs") || {}).value || "vfat");
             if (!/^\/dev\/(sd|vd|nvme|mmcblk)/.test(dev)) return;
             this.act("sudo mkfs." + fs + " " + dev);
+        },
+        // Show/hide the Claude API key in Settings. Toggling type between
+        // password<->text; the input's id never changes so the save handler
+        // still reads the value via getElementById.
+        toggleClaudeKey() {
+            const el = document.getElementById("settingsEditor-claude-apiKey");
+            const btn = document.getElementById("settingsEditor-claude-apiKey-toggle");
+            if (!el) return;
+            if (el.type === "password") { el.type = "text"; if (btn) btn.textContent = "HIDE"; }
+            else { el.type = "password"; if (btn) btn.textContent = "SHOW"; }
         }
     };
 
@@ -940,12 +1330,14 @@ async function initUI() {
         if (t.closest("button") || t.closest("#keyboard_layer")) return; // interactive children
 
         if (t.closest("#mod_clock")) {
-            new Modal({ type: "custom", title: "CLOCK & POWER",
+            // While the lock screen is up the clock stays interactive so the
+            // power options remain reachable — but "Lock Screen" is pointless
+            // when we're already locked, so drop that entry.
+            const alreadyLocked = window.lockScreen && window.lockScreen.active;
+            new Modal({ type: "custom", title: "POWER",
                 html: `<div class="mod_menu">
-                    <button onclick="window.sysCmd.setClockFormat(0)">24-hour clock</button>
-                    <button onclick="window.sysCmd.setClockFormat(12)">12-hour clock</button>
                     <button onclick="window.sysCmd.act('sudo systemctl reboot')">Restart</button>
-                    <button onclick="window.lockScreen && window.lockScreen.show()">Lock Screen</button>
+                    ${alreadyLocked ? "" : `<button onclick="window.sysCmd.startScreensaver(true)">Lock Screen</button>`}
                     <button onclick="window.sysCmd.act('sudo systemctl suspend')">Suspend</button>
                     <button class="mod_menu_danger" onclick="window.sysCmd.act('sudo poweroff')">Shutdown</button>
                 </div>`, closeLabel: "Close" });
@@ -953,7 +1345,11 @@ async function initUI() {
             window.sysCmd.open("CPU INFO", "lscpu 2>/dev/null | head -25; echo; echo '--- LOAD ---'; uptime");
         } else if (t.closest("#mod_ramwatcher_inner")) {
             window.sysCmd.open("MEMORY", "free -h; echo; echo '--- SWAP ---'; swapon --show 2>/dev/null; echo; echo '--- VMSTAT ---'; vmstat 1 2 | tail -2");
-        } else if (t.closest("#cyber_panel")) {
+        } else if (t.closest("#cyber_panel") && !(window.lockScreen && window.lockScreen.active)) {
+            // While locked, the cyber panel is raised only so the on-screen
+            // keyboard stays interactive (#85). The strip above the keys has
+            // pointer-events:none, so a click there falls through to the panel
+            // itself — it must not open the DISK MANAGEMENT menu mid-lock.
             new Modal({ type: "custom", title: "DISK MANAGEMENT",
                 html: `<div class="mod_menu">
                     <button onclick="window.sysCmd.open('Disks', 'lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE')">List Disks</button>
@@ -1055,9 +1451,8 @@ async function initUI() {
         status: () => ipc.invoke("wifi:status")
     };
     window.wifiPanel = new WifiPanel();
-    window.lockScreen = new LockScreen();
     ipc.on("open-wifi-panel", () => { if (window.wifiPanel) window.wifiPanel.open(); });
-    ipc.on("lock-screen", () => { if (window.lockScreen) window.lockScreen.show(); });
+    ipc.on("lock-screen", () => { if (window.lockScreen) window.lockScreen.engage(); });
     ipc.on("edex-download-done", (e, d) => {
         if (window.wifiPanel) window.wifiPanel._notify((d && d.ok ? "Saved to Downloads: " : "Download failed: ") + ((d && d.name) || ""));
     });
@@ -1231,6 +1626,11 @@ async function initUI() {
 
     // First launch: ask for the UI language once, once the interface is up.
     if (!window.settings.language) setTimeout(() => window.showLanguagePicker(), 800);
+    // (The boot-time lock already ran before initUI — see bootLockThenRun.)
+
+    // The real desktop is fully built (terminals + tabs + browser registered).
+    // From here on, show() means a real code/matrix lock, never the boot lock.
+    window._uiReady = true;
 }
 
 window.themeChanger = theme => {
@@ -1254,7 +1654,8 @@ window.focusShellTab = number => {
     document.querySelectorAll(`ul#main_shell_tabs > li:not(:nth-child(${number+1}))`).forEach(e => {
         e.setAttribute("class", "");
     });
-    document.getElementById("shell_tab"+number).setAttribute("class", "active");
+    const shellTabEl = document.getElementById("shell_tab"+number);
+    if (shellTabEl) shellTabEl.setAttribute("class", "active");
 
     // Toggle the content pane active class. The generic child selector covers
     // both the <pre> terminals and the <div> browser/webapp slots.
@@ -1354,6 +1755,20 @@ window.openSettings = async () => {
         </div>`;
     const section = key => `<div class="settingsEditor_section">${t(key)}</div>`;
 
+    // Numeric settings use dropdowns (no range sliders in the HUD): one <option>
+    // per step from min..max. `val` picks the current selection; `label` renders
+    // the visible text (e.g. "70%" for the persisted value "0.7").
+    const numOptions = (min, max, step, label, val) => {
+        const cur = Number(val);
+        const out = [];
+        for (let v = min; v <= max + step / 2; v += step) {
+            const key = String(Math.round(v * 100) / 100);
+            const selected = isFinite(cur) && Math.abs(v - cur) < step / 2 ? " selected" : "";
+            out.push(`<option value="${key}"${selected}>${label(v)}</option>`);
+        }
+        return out.join("");
+    };
+
     // Two-pane categories. Every control lives in the DOM at all times (hidden
     // panes are display:none), so setupSettingsDropdowns converts all <select>s
     // exactly once and writeSettingsFile can read every field regardless of
@@ -1364,7 +1779,7 @@ window.openSettings = async () => {
                 <option value="zh" ${window.settings.language === "zh" ? "selected" : ""}>中文</option>
                 <option value="en" ${window.settings.language !== "zh" ? "selected" : ""}>English</option>
             </select>`, "settings.lang.help"),
-            settingsRow("settings.username", `<input type="text" id="settingsEditor-username" value="${window.settings.username}">`, "settings.username.help"),
+            settingsRow("settings.username", `<input type="text" id="settingsEditor-username" value="${window.settings.username || ""}">`, "settings.username.help"),
             settingsRow("settings.theme", `<select id="settingsEditor-theme">
                 <option>${window.settings.theme}</option>
                 ${themes}
@@ -1380,12 +1795,19 @@ window.openSettings = async () => {
                 <option>${window.settings.showKeyboard !== true}</option>
             </select>`, "settings.showKeyboard.help"),
         ].join("") },
+        { id: "terminal", titleKey: "settings.cat.terminal", html: () => [
+            settingsRow("settings.terminalScrollSensitivity", `<input type="text" id="settingsEditor-terminalScrollSensitivity" value="${window.settings.terminalScrollSensitivity ?? 1}">`, "settings.terminalScrollSensitivity.help"),
+            settingsRow("settings.terminalScrollDirection", `<select id="settingsEditor-terminalScrollDirection">
+                <option value="normal" ${window.settings.terminalScrollDirection !== "reversed" ? "selected" : ""}>${t("settings.scrollDir.normal")}</option>
+                <option value="reversed" ${window.settings.terminalScrollDirection === "reversed" ? "selected" : ""}>${t("settings.scrollDir.reversed")}</option>
+            </select>`, "settings.terminalScrollDirection.help"),
+        ].join("") },
         { id: "sound", titleKey: "settings.cat.sound", html: () => [
             settingsRow("settings.audio", `<select id="settingsEditor-audio">
                 <option>${window.settings.audio}</option>
                 <option>${!window.settings.audio}</option>
             </select>`, "settings.audio.help"),
-            settingsRow("settings.audioVolume", `<input type="text" id="settingsEditor-audioVolume" value="${window.settings.audioVolume || '1.0'}">`, "settings.audioVolume.help"),
+            settingsRow("settings.audioVolume", `<select id="settingsEditor-audioVolume">${numOptions(0, 1, 0.05, v => Math.round(v * 100) + "%", window.settings.audioVolume ?? 1)}</select>`, "settings.audioVolume.help"),
             settingsRow("settings.disableFeedbackAudio", `<select id="settingsEditor-disableFeedbackAudio">
                 <option>${window.settings.disableFeedbackAudio}</option>
                 <option>${!window.settings.disableFeedbackAudio}</option>
@@ -1400,6 +1822,18 @@ window.openSettings = async () => {
                 <option>${window.settings.nocursor}</option>
                 <option>${!window.settings.nocursor}</option>
             </select>`, "settings.nocursor.help" + (window.settings.nocursorOverride ? t("settings.overridden") : "")),
+            settingsRow("settings.cursorAutoHide", `<select id="settingsEditor-cursorAutoHide">
+                <option>${window.settings.cursorAutoHide !== false}</option>
+                <option>${window.settings.cursorAutoHide === false}</option>
+            </select>`, "settings.cursorAutoHide.help"),
+            settingsRow("settings.cursorAutoHideDelay", `<input type="text" id="settingsEditor-cursorAutoHideDelay" value="${window.settings.cursorAutoHideDelay ?? 10}">`, "settings.cursorAutoHideDelay.help"),
+            settingsRow("settings.cursorSize", `<select id="settingsEditor-cursorSize">${numOptions(16, 64, 2, v => v + "px", window.settings.cursorSize ?? 28)}</select>`, "settings.cursorSize.help"),
+            settingsRow("settings.mouseWheelSpeed", `<select id="settingsEditor-mouseWheelSpeed">${numOptions(0.25, 4, 0.25, v => v + "×", window.settings.mouseWheelSpeed ?? 1)}</select>`, "settings.mouseWheelSpeed.help"),
+            settingsRow("settings.cursorSpeed", `<select id="settingsEditor-cursorSpeed">${numOptions(0.25, 4, 0.25, v => v + "×", window.settings.cursorSpeed ?? 1)}</select>`, "settings.cursorSpeed.help"),
+            // cursorStyle selector hidden: the WP7 pointer pack is the only
+            // style shipped now, so there is nothing to choose between.
+            // batteryAlways removed: the battery indicator is verified on real
+            // hardware — the simulated-readout toggle no longer needs a UI entry.
         ].join("") },
         { id: "lock", titleKey: "settings.cat.lock", html: () => [
             settingsRow("settings.screensaverEnabled", `<select id="settingsEditor-screensaverEnabled">
@@ -1407,12 +1841,13 @@ window.openSettings = async () => {
                 <option>${!window.settings.screensaverEnabled}</option>
             </select>`, "settings.screensaverEnabled.help"),
             settingsRow("settings.screensaverIdle", `<input type="text" id="settingsEditor-screensaverIdle" value="${window.settings.screensaverIdle || 300}">`, "settings.screensaverIdle.help"),
+            settingsRow("settings.screenOffIdle", `<input type="text" id="settingsEditor-screenOffIdle" value="${window.settings.screenOffIdle || 1800}">`, "settings.screenOffIdle.help"),
             settingsRow("settings.screensaverStyle", `<select id="settingsEditor-screensaverStyle">
                 <option>${window.settings.screensaverStyle || "code"}</option>
                 <option>${(window.settings.screensaverStyle === "matrix") ? "code" : "matrix"}</option>
             </select>`, "settings.screensaverStyle.help"),
             section("settings.section.lock"),
-            settingsRow("settings.lockCode", `<input type="password" id="settingsEditor-lockCode" autocomplete="off" value="${window.settings.lockCode || '0000'}">`, "settings.lockCode.help"),
+            settingsRow("settings.lockCode", `<input type="password" id="settingsEditor-lockCode" autocomplete="off" inputmode="numeric" maxlength="8" value="${window.settings.lockCode || '0000'}">`, "settings.lockCode.help"),
             settingsRow("settings.lockOnIdle", `<select id="settingsEditor-lockOnIdle">
                 <option>${window.settings.lockOnIdle !== false}</option>
                 <option>${window.settings.lockOnIdle === false}</option>
@@ -1457,10 +1892,23 @@ window.openSettings = async () => {
                 <option>${!(window.settings.claude || {}).enabled}</option>
             </select>`, "settings.claude.enabled.help"),
             settingsRow("settings.claude.baseUrl", `<input type="text" id="settingsEditor-claude-baseUrl" value="${(window.settings.claude || {}).baseUrl || ''}">`, "settings.claude.baseUrl.help"),
-            settingsRow("settings.claude.apiKey", `<input type="password" id="settingsEditor-claude-apiKey" autocomplete="off" value="${(window.settings.claude || {}).apiKey || ''}">`, "settings.claude.apiKey.help"),
+            settingsRow("settings.claude.apiKey", `<div class="settings_api_pw">
+                <input type="password" id="settingsEditor-claude-apiKey" autocomplete="off" value="${(window.settings.claude || {}).apiKey || ''}">
+                <button type="button" id="settingsEditor-claude-apiKey-toggle" class="settings_pw_toggle" onclick="window.sysCmd.toggleClaudeKey()">SHOW</button>
+            </div>`, "settings.claude.apiKey.help"),
             settingsRow("settings.claude.model", `<input type="text" id="settingsEditor-claude-model" value="${(window.settings.claude || {}).model || ''}">`, "settings.claude.model.help"),
             settingsRow("settings.claude.haikuModel", `<input type="text" id="settingsEditor-claude-haikuModel" value="${(window.settings.claude || {}).haikuModel || ''}">`, "settings.claude.haikuModel.help"),
             section("settings.section.claudeNote"),
+        ].join("") },
+        { id: "power", titleKey: "settings.cat.power", html: () => [
+            settingsRow("settings.power.mode", `<div class="settings_power_modes" id="settingsPowerModes">
+                <button type="button" data-gov="powersave">${t("settings.power.powersave")}</button>
+                <button type="button" data-gov="schedutil">${t("settings.power.schedutil")}</button>
+                <button type="button" data-gov="performance">${t("settings.power.performance")}</button>
+            </div>`, "settings.power.mode.help"),
+            settingsRow("settings.power.freq", `<span id="settingsPowerReadout">–</span>`, "settings.power.freq.help"),
+            settingsRow("settings.power.brightness", `<select id="settingsPowerBrightness">${numOptions(0, 100, 5, v => v + "%", 50)}</select>`, "settings.power.brightness.help"),
+            settingsRow("settings.power.volume", `<select id="settingsPowerVolume">${numOptions(0, 100, 5, v => v + "%", 70)}</select>`, "settings.power.volume.help"),
         ].join("") },
     ];
 
@@ -1487,9 +1935,7 @@ window.openSettings = async () => {
             {label: t("settings.btn.save"), action: "window.writeSettingsFile()"},
             {label: t("settings.btn.shortcuts"), action: "window.openShortcutsHelp()"},
             {label: t("settings.btn.wifi"), action: "window.wifiPanel.open()"},
-            {label: t("settings.btn.lock"), action: "window.lockScreen.show()"},
             {label: t("settings.btn.update"), action: "window.systemUpdate.open()"},
-            {label: t("settings.btn.screensaver"), action: "window.modals[Object.keys(window.modals).pop()].close(); setTimeout(() => window.screensaver.show(), 150);"},
             {label: t("settings.btn.reload"), action: "window.location.reload(true);"},
             {label: t("settings.btn.restart"), action: "remote.app.relaunch();remote.app.quit();"}
         ]
@@ -1561,8 +2007,73 @@ window.openSettings = async () => {
     // the active category button so the keyboard can drive the sidebar.
     setTimeout(() => {
         window.setupSettingsDropdowns();
+        window.populatePowerControls();
         const active = document.querySelector("#settingsSide .settings_cat_btn.active");
         if (active) active.focus();
+        // Lock passcode field: digits only, 4-8 characters. Fewer than 4 turns
+        // the input border red and disables the Save button; at 8 digits another
+        // keystroke is rejected with a red flash + shake and is not recorded.
+        // Non-digit characters are dropped silently (typed or pasted) (#94).
+        const lockInput = document.getElementById("settingsEditor-lockCode");
+        if (lockInput) {
+            const saveLabel = t("settings.btn.save");
+            const findSaveBtn = () => {
+                const m = window._settingsModal;
+                if (!m || !m.id) return null;
+                const el = document.getElementById("modal_" + m.id);
+                if (!el) return null;
+                return Array.from(el.querySelectorAll("button")).find(b => b.textContent.trim() === saveLabel) || null;
+            };
+            const updateLockState = () => {
+                const len = lockInput.value.length;
+                const valid = len >= 4 && len <= 8;
+                lockInput.classList.toggle("settings_invalid", !valid);
+                const btn = findSaveBtn();
+                if (btn) {
+                    btn.disabled = !valid;
+                    btn.classList.toggle("settings_btn_disabled", !valid);
+                }
+            };
+            const shakeInvalid = () => {
+                lockInput.classList.add("settings_invalid");
+                lockInput.classList.remove("settings_shake");
+                void lockInput.offsetWidth; // restart the animation
+                lockInput.classList.add("settings_shake");
+                setTimeout(() => {
+                    lockInput.classList.remove("settings_shake");
+                    updateLockState();
+                }, 430);
+            };
+            lockInput.addEventListener("keydown", e => {
+                // Keep copy/paste/select-all (and other shortcuts) working.
+                if (e.ctrlKey || e.metaKey || e.altKey) return;
+                if (e.key.length === 1 && !/^[0-9]$/.test(e.key)) { e.preventDefault(); return; }
+                if (/^[0-9]$/.test(e.key) && lockInput.value.length >= 8) { e.preventDefault(); shakeInvalid(); return; }
+            });
+            lockInput.addEventListener("input", () => {
+                const clean = lockInput.value.replace(/[^0-9]/g, "");
+                if (clean !== lockInput.value) lockInput.value = clean;
+                if (lockInput.value.length > 8) lockInput.value = lockInput.value.slice(0, 8);
+                updateLockState();
+            });
+            lockInput.addEventListener("blur", () => updateLockState());
+            updateLockState();
+        }
+        // Screen-off timeout must stay at or above the screensaver timeout —
+        // flag the field red while it violates that (the saved value is still
+        // clamped up to the screensaver value on save).
+        const screenOffInput = document.getElementById("settingsEditor-screenOffIdle");
+        const screensaverIdleInput = document.getElementById("settingsEditor-screensaverIdle");
+        const checkScreenOff = () => {
+            const so = Number(screenOffInput ? screenOffInput.value : 0);
+            const sv = Number(screensaverIdleInput ? screensaverIdleInput.value : 300);
+            if (screenOffInput) screenOffInput.classList.toggle("settings_invalid", !(so >= sv));
+        };
+        if (screenOffInput) {
+            screenOffInput.addEventListener("input", checkScreenOff);
+            if (screensaverIdleInput) screensaverIdleInput.addEventListener("input", checkScreenOff);
+            checkScreenOff();
+        }
     }, 50);
 };
 
@@ -1570,6 +2081,72 @@ window.openSettings = async () => {
 // custom dropdown. A hidden <input> keeps the original id and current value, so
 // the save code that reads `document.getElementById("settingsEditor-X").value`
 // keeps working unchanged.
+// Embedded performance controller (#37): fill the 省电/平衡/性能 buttons with
+// the CPU's actual available governors, highlight the active one, and apply
+// the choice on click. Persists the mode so the next boot re-applies it.
+window.populatePowerControls = () => {
+    const wrap = document.getElementById("settingsPowerModes");
+    const readout = document.getElementById("settingsPowerReadout");
+    if (!wrap) return;
+    const setActive = current => {
+        wrap.querySelectorAll("button[data-gov]").forEach(b => {
+            b.classList.toggle("active", b.dataset.gov === current);
+        });
+    };
+    ipc.invoke("power:governor").then(info => {
+        if (!info || !info.ok) return;
+        if (readout) readout.textContent = info.freqMHz != null ? info.freqMHz + " MHz" : "–";
+        const avail = info.available || [];
+        wrap.querySelectorAll("button[data-gov]").forEach(b => {
+            b.style.display = avail.includes(b.dataset.gov) ? "" : "none";
+        });
+        setActive(info.current);
+        wrap.onclick = e => {
+            const btn = e.target.closest ? e.target.closest("button[data-gov]") : null;
+            if (!btn) return;
+            setActive(btn.dataset.gov);
+            ipc.invoke("power:governor", { governor: btn.dataset.gov }).then(r => {
+                if (r && r.freqMHz != null && readout) readout.textContent = r.freqMHz + " MHz";
+            });
+            window.settings.performanceMode = btn.dataset.gov;
+            if (typeof window.writeSettingsFile === "function") window.writeSettingsFile();
+        };
+    }).catch(() => {});
+
+    // Brightness + volume dropdowns (immediate system effect, debounced). The
+    // selects were already converted to .settings_dd dropdowns by
+    // setupSettingsDropdowns, so `el` is the hidden input that holds the value;
+    // apply on option click, and sync the visible selection from the system.
+    const slider = (id, invoke) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const wrap = el.closest ? el.closest(".settings_dd") : null;
+        let debounce = null;
+        const apply = () => {
+            if (debounce) clearTimeout(debounce);
+            debounce = setTimeout(() => ipc.invoke(invoke, { set: Number(el.value) }).catch(() => {}), 120);
+        };
+        if (wrap) {
+            wrap.addEventListener("click", e => {
+                if (!(e.target.closest && e.target.closest(".mod_loc_opt"))) return;
+                setTimeout(apply, 0); // el.value is updated by the list handler
+            });
+            ipc.invoke(invoke).then(r => {
+                if (!r || !r.ok || r.percent == null) return;
+                const v = String(Math.round(r.percent / 5) * 5);
+                el.value = v;
+                wrap.querySelectorAll(".mod_loc_opt").forEach(o =>
+                    o.classList.toggle("mod_loc_opt_active", o.dataset.value === v));
+                const btn = wrap.querySelector(".mod_loc_btn");
+                const cur = wrap.querySelector(".mod_loc_opt_active");
+                if (btn && cur) btn.textContent = cur.textContent;
+            }).catch(() => {});
+        }
+    };
+    slider("settingsPowerBrightness", "power:brightness");
+    slider("settingsPowerVolume", "power:volume");
+};
+
 window.setupSettingsDropdowns = () => {
     document.querySelectorAll("#settingsEditor select").forEach(sel => {
         let wrap = document.createElement("div");
@@ -1645,6 +2222,14 @@ window.writeFile = (path) => {
 };
 
 window.writeSettingsFile = () => {
+    // Passcode must be 4-8 digits to save (the Save button is already disabled
+    // while it is short, but guard every path — e.g. the external editor).
+    const lockInput = document.getElementById("settingsEditor-lockCode");
+    if (lockInput && (lockInput.value.length < 4 || lockInput.value.length > 8)) {
+        document.getElementById("settingsEditorStatus").innerText =
+            t("settings.lockCode.invalidStatus");
+        return;
+    }
     // MERGE into the in-memory settings instead of rebuilding them from the form:
     // rebuilding used to silently drop every key without a form control (webapps,
     // weatherLocation, and the settings removed from the UI: port, pingAddr,
@@ -1665,11 +2250,30 @@ window.writeSettingsFile = () => {
     s.fsListView = (document.getElementById("settingsEditor-fsListView").value === "true");
     s.screensaverEnabled = (document.getElementById("settingsEditor-screensaverEnabled").value === "true");
     s.screensaverIdle = Number(document.getElementById("settingsEditor-screensaverIdle").value);
+    // Screen-off must never be shorter than the screensaver timeout — clamp it
+    // up to the screensaver value if the user entered something lower (and
+    // mirror the clamp into the field so the displayed value stays truthful).
+    s.screenOffIdle = Number(document.getElementById("settingsEditor-screenOffIdle").value);
+    const minScreenOff = Math.max(Number(s.screensaverIdle) || 300, 0);
+    if (!(s.screenOffIdle >= minScreenOff)) {
+        s.screenOffIdle = minScreenOff;
+        const soInput = document.getElementById("settingsEditor-screenOffIdle");
+        if (soInput) soInput.value = String(minScreenOff);
+    }
     s.screensaverStyle = document.getElementById("settingsEditor-screensaverStyle").value;
     s.lockCode = document.getElementById("settingsEditor-lockCode").value;
     s.lockOnIdle = (document.getElementById("settingsEditor-lockOnIdle").value === "true");
     s.showKeyboard = (document.getElementById("settingsEditor-showKeyboard").value === "true");
     s.bootAnimAfterUnlock = (document.getElementById("settingsEditor-bootAnimAfterUnlock").value === "true");
+    s.terminalScrollSensitivity = Number(document.getElementById("settingsEditor-terminalScrollSensitivity").value);
+    s.terminalScrollDirection = document.getElementById("settingsEditor-terminalScrollDirection").value;
+    s.cursorAutoHide = (document.getElementById("settingsEditor-cursorAutoHide").value === "true");
+    s.cursorAutoHideDelay = Number(document.getElementById("settingsEditor-cursorAutoHideDelay").value);
+    // cursorStyle has no form control anymore (the selector was hidden — the
+    // Black-Void pack is the only style shipped); keep whatever value is stored.
+    s.cursorSize = Number(document.getElementById("settingsEditor-cursorSize").value);
+    s.mouseWheelSpeed = Number(document.getElementById("settingsEditor-mouseWheelSpeed").value);
+    s.cursorSpeed = Number(document.getElementById("settingsEditor-cursorSpeed").value);
     s.appSort = document.getElementById("settingsEditor-appSort").value;
     s.language = document.getElementById("settingsEditor-language").value;
     s.claude = {
@@ -1696,6 +2300,14 @@ window.writeSettingsFile = () => {
     window.settings = s;
     fs.writeFileSync(settingsFile, JSON.stringify(s, "", 4));
     document.getElementById("settingsEditorStatus").innerText = t("settings.savedStatus")+new Date().toTimeString();
+
+    // Pointer look/size changes rebuild the cursor-role style in place (no
+    // reload); the wheel multiplier is read live by its listeners.
+    if (window._refreshCursor) window._refreshCursor();
+    if (window.battery && window.battery.refresh) window.battery.refresh();
+    // Cursor speed is an OS-level pointer property — ask the main process to
+    // apply it (no-op in the macOS preview, real on the eDEX-OS device).
+    try { ipc.invoke("mouse:speed", s.cursorSpeed || 1); } catch (e) {}
 
     // A language change re-opens the dialog in the new language (no full reload,
     // so the boot animation does not replay).
@@ -1961,6 +2573,17 @@ window.addEventListener("blur", () => {
 
 // Prevent showing menu, exiting fullscreen or app with keyboard shortcuts
 document.addEventListener("keydown", e => {
+    // Win+L (super/meta + L): lock the screen — screensaver first, then the
+    // lock on dismiss, exactly like the power menu's Lock Screen action.
+    if (e.metaKey && (e.key === "l" || e.key === "L")) {
+        e.preventDefault();
+        if (window.sysCmd && typeof window.sysCmd.startScreensaver === "function") {
+            window.sysCmd.startScreensaver(true);
+        } else if (window.lockScreen) {
+            window.lockScreen.show();
+        }
+        return;
+    }
     if (e.key === "Alt") {
         e.preventDefault();
     }
@@ -2115,79 +2738,48 @@ window.screensaver = (() => {
     // code so it never visibly repeats - brace depth and indentation stay
     // coherent for a premium, "real code" look) ----
     let codeTimer = null;
+    // Wind-down guard: once set, the generator only serves the closing banner
+    // (buildEnding) instead of a fresh collection, so input that dismisses the
+    // screensaver mid-transition cannot start new code streaming.
+    let winding = false;
     const pick = a => a[Math.floor(Math.random() * a.length)];
     const R = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo));
     // Appearance over rigour: generate the LOOK of a real scientific codebase -
-    // long signatures, long physics formulas, long explanatory comments. Each
-    // "file" is one whole program (related functions + a main() that calls
-    // them), streamed line-by-line with no bursts, so the code never seems to
-    // "jump" to something unrelated.
+    // long signatures, long physics formulas, long explanatory comments. The
+    // stream is divided into collections — each one a substantial algorithm
+    // (ballistic trajectory, weapon yield, decoy discrimination, …) of 5-9
+    // related functions — so it never reads as a short loop of unrelated scraps.
     const pad = n => "    ".repeat(Math.max(0, n));
     const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
-    const GENWORDS = ["state", "vector", "matrix", "delta", "alpha", "beta", "gamma", "coef", "rate", "factor", "index", "buffer", "sample", "offset", "scale", "bound", "residual", "kernel"];
-    const SCENARIOS = {
-        ballistic: {
-            nouns: ["apogee", "reentry", "trajectory", "overpressure", "impact", "fallout", "yield", "thrust", "azimuth", "elevation", "payload", "warhead"],
-            verbs: ["compute", "predict", "integrate", "estimate", "assess", "trace", "solve", "model"],
-            note: "three-stage ballistic trajectory and yield model"
-        },
-        radar: {
-            nouns: ["track", "doppler", "beam", "clutter", "range_rate", "cross_section", "azimuth", "elevation", "signal", "noise_floor", "coherence"],
-            verbs: ["update", "init", "detect", "fuse", "coast", "handoff", "filter", "gate"],
-            note: "phased-array tracking and CFAR detection"
-        },
-        emp: {
-            nouns: ["coupling", "surge", "attenuation", "resonance", "hardening", "induction", "shield", "cable", "impedance", "skin_depth"],
-            verbs: ["compute", "estimate", "assess", "model", "verify", "sweep", "clamp", "measure"],
-            note: "HEMP coupling and circuit hardening"
-        },
-        winter: {
-            nouns: ["aerosol", "optical_depth", "insolation", "temperature_drop", "settling", "stratosphere", "soot", "albedo", "tau", "forcing"],
-            verbs: ["inject", "evolve", "transport", "project", "compute", "estimate", "advect", "scatter"],
-            note: "stratospheric aerosol transport and forcing"
-        },
-        uplink: {
-            nouns: ["downlink", "carrier", "parity", "ack", "retransmit", "jitter", "sync", "throughput", "channel", "latency"],
-            verbs: ["encrypt", "decode", "verify", "resync", "throttle", "buffer", "handshake", "route"],
-            note: "deep-space uplink and forward error correction"
-        },
-        recon: {
-            nouns: ["signature", "sweep", "footprint", "spectrum", "return", "masking", "baseline", "resolution", "aperture", "phase"],
-            verbs: ["scan", "classify", "normalize", "correlate", "lock", "descope", "triangulate", "confirm"],
-            note: "orbital reconnaissance and signature analysis"
-        }
-    };
+    const GENWORDS = ["state", "vector", "matrix", "delta", "alpha", "beta", "gamma", "coef", "rate", "factor", "index", "buffer", "sample", "offset", "scale", "bound", "residual", "kernel", "envelope", "spectrum", "derivative", "integral"];
+    const DOMAINS = [
+        { key: "ballistic", nouns: ["apogee", "reentry", "trajectory", "overpressure", "impact", "fallout", "yield", "thrust", "azimuth", "elevation", "payload", "warhead"], verbs: ["compute", "predict", "integrate", "estimate", "assess", "trace", "solve", "model"], note: "three-stage ballistic trajectory and yield model" },
+        { key: "radar", nouns: ["track", "doppler", "beam", "clutter", "range_rate", "cross_section", "azimuth", "elevation", "signal", "noise_floor", "coherence"], verbs: ["update", "init", "detect", "fuse", "coast", "handoff", "filter", "gate"], note: "phased-array tracking and CFAR detection" },
+        { key: "emp", nouns: ["coupling", "surge", "attenuation", "resonance", "hardening", "induction", "shield", "cable", "impedance", "skin_depth"], verbs: ["compute", "estimate", "assess", "model", "verify", "sweep", "clamp", "measure"], note: "HEMP coupling and circuit hardening" },
+        { key: "winter", nouns: ["aerosol", "optical_depth", "insolation", "temperature_drop", "settling", "stratosphere", "soot", "albedo", "tau", "forcing"], verbs: ["inject", "evolve", "transport", "project", "compute", "estimate", "advect", "scatter"], note: "stratospheric aerosol transport and forcing" },
+        { key: "uplink", nouns: ["downlink", "carrier", "parity", "ack", "retransmit", "jitter", "sync", "throughput", "channel", "latency"], verbs: ["encrypt", "decode", "verify", "resync", "throttle", "buffer", "handshake", "route"], note: "deep-space uplink and forward error correction" },
+        { key: "recon", nouns: ["signature", "sweep", "footprint", "spectrum", "return", "masking", "baseline", "resolution", "aperture", "phase"], verbs: ["scan", "classify", "normalize", "correlate", "lock", "descope", "triangulate", "confirm"], note: "orbital reconnaissance and signature analysis" },
+        { key: "sonar", nouns: ["bearing", "beam", "broadside", "reverberation", "clutter", "ping", "doppler", "depth", "sidelobe", "array"], verbs: ["beamform", "normalize", "localize", "classify", "track", "filter", "resolve", "integrate"], note: "passive sonar beamforming and contact localisation" },
+        { key: "ecm", nouns: ["jammer", "burnthrough", "standoff", "noise", "deception", "saturation", "retrograde", "pattern", "gate", "decoy"], verbs: ["generate", "modulate", "suppress", "sequence", "cancel", "null", "blank", "deceive"], note: "standoff jamming and ECCM burnthrough" },
+        { key: "yield", nouns: ["fission", "fusion", "yield", "compression", "tamp", "neutron", "flux", "burn", "efficiency", "criticality"], verbs: ["scale", "estimate", "model", "compute", "bound", "predict", "assess", "derive"], note: "weapon yield scaling and burn-efficiency model" },
+        { key: "orbit", nouns: ["perigee", "apogee", "inclination", "node", "eccentricity", "semi_major", "perturbation", "drag", "sun_sync", "ground_track"], verbs: ["propagate", "fit", "estimate", "correct", "predict", "maintain", "debias", "maneuver"], note: "low-orbit propagation and SGP4-style fitting" },
+        { key: "warhead", nouns: ["heat_shield", "ablation", "stagnation", "tps", "reentry", "flux", "char", "blunting", "angle", "corridor"], verbs: ["integrate", "model", "compute", "size", "verify", "cool", "track", "bound"], note: "reentry-vehicle aerothermodynamics and TPS sizing" },
+        { key: "decoy", nouns: ["signature", "chaff", "separation", "contrast", "screening", "kinematics", "mass_ratio", "precession", "midcourse", "target"], verbs: ["discriminate", "compare", "identify", "track", "measure", "classify", "score", "gate"], note: "midcourse decoy discrimination and target scoring" },
+        { key: "booster", nouns: ["stage", "thrust", "mass_fraction", "isp", "burntime", "nozzle", "chamber", "dynes", "propellant", "trajectory"], verbs: ["model", "compute", "optimize", "simulate", "budget", "constrain", "throttle", "stage"], note: "solid-rocket staging and ascent performance" },
+        { key: "fuze", nouns: ["arming", "detonation", "timing", "standoff", "proximity", "safety", "interlock", "range_gate", "airburst", "contact"], verbs: ["schedule", "verify", "authorize", "delay", "sync", "monitor", "rearm", "clear"], note: "fuze arming chain and airburst timing" },
+        { key: "guidance", nouns: ["inertial", "misalignment", "drift", "accelerometer", "gyro", "navigation", "correction", "bias", "alignment", "reset"], verbs: ["filter", "estimate", "update", "correct", "align", "fuse", "compensate", "recalibrate"], note: "inertial navigation and INS/GPS fusion" },
+        { key: "c2", nouns: ["tasking", "latency", "handover", "bandwidth", "picture", "engagement", "deconfliction", "priority", "slot", "sector"], verbs: ["schedule", "assign", "deconflict", "queue", "rank", "handoff", "reallocate", "filter"], note: "command-and-control tasking and engagement scheduling" },
+        { key: "drone", nouns: ["waypoint", "swarm", "separation", "battery", "loiter", "path", "obstacle", "handoff", "station", "relay"], verbs: ["plan", "route", "deconflict", "assign", "replan", "monitor", "sync", "recover"], note: "autonomous swarm routing and collision avoidance" },
+        { key: "cyber", nouns: ["intrusion", "anomaly", "signature", "flow", "baseline", "threshold", "beacon", "exfil", "protocol", "session"], verbs: ["detect", "score", "correlate", "flag", "cluster", "alert", "verify", "suppress"], note: "network intrusion detection and anomaly scoring" }
+    ];
 
-    // Each file is generated fresh from the scenario word pools, so the stream
-    // never visibly repeats: function names, constants, expressions and
-    // comments are all assembled at file start.
-    let cur = null; // { S, file, funcs, consts }
-    const makeConst = () => {
-        const name = varName().toUpperCase();
-        const t = Math.floor(Math.random() * 4);
-        const val = t === 0 ? R(1, 9) + "." + R(0, 9) + "e" + (Math.random() < 0.5 ? "+" : "-") + R(1, 9)
-            : t === 1 ? (Math.random() * 1000).toFixed(3)
-            : t === 2 ? String(R(10, 9999))
-            : (Math.random() * 10).toFixed(1);
-        return [name, val];
-    };
-    const beginFile = () => {
-        const S = pick(Object.keys(SCENARIOS).map(k => SCENARIOS[k]));
-        // Provisional entry so makeConst/varName (which read cur.S) can run
-        // while the rest of the file is assembled; replaced below.
-        cur = { S, file: "", funcs: [], consts: [] };
-        const funcs = [];
-        const seen = new Set();
-        for (let n = R(6, 9); funcs.length < n;) {
-            const f = pick(S.verbs) + "_" + pick(S.nouns);
-            if (!seen.has(f)) { seen.add(f); funcs.push(f); }
-        }
-        const consts = [];
-        for (let i = 0, n = R(4, 6); i < n; i++) consts.push(makeConst());
-        const file = pick(S.verbs) + "_" + pick(S.nouns) + (Math.random() < 0.4 ? "_" + R(2, 9) : "") + ".cpp";
-        cur = { S, file, funcs, consts };
-    };
-    const varName = () => pick(cur.S.nouns.concat(GENWORDS)) + (Math.random() < 0.4 ? "_" + R(0, 100) : "");
+    // The names of every function the generator has emitted this session. Each
+    // screensaver run (show → hide) is one session; names are minted from the
+    // current domain but kept unique session-wide, so a verb_noun pair never
+    // repeats and the stream cannot visibly cycle (#28 / #89).
+    const sessionUsed = new Set();
+    let cur = null; // { S }
+    const varName = S => pick(S.nouns.concat(GENWORDS)) + (Math.random() < 0.45 ? "_" + R(0, 100) : "");
     const num = () => {
         const t = Math.floor(Math.random() * 4);
         if (t === 0) return String(R(1, 999));
@@ -2195,9 +2787,10 @@ window.screensaver = (() => {
         if (t === 2) return R(1, 9) + "." + R(0, 9) + "e" + (Math.random() < 0.5 ? "+" : "-") + R(1, 8);
         return (Math.random() * 10).toFixed(1);
     };
-    const E = () => {
-        const a = varName(), b = varName();
-        const t = Math.floor(Math.random() * 9);
+    // Fourteen formula shapes so expressions keep varying well past a minute.
+    const E = S => {
+        const a = varName(S), b = varName(S), c = varName(S);
+        const t = Math.floor(Math.random() * 14);
         if (t === 0) return a + " * " + b + " + " + num();
         if (t === 1) return "(" + a + " + " + b + ") * " + num();
         if (t === 2) return a + " / (" + b + " + " + num() + ")";
@@ -2206,55 +2799,84 @@ window.screensaver = (() => {
         if (t === 5) return "fmax(" + a + ", " + b + " * " + num() + ")";
         if (t === 6) return "pow(" + a + ", " + num() + ") + " + b;
         if (t === 7) return "sin(" + a + " * " + num() + ") * " + b;
-        return a + " * " + num() + " - " + b;
+        if (t === 8) return a + " * " + num() + " - " + b;
+        if (t === 9) return "fmin((" + a + " + " + b + "), " + c + " * " + num() + ")";
+        if (t === 10) return "log1p(" + a + " * " + b + ") + " + c;
+        if (t === 11) return "cos(" + b + " * " + num() + ") * " + a + " + " + c;
+        if (t === 12) return "exp(-" + a + " / (" + b + " + 1e-9)) * " + c;
+        return "clamp(" + a + " * " + b + " - " + num() + ", 0.0, " + c + ")";
     };
-    const C = () => {
-        const a = pick(cur.S.nouns), b = pick(cur.S.nouns), c = pick(cur.S.nouns);
-        const t = Math.floor(Math.random() * 7);
+    // Fourteen comment templates; all draw on the current domain's vocabulary.
+    const C = S => {
+        const a = pick(S.nouns), b = pick(S.nouns), c = pick(S.nouns);
+        const t = Math.floor(Math.random() * 14);
         if (t === 0) return "Recompute the " + a + " from the current " + b + " state and the residual " + c + " history.";
         if (t === 1) return "Bound the " + a + " against the worst-case " + b + " transient seen at the " + c + " boundary.";
         if (t === 2) return "The " + a + " scales with the cube root of the " + b + ", attenuated by the " + c + " factor.";
         if (t === 3) return "Integrate the " + a + " with an RK4 step and the " + b + " fixed at the " + c + " timestep.";
         if (t === 4) return "Reject returns below the " + a + " threshold and keep the " + b + " rate bounded across the " + c + ".";
         if (t === 5) return "Cache the " + a + " across calls to avoid recomputing the " + b + " on every " + c + " update.";
-        return "The " + a + " dominates once the " + b + " exceeds the " + c + " reference, so clamp early.";
+        if (t === 6) return "The " + a + " dominates once the " + b + " exceeds the " + c + " reference, so clamp early.";
+        if (t === 7) return "Normalise the " + a + " by the running mean of the " + b + " to keep the " + c + " stable.";
+        if (t === 8) return "First pass converges on the " + a + "; a second pass tightens the " + b + " past the " + c + ".";
+        if (t === 9) return "Cross-check the " + a + " against the " + b + " telemetry before trusting the " + c + ".";
+        if (t === 10) return "Dead-reckon the " + a + " while the " + b + " link is dark, then reconcile on the " + c + ".";
+        if (t === 11) return "Weight the " + a + " observation by its " + b + " confidence so the " + c + " does not skew.";
+        if (t === 12) return "The " + a + " budget leaves no margin, so fold the " + b + " back into the " + c + " reserve.";
+        return "Revisit the " + a + " once the " + b + " settles, or the " + c + " report will mislead.";
     };
     const SIGS = [
         "const SimConfig& cfg, const StateVector& s, double dt, int mode",
         "const TrackState& t, const Measurement& m, const Matrix& Q, const Matrix& R",
         "double target_range, double target_velocity, double elevation, int mode, bool strict",
-        "const Config& cfg, const array<double, 6>& state, double t0, double t1, double eps"
+        "const Config& cfg, const array<double, 6>& state, double t0, double t1, double eps",
+        "const RadarSweep& sweep, const GateList& gates, size_t beam_idx, double scale",
+        "const Vector3& pos, const Vector3& vel, const double* coeffs, size_t n, int iter",
+        "double temperature, double pressure, double humidity, bool saturated, int pass",
+        "const PlatformState& p, const ThreatList& threats, double horizon, double dt",
+        "const double* observed, const double* predicted, size_t n, double tol, bool adapt",
+        "const CommsFrame& frame, const Codec& codec, int priority, bool encrypt, uint8_t chan"
     ];
-    const OP = ["<", ">", "<=", ">=", "=="];
-    const EARTH_BLOB = [
-        'const char* wgs84 = "a=6378137.0, f=1/298.257223563, omega=7.292115e-5, GM=3.986004418e14";',
-        "const double T_REF = 288.15; // ISA sea-level static temperature, K",
-        "constexpr size_t BUF_LEN = 1 << 20; // staging ring buffer",
-        "const uint32_t MAGIC = 0x5a4f4e45; // little-endian frame marker"
-    ];
+    const OP = ["<", ">", "<=", ">=", "==", "!="];
 
-    const buildFunction = (name) => {
+    // One function body: 24-36 statements with locals, branches, loops and a
+    // switch, so each function reads as a real subroutine. `name` and the domain
+    // S come from the current collection.
+    const buildFunction = (name, S) => {
         const lines = [];
         lines.push(pad(0) + pick(["double ", "static double ", "float ", "double "]) + name + "(" + pick(SIGS) + ") {");
-        lines.push(pad(1) + "double result = " + E() + " + " + E() + ";");
+        lines.push(pad(1) + "double result = " + E(S) + " + " + E(S) + ";");
         const locals = [];
-        for (let i = 0, n = R(2, 4); i < n; i++) {
-            const lv = varName();
+        for (let i = 0, n = R(3, 6); i < n; i++) {
+            const lv = varName(S);
             locals.push(lv);
-            lines.push(pad(1) + "const double " + lv + " = " + E() + " + " + E() + ";");
+            lines.push(pad(1) + "const double " + lv + " = " + E(S) + " + " + E(S) + ";");
         }
         const use = () => pick(locals);
-        for (let i = 0, n = R(8, 12); i < n; i++) {
+        for (let i = 0, n = R(24, 36); i < n; i++) {
             const t = Math.random();
-            if (t < 0.26) lines.push(pad(1) + "result += " + use() + " * " + E() + " + " + E() + ";");
-            else if (t < 0.46) lines.push(pad(1) + "// " + C());
-            else if (t < 0.60) {
-                lines.push(pad(1) + "if (" + use() + " " + pick(OP) + " " + E() + " + " + E() + ") {");
-                lines.push(pad(2) + "result += " + use() + " * " + E() + ";");
+            if (t < 0.20) lines.push(pad(1) + "result += " + use() + " * " + E(S) + " + " + E(S) + ";");
+            else if (t < 0.36) lines.push(pad(1) + "// " + C(S));
+            else if (t < 0.50) {
+                lines.push(pad(1) + "if (" + use() + " " + pick(OP) + " " + E(S) + " + " + E(S) + ") {");
+                lines.push(pad(2) + "result += " + use() + " * " + E(S) + ";");
                 lines.push(pad(1) + "}");
-            } else if (t < 0.74) lines.push(pad(1) + "result = fmax(result, " + use() + " * " + E() + " + " + E() + ");");
-            else if (t < 0.86) lines.push(pad(1) + "samples.push_back(" + use() + " * " + E() + " + " + E() + ");");
-            else lines.push(pad(1) + pick(EARTH_BLOB));
+            } else if (t < 0.62) {
+                lines.push(pad(1) + "for (size_t k = 0; k < " + R(4, 64) + "; ++k) {");
+                lines.push(pad(2) + "result += " + use() + " * " + E(S) + ";");
+                lines.push(pad(1) + "}");
+            } else if (t < 0.72) lines.push(pad(1) + "result = fmax(result, " + use() + " * " + E(S) + " + " + E(S) + ");");
+            else if (t < 0.82) lines.push(pad(1) + "samples.push_back(" + use() + " * " + E(S) + " + " + E(S) + ");");
+            else if (t < 0.92) {
+                lines.push(pad(1) + "switch (mode) {");
+                lines.push(pad(2) + "case " + R(0, 4) + ": result = " + E(S) + "; break;");
+                lines.push(pad(2) + "case " + R(4, 8) + ": result = " + E(S) + "; break;");
+                lines.push(pad(2) + "default: result = " + E(S) + "; break;");
+                lines.push(pad(1) + "}");
+            } else {
+                // A stray domain constant, inlined per call so it can't recur.
+                lines.push(pad(1) + pick(S.nouns) + "_0 = " + num() + " * " + pick(S.nouns) + "_1;");
+            }
         }
         lines.push(pad(1) + "return result;");
         lines.push(pad(0) + "}");
@@ -2262,29 +2884,46 @@ window.screensaver = (() => {
         return lines;
     };
 
-    const buildProgram = () => {
-        const lines = [];
-        // two passes over the file's functions for one long, continuous file
-        for (let pass = 0; pass < 2; pass++) {
-            cur.funcs.forEach(fn => lines.push(...buildFunction(fn)));
+    // One collection = one long algorithm: 5-9 related functions drawn from a
+    // single randomly chosen domain, streamed as a continuous module with NO
+    // term.reset() between collections — the buffer trims itself at the
+    // scrollback limit, so the code just keeps scrolling past naturally (#89).
+    const buildCollection = () => {
+        const S = pick(DOMAINS);
+        cur = { S };
+        const funcs = [];
+        const target = R(5, 10);
+        // Bounded uniqueness: a domain has only verbs×nouns (≈80-100) names, and
+        // sessionUsed grows across collections. Late in a long session a domain
+        // can be nearly exhausted, and blindly re-picking until a fresh name
+        // appears would spin the thread (freezing the stream). After a bounded
+        // number of draws, top the collection up with reused names — they are
+        // far from the earlier use, so no visible loop (#89).
+        let attempts = 0;
+        while (funcs.length < target && attempts++ < 40) {
+            const f = pick(S.verbs) + "_" + pick(S.nouns);
+            if (!sessionUsed.has(f)) { sessionUsed.add(f); funcs.push(f); }
         }
-        lines.push(pad(0) + "int main(int argc, char** argv) {");
-        lines.push(pad(1) + "auto cfg = load_config(argv[1]);");
-        lines.push(pad(1) + "double r0 = " + cur.funcs[0] + "(cfg, 0.0, 1.0);");
-        lines.push(pad(1) + "double r1 = " + cur.funcs[1] + "(cfg, 1.0, 2.0);");
-        lines.push(pad(1) + "fprintf(stderr, \"simulation complete: %.6f %.6f\\n\", r0, r1);");
-        lines.push(pad(1) + "return 0;");
-        lines.push(pad(0) + "}");
+        while (funcs.length < target) {
+            funcs.push(pick(S.verbs) + "_" + pick(S.nouns));
+        }
+        const lines = [];
+        lines.push("/* ---- " + S.note + " ---- */");
         lines.push("");
+        funcs.forEach(fn => lines.push(...buildFunction(fn, S)));
         return lines;
     };
 
-    const headerLines = () => {
+    // The opening banner plays exactly once per screensaver run, when the code
+    // first appears: a compile invocation, the includes, and the namespace that
+    // every collection lives inside (#89). The matching close only appears when
+    // the code disappears (buildEnding, during wind-down).
+    const buildOpening = () => {
         const lines = [];
-        lines.push("\r\nroot@kali:~# g++ -O3 -march=native " + cur.file + " -lm -o sim");
+        lines.push("\r\nroot@kali:~# g++ -O3 -march=native -std=c++20 edex_phase_" + R(2, 9999) + ".cpp -lm -o sim");
         lines.push("");
-        lines.push("/* " + cur.file + " - " + cur.S.note + " */");
-        lines.push("/* " + pick(["no warranty - research use only", "declassified reference model", "internal audit build", "classified - export controlled"]) + " */");
+        lines.push("/* eDEX OS - subsystem " + cap(pick(["telemetry", "analysis", "guidance", "detection", "warhead", "uplink", "defense", "recon", "propagation", "tracking"])) + " phase " + R(1, 9) + "." + R(0, 9) + " */");
+        lines.push("/* " + pick(["no warranty - research use only", "declassified reference model", "internal audit build", "classified - export controlled", "nightly integration build"]) + " */");
         lines.push("#include <cmath>");
         lines.push("#include <vector>");
         lines.push("#include <array>");
@@ -2292,8 +2931,17 @@ window.screensaver = (() => {
         lines.push("#include <random>");
         lines.push("using namespace std;");
         lines.push("");
-        cur.consts.forEach(c => lines.push("constexpr double " + c[0] + " = " + c[1] + ";"));
+        lines.push("namespace edex {");
         lines.push("");
+        return lines;
+    };
+
+    // The closing banner plays exactly once, when the code disappears.
+    const buildEnding = () => {
+        const lines = [];
+        lines.push("} // namespace edex");
+        lines.push("");
+        lines.push("[ OK ] all processes finished - exit code 0");
         return lines;
     };
 
@@ -2305,23 +2953,49 @@ window.screensaver = (() => {
     let sessionFirstFile = true;
     const nextLine = () => {
         if (!pendingLines.length) {
-            beginFile();
-            pendingLines = headerLines().concat(buildProgram());
-            if (!sessionFirstFile) {
-                let t = window.term[window.currentTerm];
-                if (t && t.term && typeof t.term.reset === "function") {
-                    try { t.term.reset(); } catch (e) {}
-                }
+            if (sessionFirstFile) {
+                // Opening banner — only when the code first appears.
+                sessionFirstFile = false;
+                pendingLines = buildOpening();
+            } else if (winding) {
+                // Closing banner — only when the code disappears (wind-down).
+                winding = false;
+                pendingLines = buildEnding();
+            } else {
+                // Another random algorithm collection; the buffer trims itself
+                // at the scrollback limit, no reset, so the code flows on.
+                pendingLines = buildCollection();
             }
-            sessionFirstFile = false;
         }
         return pendingLines.shift();
     };
 
+    let codeTickCount = 0;
     const codeTick = () => {
-        let t = window.term[window.currentTerm];
+        // Guard window.term itself: the code screensaver can start during the
+        // boot-time lock, BEFORE initUI() creates window.term / currentTerm, so
+        // a bare window.term[currentTerm] read throws (undefined[undefined])
+        // and stacks a crash modal for every tick.
+        let t = window.term && window.term[window.currentTerm];
         if (!t || !t.term || typeof t.term.write !== "function") return;
         t.term.write(nextLine() + "\r\n");
+        // Once a second, force a full repaint from the buffer. The diff renderer
+        // only repaints cells it saw change, so when a wrapped long line is
+        // overwritten by a shorter one it can leave a stale glyph in the last
+        // column that the compositor then carries into the lock screen (#82).
+        // term.refresh() alone is not enough: it skips cells whose render cache
+        // already matches the buffer even when the canvas still shows the stale
+        // pixel — so clear the renderer's cache first, which makes the next
+        // pass repaint the whole grid from the buffer and wipes the remnant.
+        // Cheap: one 154×31 grid, and it only ever touches the fake code, never
+        // the real terminal.
+        if (++codeTickCount % 10 === 0) {
+            try {
+                const rs = t.term._core && t.term._core._renderService;
+                if (rs && typeof rs.clear === "function") rs.clear();
+                t.term.refresh(0, t.term.rows - 1);
+            } catch (e) {}
+        }
     };
 
 
@@ -2378,8 +3052,17 @@ window.screensaver = (() => {
                 return;
             }
             active = true;
+            // Timestamp so bumpActivity can tell input that STARTED this
+            // screensaver (power-menu "Lock Screen", Win+L) apart from input
+            // that comes later to dismiss it into the lock (#73).
+            this.shownAt = Date.now();
             fading = false;
             fadeTail = 0;
+            // Body marker so CSS can drop the terminal frame's left hairline
+            // while the screensaver is up (the code style has no overlay element
+            // to key off, and that line floats next to the lock box).
+            document.body.classList.add("screensaver_on");
+            if (window.cursorTrap) window.cursorTrap.hide();
             if (window.settings.screensaverStyle === "matrix") {
                 if (!canvas) {
                     canvas = document.createElement("canvas");
@@ -2393,24 +3076,50 @@ window.screensaver = (() => {
                 canvas.style.display = "block";
                 mTimer = setInterval(mDraw, 50);
             } else {
+                // Fresh code session: opening banner plays once, collections
+                // stream until wind-down. Cleared so the same terminal can be
+                // re-entered (timeout back to screensaver) with a fresh opening.
+                sessionFirstFile = true;
+                sessionUsed.clear();
+                winding = false;
+                pendingLines = [];
                 codeTimer = setInterval(codeTick, 100);
             }
             // While the screensaver plays, eDEX wears its cover identity (fake
             // tabs / filesystem / IP / process list).
             if (window.cover) window.cover.set(true);
         },
-        hide(immediate) {
+        hide(immediate, keepCover, keepMatrixRain) {
             if (!active) return;
             active = false;
+            document.body.classList.remove("screensaver_on");
+            if (window.cursorTrap) window.cursorTrap.show();
             // Leave cover mode: restore the real tabs / filesystem / IP / procs.
-            if (window.cover) window.cover.set(false);
+            // When dismissing straight into the lock (keepCover), the lock
+            // re-engages the SAME fake identity a moment later — skipping the
+            // restore here avoids the file browser churning real→fake while it
+            // shows the same fake files either way.
+            if (window.cover && !keepCover) window.cover.set(false);
             if (immediate) {
                 // Used when dismissing straight into the lock screen: stop
                 // cleanly, no wind-down animation and no boot replay.
-                if (codeTimer) { clearInterval(codeTimer); codeTimer = null; }
-                if (mTimer) { clearInterval(mTimer); mTimer = null; }
+                if (codeTimer) {
+                    clearInterval(codeTimer);
+                    codeTimer = null;
+                    // The code style streams into the real terminal — clear it
+                    // back to a fresh prompt, otherwise the fake code lingers on
+                    // screen after the screensaver is dismissed (#29).
+                    const t = window.term && window.term[window.currentTerm];
+                    if (t && t.term) {
+                        try {
+                            if (typeof t.term.reset === "function") t.term.reset();
+                            if (typeof t.writelr === "function") t.writelr("");
+                        } catch (e) {}
+                    }
+                }
+                if (mTimer && !keepMatrixRain) { clearInterval(mTimer); mTimer = null; }
                 fading = false; fadeTail = 0;
-                if (canvas) canvas.style.display = "none";
+                if (canvas && !keepMatrixRain) canvas.style.display = "none";
                 return;
             }
             if (canvas) {
@@ -2426,10 +3135,12 @@ window.screensaver = (() => {
                 // completion line, then scroll the code up one line at a time so
                 // the visible code gradually decreases; once it's scrolled off,
                 // reset the terminal to a fresh shell prompt.
-                let t = window.term[window.currentTerm];
+                let t = window.term && window.term[window.currentTerm];
                 if (t && t.term) {
                     if (typeof t.term.write === "function") {
-                        t.term.write("\r\n[ OK ] all processes finished - exit code 0");
+                        // Closing banner — the fake ending plays only when the
+                        // code disappears (#89).
+                        buildEnding().forEach(l => t.term.write(l + "\r\n"));
                         let rows = t.term.rows || 24;
                         let scrolled = 0;
                         let scroller = setInterval(() => {
@@ -2448,40 +3159,270 @@ window.screensaver = (() => {
             }
         },
         isActive() { return active; },
+        // True while the Matrix-rain screensaver is actually running (canvas up
+        // and the draw timer alive). Used by bumpActivity to decide whether the
+        // rain can be handed to the lock screen instead of being torn down.
+        isMatrixActive() { return active && mTimer !== null && !!canvas; },
+        // Hand the running Matrix rain to the lock screen: return the canvas,
+        // its context and the live drop state plus the running draw timer, so
+        // the lock can keep the waterfall going where it was instead of
+        // restarting fresh (#86). The caller owns the timer from here on.
+        adoptMatrixRain() {
+            if (!canvas || mTimer === null) return null;
+            const timer = mTimer;
+            mTimer = null;               // the lock now owns this interval
+            return { canvas, ctx, drops, cols, GRID, mTimer: timer };
+        },
         // Expose the procedural code generator so the lock screen can stream
         // the same sci-fi C++ onto its own fullscreen canvas.
-        getCodeLine() { return nextLine(); }
+        getCodeLine() { return nextLine(); },
+        // Code-mode dismissal into the lock (#89): stop streaming, write the
+        // closing banner, then accelerate-scroll the code away (~1s), so the
+        // passcode box assembles in over a terminal that has visibly "finished".
+        windDownCodeToLock(cb) {
+            if (!active || winding) { if (cb) cb(); return; }
+            winding = true;
+            if (codeTimer) { clearInterval(codeTimer); codeTimer = null; }
+            const t = window.term && window.term[window.currentTerm];
+            if (!t || !t.term || typeof t.term.write !== "function") { winding = false; if (cb) cb(); return; }
+            buildEnding().forEach(l => t.term.write(l + "\r\n"));
+            let ticks = 0;
+            const accel = setInterval(() => {
+                try {
+                    for (let i = 0; i < 4; i++) t.term.write("\n");
+                } catch (e) {}
+                if (++ticks >= 30) {
+                    clearInterval(accel);
+                    clearTimeout(safety);
+                    winding = false;
+                    if (cb) cb();
+                }
+            }, 32);
+            // Safety net: if a terminal write ever wedges the interval, never
+            // leave the state wound — force the handover through after 2.5s.
+            const safety = setTimeout(() => {
+                if (winding) { clearInterval(accel); winding = false; if (cb) cb(); }
+            }, 2500);
+        },
+        isWindingDown() { return winding; },
+        // 30s idle timeout back to the screensaver (matrix style): the lock hands
+        // its (adopted or own) canvas and drop positions back and the rain picks
+        // up where it fell. No timer is passed — a fresh draw timer starts here,
+        // and the lock's own timer is cleared by its teardown (#88).
+        returnMatrixRain(cv, dropState) {
+            if (cv) {
+                canvas = cv;
+                ctx = cv.getContext("2d");
+                if (dropState && dropState.length) drops = dropState;
+                cols = drops.length;
+                // The lock moved the canvas inside its overlay; move it back to
+                // <body> before the lock element is removed, or the rain dies
+                // with it.
+                if (canvas.parentNode && canvas.parentNode !== document.body) {
+                    document.body.appendChild(canvas);
+                }
+                canvas.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;background:#05080d;display:block;";
+            }
+            fading = false;
+            fadeTail = 0;
+            active = true;
+            document.body.classList.add("screensaver_on");
+            if (window.cursorTrap) window.cursorTrap.hide();
+            if (window.cover && !window.cover.isActive()) window.cover.set(true);
+            if (!mTimer) mTimer = setInterval(mDraw, 50);
+        },
+        // 30s idle timeout back to the screensaver (code style): restart the
+        // streamer on the terminal the lock just blanked, with a fresh session
+        // so the opening banner replays as the code "appears" again (#88).
+        resumeCode() {
+            if (active || window.settings.screensaverStyle !== "code") return;
+            active = true;
+            document.body.classList.add("screensaver_on");
+            if (window.cursorTrap) window.cursorTrap.hide();
+            if (window.cover && !window.cover.isActive()) window.cover.set(true);
+            sessionFirstFile = true;
+            sessionUsed.clear();
+            winding = false;
+            pendingLines = [];
+            if (!codeTimer) codeTimer = setInterval(codeTick, 100);
+        }
     };
 })();
 
+// Auto-hide the cursor: shown on movement, hidden again after a quiet period
+// (default 10 s), and hidden outright while the screensaver/lock is up.
+// Global mouse-wheel speed multiplier (settings.mouseWheelSpeed, 0.25x-4x).
+// Terminals own their wheel handling (terminal.class.js multiplies the same
+// setting); every other scrollable (settings modal, file browser, …) gets its
+// delta scaled here in the capture phase. Reads the setting live, so a save
+// takes effect immediately with no re-registration.
+window.addEventListener("wheel", e => {
+    const spd = Number(window.settings.mouseWheelSpeed);
+    if (!isFinite(spd) || spd <= 0 || spd === 1) return;
+    if (e.target && e.target.closest && e.target.closest(".xterm")) return; // terminals handle themselves
+    let el = e.target;
+    while (el && el !== document.body && el !== document.documentElement) {
+        if (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1) break;
+        el = el.parentElement;
+    }
+    if (!el || el === document.body || el === document.documentElement) return;
+    e.preventDefault();
+    el.scrollTop += e.deltaY * spd;
+    el.scrollLeft += e.deltaX * spd;
+}, { capture: true, passive: false });
+
+// Honors settings.cursorAutoHide (false disables) / cursorAutoHideDelay (s).
+window.cursorTrap = (() => {
+    let timer = null;
+    let disabled = window.settings.cursorAutoHide === false;
+    const hide = () => { if (!disabled) document.body.classList.add("cursor_hidden"); };
+    const show = () => {
+        document.body.classList.remove("cursor_hidden");
+        if (disabled) return;
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(hide, (Number(window.settings.cursorAutoHideDelay) || 10) * 1000);
+    };
+    const off = () => { disabled = true; document.body.classList.remove("cursor_hidden"); };
+    const on = () => { disabled = false; show(); };
+    if (!disabled) {
+        window.addEventListener("mousemove", () => show(), { passive: true });
+        show();
+    }
+    return { show, hide, off, on };
+})();
+
+// ---- Software screen-off ----
+// After `screenOffIdle` seconds without input the display is blanked with a
+// fullscreen black overlay (#93). It engages even while the screensaver plays
+// (the timeout is clamped to be ≥ screensaverIdle, so the screensaver always
+// starts first) and any input wakes it. It is a pure overlay — nothing else
+// changes state — so waking fades it away and the normal screensaver / lock
+// flow continues underneath.
+const screenOffEl = () => document.getElementById("screen_off");
+const showScreenOff = () => {
+    if (screenOffEl()) return;
+    const el = document.createElement("div");
+    el.id = "screen_off";
+    el.className = "screen_off";
+    document.body.appendChild(el);
+    // The custom pointer pack would glow through the black — hide the cursor
+    // exactly like the screensaver does.
+    if (window.cursorTrap) window.cursorTrap.hide();
+};
+window.hideScreenOff = () => {
+    const el = screenOffEl();
+    if (!el) return;
+    el.classList.add("screen_off_fade_out");
+    setTimeout(() => { if (el.isConnected) el.remove(); }, 420);
+    // Reveal the cursor unless the screensaver is still running — it manages
+    // the cursor itself and is about to take over (or dismiss into a lock).
+    if (!(window.screensaver && window.screensaver.isActive())) {
+        if (window.cursorTrap) window.cursorTrap.show();
+    }
+};
+
 // Idle tracking: any input wakes the screensaver and re-arms the idle timer.
 let lastActivity = Date.now();
+// Exposed for the lock screen's 30s idle timeout — the lock needs to know the
+// last real interaction (mouse/keyboard) so it can drop back to the screensaver
+// when the user stops typing without unlocking (#88).
+window._lastActivityTime = () => lastActivity;
 const bumpActivity = () => {
     lastActivity = Date.now();
+    // Any input wakes the display if it was blanked by the screen-off timeout.
+    window.hideScreenOff();
     if (window.screensaver.isActive()) {
-        window.screensaver.hide(true);
-        // Dismissing the screensaver leads into the lock screen when the
-        // device has a password configured (lockOnIdle) and one was actually
-        // set (a non-empty lockCode — the passcode chosen at install time).
-        if (window.settings.lockOnIdle !== false
-            && String(window.settings.lockCode || "").length > 0
-            && window.lockScreen && !window.lockScreen.active) {
-            window.lockScreen.show();
+        // Grace window: the very click/keydown that starts the screensaver
+        // (power menu "Lock Screen", Win+L) bubbles up to this document-level
+        // handler; dismissing on it would skip the screensaver entirely and
+        // jump straight into the passcode box. Ignore any input for the first
+        // ~400ms of a screensaver run — the next real interaction dismisses it.
+        if (Date.now() - (window.screensaver.shownAt || 0) < 400) return;
+        // Dismissing the screensaver leads into the lock screen when a passcode
+        // is configured (lockOnIdle + non-empty lockCode), or when the
+        // screensaver was started from the power menu's Lock Screen button
+        // (forceLockOnDismiss) — that flow is screensaver-then-lock by design.
+        const forceLock = window.screensaver.forceLockOnDismiss === true;
+        window.screensaver.forceLockOnDismiss = false;
+        const willLock = (forceLock || (window.settings.lockOnIdle !== false && String(window.settings.lockCode || "").length > 0))
+            && window.lockScreen && !window.lockScreen.active;
+        // keepCover: both the screensaver and the lock wear the same fake
+        // identity, so don't drop it (and re-render the file browser) just to
+        // re-assert it a frame later.
+        // Matrix → matrix lock: don't tear the rain down at all. hide() keeps
+        // the canvas + draw timer alive (keepMatrixRain), and the lock adopts
+        // them in _showFullscreen so the waterfall continues where it was (#86).
+        const matrixToMatrix = willLock
+            && window.settings.screensaverStyle === "matrix"
+            && window.screensaver.isMatrixActive && window.screensaver.isMatrixActive();
+        if (willLock && window.settings.screensaverStyle === "code") {
+            // Code → lock: wind the fake code down (closing banner + accelerated
+            // scroll ~1s), then hide into the lock so the passcode box assembles
+            // in over a "finished" terminal (#89). The guard skips repeats while
+            // the transition is already running.
+            if (!window.screensaver.isWindingDown()) {
+                window.screensaver.windDownCodeToLock(() => {
+                    window.screensaver.hide(true, true, false);
+                    window.lockScreen.show();
+                });
+            }
+            return;
         }
+        window.screensaver.hide(true, willLock, matrixToMatrix);
+        if (willLock) window.lockScreen.show();
     }
 };
 ["mousemove", "mousedown", "keydown", "wheel", "touchstart", "click"].forEach(ev =>
     window.addEventListener(ev, bumpActivity, { passive: true })
 );
 setInterval(() => {
+    const idleMs = Date.now() - lastActivity;
+    // Screen-off blanking is independent of the screensaver (the timeout is
+    // clamped to be ≥ screensaverIdle, so the screensaver starts first) but
+    // never while locked or a modal is up.
+    if (!screenOffEl()
+        && !(window.lockScreen && window.lockScreen.active)
+        && Object.keys(window.modals).length === 0
+        && idleMs >= (Number(window.settings.screenOffIdle) || 1800) * 1000) {
+        showScreenOff();
+    }
     if (window.screensaver.isActive()) return;
     if (window.lockScreen && window.lockScreen.active) return; // locked: stay locked
     if (Object.keys(window.modals).length > 0) return; // keep modals (settings etc.) usable
     if (!window.settings.screensaverEnabled) return;
     let idle = (Number(window.settings.screensaverIdle) || 300) * 1000;
-    if (Date.now() - lastActivity > idle) {
+    if (idleMs > idle) {
         // Idle always plays the screensaver first; the lock screen appears on
         // dismiss (bumpActivity) when a passcode is configured.
         window.screensaver.show();
     }
 }, 1000);
+
+// Suspend/resume (laptop lid close): after the system wakes, a full-screen
+// overlay frozen mid-suspend (screensaver canvas or lock block) would sit on
+// top and swallow every click — the "lid closed, can't click anything" bug.
+// Tear all overlays down, un-hide the cursor, re-fit the terminals, and
+// re-lock when a passcode is configured.
+const resumeFromSuspend = () => {
+    lastActivity = Date.now();
+    window.hideScreenOff();
+    if (window.screensaver) window.screensaver.hide(true);
+    if (window.cursorTrap) window.cursorTrap.show();
+    if (window.lockScreen && !window.lockScreen.active
+        && window.settings.lockOnIdle !== false
+        && String(window.settings.lockCode || "").length > 0) {
+        window.lockScreen.engage();
+    }
+    try {
+        Object.keys(window.term || {}).forEach(k => {
+            const t = window.term[k];
+            if (t && t.term && typeof t.fit === "function") t.fit();
+        });
+    } catch (e) {}
+};
+ipc.on("pm:resume", resumeFromSuspend);
+// A lid close that only blanks the display (no full suspend) arrives as a
+// visibility change instead — run the same recovery.
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") resumeFromSuspend();
+});
