@@ -79,7 +79,33 @@ journalctl -u NetworkManager -b --no-pager | grep -iE "wifi|wlan|error" | tail -
 
 ---
 
-## 3. 开机 GRUB 报错 "file '/boot/' not found"(#11)— 装饰性,优先级低
+## 3. 输入法 fcitx5 + Rime(#16)— 已自动化,需真机验证
+
+根因:fcitx5 守护进程和 IM 环境变量都正常(edex-session.sh 启动 `fcitx5 -d`,
+GTK_IM_MODULE/QT_IM_MODULE/XMODIFIERS 已导出),但**没写 fcitx5 profile** →
+引擎列表为空 → Ctrl+Space 无输入法可切换 → 一直 EN。
+
+install-edex.sh 现在会写 `/home/<user>/.config/fcitx5/profile`:
+两个输入法 = `keyboard-us`(英文,默认)+ `rime`(中文,Ctrl+Space 切换),
+并同步播种到 `/etc/skel`(后续新建用户也带)。Rime 首次激活时自动初始化词库。
+
+**真机验证:**
+```bash
+cat ~/.config/fcitx5/profile          # 应含 Groups/Items 的 keyboard-us + rime
+fcitx5-diagnose | head -60            # 应看到 fcitx5-rime 引擎与 profile 加载
+# 在任意应用(终端/浏览器)按 Ctrl+Space,候选窗应出现,可输入中文
+```
+
+若 Ctrl+Space 仍无效,按顺序诊断并输出发回:
+```bash
+ps aux | grep fcitx5                  # 守护进程应在跑(edex-session.sh 启动)
+echo $GTK_IM_MODULE $QT_IM_MODULE $XMODIFIERS   # 应都是 fcitx / @im=fcitx
+fcitx5-diagnose | head -80            # 重点看 input method 与 profile 段
+```
+
+---
+
+## 4. 开机 GRUB 报错 "file '/boot/' not found"(#11)— 装饰性,优先级低
 
 已定位:**Ubuntu 官方签名的 `grubx64.efi` 内嵌 memdisk 配置**引用了一个不存在的 `/boot/grub`
 路径,报错来自 EFI 固件加载阶段,不影响实际引导。ISO 文件层面无法安全消除(改动签名 EFI 会破坏
@@ -88,7 +114,7 @@ Secure Boot)。若日后要彻底清除,需在 Ubuntu 真机上重新生成 grub
 
 ---
 
-## 4. Claude CLI — 已内置 + 构建期强校验,首次使用需配 API key
+## 5. Claude CLI — 已内置 + 构建期强校验,首次使用需配 API key
 
 - 二进制已内置:`/usr/local/bin/claude`(原生 290MB ELF,平台二进制齐全,`claude --version` 可用)。
 - build-iso.sh 现在把 Claude 列为**硬性依赖**:npm 安装失败或 `claude --version` 校验不过 → 构建直接报错,
@@ -103,7 +129,7 @@ claude --version
 
 ---
 
-## 5. 装机后完整自检清单(建议首启跑一遍)
+## 6. 装机后完整自检清单(建议首启跑一遍)
 
 ```bash
 # WiFi
@@ -112,6 +138,7 @@ nmcli radio && nmcli dev wifi list
 claude --version
 # 输入法(Rime)
 fcitx5-diagnose | head -40          # 确认 fcitx5-rime 引擎在
+cat ~/.config/fcitx5/profile        # 应含 keyboard-us + rime 两个输入法
 # plymouth
 cat /etc/default/grub | grep splash
 # 时间
@@ -123,3 +150,37 @@ ls /etc/netplan/
 ```
 
 每项结果发回,用于更新 `docs/first-boot-issues.md` 的状态。
+
+---
+
+## 7. 安装器崩溃 subiquity load_autoinstall_data(#128)— 需真机 traceback
+
+现状:ISO 装到一半,安装器(Subiquity)在解析 autoinstall 时崩溃,
+错误标志为 `subiquity/Error/load_autoinstall_data`。macOS 侧无法运行 Subiquity,
+静态分析已排除的嫌疑项(v2.3.0 起):
+
+- **identity 密码 hash**:已用 `openssl passwd -6 -salt edexsalt edex` 逐字节核对,
+  user-data 里的 hash 就是 "edex" 的正确 sha512crypt,**不是**密码错误(先前怀疑
+  是 macOS ruby `crypt` 只支持 DES 造成的误报)。
+- **`updates: none` 非法值**:早在 b297709 已改为 `apt: fallback: offline-install`,
+  该 rejection 已不在。
+- **`source` 段**:user-data 没有 source 段,不触发 `get_matching_source` KeyError。
+- **`keyboard.toggle`**:只有 `{layout: us}`,无 toggle 键,不触发
+  "None is not of type 'string'"。
+
+**结论:当前 user-data 各键均符合 Subiquity 24.04 autoinstall schema,无法静态定位。
+需真机装 v2.3.0 ISO,抓到崩溃现场再修。**
+
+真机抓取 traceback(装 v2.3.0 时):
+1. 在崩溃的 Subiquity 屏幕拍照/记下最后几行(通常含 `Traceback` + 具体 exception 类名
+   与文件名)。Subiquity 崩溃界面通常允许 `Ctrl+Alt+F2/F3` 切 TTY。
+2. 切到实时日志 TTY 后抓尾段发回:
+   ```bash
+   tail -100 /var/log/subiquity-server-debug.log
+   ```
+3. 若崩溃现场拿不到,回 live 环境(Try Ubuntu)后:
+   ```bash
+   ls /var/crash/                       # 崩溃的 .crash 文件(若有)
+   sudo dmesg | tail -50
+   ```
+   注意安装器日志在内存盘,重启即失——优先在崩溃现场直接抓。

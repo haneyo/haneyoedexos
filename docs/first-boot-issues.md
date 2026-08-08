@@ -9,12 +9,12 @@
 
 | # | 问题 | 侧 | 状态 |
 |---|------|----|------|
-| 1 | 开机 GRUB 报 `error: file '/boot/' not found`(不影响引导) | OS/ISO | 已定位:Ubuntu 签名 grubx64.efi 内嵌配置所致,装饰性,暂不改(详见 ubuntu-side-changes.md §3) |
+| 1 | 开机 GRUB 报 `error: file '/boot/' not found`(不影响引导) | OS/ISO | 已定位:Ubuntu 签名 grubx64.efi 内嵌配置所致,装饰性,暂不改(详见 ubuntu-side-changes.md §4) |
 | 2 | 首启向导中文变方块字,要求改英文界面 | OS | 已修(源码,待装验) |
 | 3 | 搜不到 WiFi | OS(需真机诊断) | 已修(源码,待装验):netplan 双 renderer 冲突 + 关 wifi 电源管理(见 ubuntu-side-changes.md §2);设置菜单已加网络分类(连接/断开/已保存/代理/蓝牙),依赖 nmcli + bluetoothctl |
 | 4 | 系统时间不对:需要时区 + 手动改时间 + 联网同步功能 | OS + App | App 已修(源码,待装验):设置加时间分类(实时状态/时区/手动设时间/联网同步 IPC);OS 侧需装验 |
 | 5 | 语音输入按钮按下后卡死,无法再按、无法语音输入 | App | 已修(源码,待装验) |
-| 6 | 输入法切换无反应,一直 EN | OS/App(需诊断) | Rime 引擎缺失:fcitx5-rime 已加入 build(待装验) |
+| 6 | 输入法切换无反应,一直 EN | OS | 已修(源码,待装验):fcitx5-rime 已内置 + 写 fcitx5 profile(keyboard-us 默认 + rime 中文,Ctrl+Space 切换,见 ubuntu-side-changes.md §3) |
 | 7 | 文件浏览器默认标签连不上(XDG 目录不存在) | OS | 已修(源码,待装验) |
 | 8 | 设置-通用-用户名显示 `undefined` | App | 已修(源码,待装验) |
 | 9 | 默认跳过启动动画,要恢复 | OS | 已修(源码,待装验):install-edex.sh 配 quiet splash + update-initramfs/grub(见 ubuntu-side-changes.md §1) |

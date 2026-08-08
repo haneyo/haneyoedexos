@@ -166,6 +166,35 @@ fi
 usermod -aG video "$U" 2>/dev/null || true
 echo "[edex] configured for user: $U"
 
+echo "[edex] fcitx5 profile: keyboard-us + Rime, default US (input method #16)"
+# fcitx5 is launched and the IM env is set (edex-session.sh), but without a
+# profile the engine list is EMPTY — so Ctrl+Space has nothing to switch to and
+# the system is stuck on "EN" no matter what. Writing the profile gives fcitx5
+# two input methods: keyboard-us (English, the default) and rime (中文, via
+# Ctrl+Space). Rime initializes ~/.config/fcitx5/rime on first activation.
+mkdir -p "/home/$U/.config/fcitx5"
+cat > "/home/$U/.config/fcitx5/profile" <<'PROFILE'
+[Groups/0]
+Name=Default
+Default Layout=us
+DefaultIM=keyboard-us
+
+[Groups/0/Items/0]
+Name=keyboard-us
+Layout=
+
+[Groups/0/Items/1]
+Name=rime
+Layout=
+
+[GroupOrder]
+0=Default
+PROFILE
+chown -R "$U":"$U" "/home/$U/.config/fcitx5" 2>/dev/null || true
+# seed /etc/skel so any account created later gets the same IM list
+mkdir -p /etc/skel/.config/fcitx5
+cp "/home/$U/.config/fcitx5/profile" /etc/skel/.config/fcitx5/profile
+
 echo "[edex] NetworkManager as the network stack (WiFi via nmcli)"
 # CRITICAL: the interactive installer (subiquity) writes /etc/netplan/00-installer-config.yaml
 # from the network answers, and Ubuntu Server defaults to renderer: networkd there.

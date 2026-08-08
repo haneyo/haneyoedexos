@@ -1416,6 +1416,77 @@ app.on('ready', async () => {
         } catch (err) { resolve({ ok: false, error: err.message }); }
     }));
 
+    // ---- System sources (apt mirrors) (#130) ----
+    // Built-in presets for Ubuntu 24.04 (noble). CN mirrors serve every suite
+    // from one root; only the official source splits archive/security hosts.
+    const SRC_MIRRORS = {
+        official: { archive: "http://archive.ubuntu.com/ubuntu/", security: "http://security.ubuntu.com/ubuntu/" },
+        aliyun:   { archive: "http://mirrors.aliyun.com/ubuntu/", security: "" },
+        tuna:     { archive: "http://mirrors.tuna.tsinghua.edu.cn/ubuntu/", security: "" },
+        ustc:     { archive: "http://mirrors.ustc.edu.cn/ubuntu/", security: "" },
+        "163":    { archive: "http://mirrors.163.com/ubuntu/", security: "" },
+    };
+    // Ubuntu 24.04 installs use deb822 (/etc/apt/sources.list.d/ubuntu.sources);
+    // legacy images may still carry the deb-format sources.list. Detect the
+    // first readable one and remember its format so a switch rewrites in kind.
+    const detectAptMirror = () => {
+        const cands = ["/etc/apt/sources.list.d/ubuntu.sources", "/etc/apt/sources.list"];
+        for (const p of cands) {
+            let txt;
+            try { txt = fs.readFileSync(p, "utf8"); } catch (e) { continue; }
+            if (!txt || !txt.trim()) continue;
+            const uris = [...new Set((txt.match(/https?:\/\/[^\s"]+/g) || []).map(u => u.replace(/\/+$/, "")))];
+            for (const [id, m] of Object.entries(SRC_MIRRORS)) {
+                const base = m.archive.replace(/\/+$/, "");
+                if (uris.some(u => u === base || u.startsWith(base + "/"))) {
+                    return { mirror: id, custom: "", format: p.includes("ubuntu.sources") ? "deb822" : "deb", path: p };
+                }
+            }
+            return { mirror: "custom", custom: uris[0] || "", format: p.includes("ubuntu.sources") ? "deb822" : "deb", path: p };
+        }
+        return { mirror: "custom", custom: "", format: "deb822", path: "/etc/apt/sources.list.d/ubuntu.sources" };
+    };
+    const buildAptSources = (mirror, custom) => {
+        const m = mirror === "custom" ? { archive: (custom || "").replace(/\/+$/, "") + "/", security: "" } : SRC_MIRRORS[mirror];
+        const base = m.archive.replace(/\/+$/, "");
+        const sec = (m.security || "").replace(/\/+$/, "") || base; // CN mirrors reuse the main host
+        const comp = "main restricted universe multiverse";
+        const deb822 =
+            `Types: deb\nURIs: ${base}/\nSuites: noble noble-updates noble-backports\nComponents: ${comp}\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\n` +
+            `Types: deb\nURIs: ${sec}/\nSuites: noble-security\nComponents: ${comp}\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n`;
+        const deb =
+            `deb ${base}/ noble ${comp}\n` +
+            `deb ${base}/ noble-updates ${comp}\n` +
+            `deb ${base}/ noble-backports ${comp}\n` +
+            `deb ${sec}/ noble-security ${comp}\n`;
+        return { deb822, deb };
+    };
+    ipc.handle("apt:getMirror", () => {
+        if (process.platform !== "linux") return Promise.resolve({ ok: false, error: "not-linux" });
+        return Promise.resolve(Object.assign({ ok: true }, detectAptMirror()));
+    });
+    ipc.handle("apt:setMirror", (e, { mirror, custom } = {}) => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve({ ok: false, error: "not-linux" });
+        if (mirror !== "custom" && !SRC_MIRRORS[mirror]) return resolve({ ok: false, error: "bad mirror" });
+        if (mirror === "custom" && (!custom || !/^https?:\/\//i.test(custom))) return resolve({ ok: false, error: "bad url" });
+        const cur = detectAptMirror();
+        const { deb822, deb } = buildAptSources(mirror, (custom || "").trim());
+        const content = cur.format === "deb822" ? deb822 : deb;
+        const tmp = path.join(electron.app.getPath("temp"), "edex-sources-" + Date.now() + ".list");
+        try { fs.writeFileSync(tmp, content); } catch (err) { return resolve({ ok: false, error: err.message }); }
+        const { exec } = require("child_process");
+        exec(`sudo -n cp "${cur.path}" "${cur.path}.bak" 2>/dev/null; sudo -n cp "${tmp}" "${cur.path}"`, (err, so, se) => {
+            try { fs.unlinkSync(tmp); } catch (e) {}
+            if (err) return resolve({ ok: false, error: (se && se.trim()) || err.message });
+            // Refresh the package list in the background (best-effort: needs
+            // network; a bad mirror surfaces later via apt / the update checker).
+            const { spawn } = require("child_process");
+            const upd = spawn("bash", ["-c", "sudo -n apt-get update -y"], { env: Object.assign({}, process.env, { DEBIAN_FRONTEND: "noninteractive" }) });
+            upd.on("error", () => {});
+            resolve({ ok: true, path: cur.path, format: cur.format });
+        });
+    }));
+
     // ---- Ad-blocking for the embedded browser (tab 5), default ON ----
     // @cliqz/adblocker (EasyList + EasyPrivacy + uBlock filters) wired into the
     // browser session via Electron's webRequest. The compiled engine is cached

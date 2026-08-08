@@ -1869,74 +1869,121 @@ window.openSettings = async () => {
     // exactly once and writeSettingsFile can read every field regardless of
     // which category is visible.
     const CATS = [
+        // "通用" now groups the small system/UX categories (sound, display,
+        // download, software sources, time) under one sidebar entry so the list
+        // stays short. Each former category keeps its own section header.
         { id: "general", titleKey: "settings.cat.general", html: () => [
+            section("settings.cat.general"),
             settingsRow("settings.lang.label", `<select id="settingsEditor-language">
                 <option value="zh" ${window.settings.language === "zh" ? "selected" : ""}>中文</option>
                 <option value="en" ${window.settings.language !== "zh" ? "selected" : ""}>English</option>
-            </select>`, "settings.lang.help"),
-            settingsRow("settings.username", `<input type="text" id="settingsEditor-username" value="${window.settings.username || ""}">`, "settings.username.help"),
+            </select>`),
+            settingsRow("settings.username", `<input type="text" id="settingsEditor-username" value="${window.settings.username || ""}">`),
             settingsRow("settings.theme", `<select id="settingsEditor-theme">
                 <option>${window.settings.theme}</option>
                 ${themes}
-            </select>`, "settings.theme.help"),
-            settingsRow("settings.termFontSize", `<input type="text" id="settingsEditor-termFontSize" value="${window.settings.termFontSize}">`, "settings.termFontSize.help"),
+            </select>`),
+            settingsRow("settings.termFontSize", `<input type="text" id="settingsEditor-termFontSize" value="${window.settings.termFontSize}">`),
             settingsRow("settings.shell", `<input type="text" id="settingsEditor-shell" value="${window.settings.shell}">`, "settings.shell.help"),
             settingsRow("settings.showKeyboard", `<select id="settingsEditor-showKeyboard">
                 <option>${window.settings.showKeyboard === true}</option>
                 <option>${window.settings.showKeyboard !== true}</option>
-            </select>`, "settings.showKeyboard.help"),
-        ].join("") },
-        { id: "terminal", titleKey: "settings.cat.terminal", html: () => [
+            </select>`),
+            section("settings.cat.terminal"),
             settingsRow("settings.terminalScrollSensitivity", `<input type="text" id="settingsEditor-terminalScrollSensitivity" value="${window.settings.terminalScrollSensitivity ?? 1}">`, "settings.terminalScrollSensitivity.help"),
             settingsRow("settings.terminalScrollDirection", `<select id="settingsEditor-terminalScrollDirection">
                 <option value="normal" ${window.settings.terminalScrollDirection !== "reversed" ? "selected" : ""}>${t("settings.scrollDir.normal")}</option>
                 <option value="reversed" ${window.settings.terminalScrollDirection === "reversed" ? "selected" : ""}>${t("settings.scrollDir.reversed")}</option>
             </select>`, "settings.terminalScrollDirection.help"),
+            section("settings.cat.sources"),
+            settingsRow("settings.sources.mirror", `<select id="settingsSrcMirror">
+                <option value="official">${t("settings.sources.mirror.official")}</option>
+                <option value="aliyun">${t("settings.sources.mirror.aliyun")}</option>
+                <option value="tuna">${t("settings.sources.mirror.tuna")}</option>
+                <option value="ustc">${t("settings.sources.mirror.ustc")}</option>
+                <option value="163">${t("settings.sources.mirror.163")}</option>
+                <option value="custom">${t("settings.sources.mirror.custom")}</option>
+            </select>`, "settings.sources.mirror.help"),
+            settingsRow("settings.sources.customUrl", `<input type="text" id="settingsSrcCustom" placeholder="http://mirrors.example.com/ubuntu">`, "settings.sources.customUrl.help"),
+            settingsRow("settings.sources.apply", `<button type="button" id="settingsSrcApply" class="settings_net_btn">${t("settings.sources.apply")}</button>`, "settings.sources.apply.help"),
         ].join("") },
-        { id: "sound", titleKey: "settings.cat.sound", html: () => [
+        { id: "av", titleKey: "settings.cat.av", html: () => [
+            section("settings.cat.sound"),
             settingsRow("settings.audio", `<select id="settingsEditor-audio">
                 <option>${window.settings.audio}</option>
                 <option>${!window.settings.audio}</option>
-            </select>`, "settings.audio.help"),
-            settingsRow("settings.audioVolume", `<select id="settingsEditor-audioVolume">${numOptions(0, 1, 0.05, v => Math.round(v * 100) + "%", window.settings.audioVolume ?? 1)}</select>`, "settings.audioVolume.help"),
+            </select>`),
+            settingsRow("settings.audioVolume", `<select id="settingsEditor-audioVolume">${numOptions(0, 1, 0.05, v => Math.round(v * 100) + "%", window.settings.audioVolume ?? 1)}</select>`),
             settingsRow("settings.disableFeedbackAudio", `<select id="settingsEditor-disableFeedbackAudio">
                 <option>${window.settings.disableFeedbackAudio}</option>
                 <option>${!window.settings.disableFeedbackAudio}</option>
             </select>`, "settings.disableFeedbackAudio.help"),
-        ].join("") },
-        { id: "display", titleKey: "settings.cat.display", html: () => [
+            settingsRow("settings.power.volume", `<select id="settingsPowerVolume">${numOptions(0, 100, 5, v => v + "%", 70)}</select>`, "settings.power.volume.help"),
+            section("settings.cat.display"),
+            settingsRow("settings.power.brightness", `<select id="settingsPowerBrightness">${numOptions(0, 100, 5, v => v + "%", 50)}</select>`, "settings.power.brightness.help"),
             settingsRow("settings.nointro", `<select id="settingsEditor-nointro">
                 <option>${window.settings.nointro}</option>
                 <option>${!window.settings.nointro}</option>
-            </select>`, "settings.nointro.help" + (window.settings.nointroOverride ? t("settings.overridden") : "")),
+            </select>`),
             settingsRow("settings.nocursor", `<select id="settingsEditor-nocursor">
                 <option>${window.settings.nocursor}</option>
                 <option>${!window.settings.nocursor}</option>
-            </select>`, "settings.nocursor.help" + (window.settings.nocursorOverride ? t("settings.overridden") : "")),
+            </select>`),
             settingsRow("settings.cursorAutoHide", `<select id="settingsEditor-cursorAutoHide">
                 <option>${window.settings.cursorAutoHide !== false}</option>
                 <option>${window.settings.cursorAutoHide === false}</option>
-            </select>`, "settings.cursorAutoHide.help"),
-            settingsRow("settings.cursorAutoHideDelay", `<input type="text" id="settingsEditor-cursorAutoHideDelay" value="${window.settings.cursorAutoHideDelay ?? 10}">`, "settings.cursorAutoHideDelay.help"),
-            settingsRow("settings.cursorSize", `<select id="settingsEditor-cursorSize">${numOptions(16, 64, 2, v => v + "px", window.settings.cursorSize ?? 28)}</select>`, "settings.cursorSize.help"),
-            settingsRow("settings.mouseWheelSpeed", `<select id="settingsEditor-mouseWheelSpeed">${numOptions(0.25, 4, 0.25, v => v + "×", window.settings.mouseWheelSpeed ?? 1)}</select>`, "settings.mouseWheelSpeed.help"),
-            settingsRow("settings.cursorSpeed", `<select id="settingsEditor-cursorSpeed">${numOptions(0.25, 4, 0.25, v => v + "×", window.settings.cursorSpeed ?? 1)}</select>`, "settings.cursorSpeed.help"),
-            // cursorStyle selector hidden: the WP7 pointer pack is the only
-            // style shipped now, so there is nothing to choose between.
-            // batteryAlways removed: the battery indicator is verified on real
-            // hardware — the simulated-readout toggle no longer needs a UI entry.
+            </select>`),
+            settingsRow("settings.cursorAutoHideDelay", `<input type="text" id="settingsEditor-cursorAutoHideDelay" value="${window.settings.cursorAutoHideDelay ?? 10}">`),
+            settingsRow("settings.cursorSize", `<select id="settingsEditor-cursorSize">${numOptions(16, 64, 2, v => v + "px", window.settings.cursorSize ?? 28)}</select>`),
+            settingsRow("settings.mouseWheelSpeed", `<select id="settingsEditor-mouseWheelSpeed">${numOptions(0.25, 4, 0.25, v => v + "×", window.settings.mouseWheelSpeed ?? 1)}</select>`),
+            settingsRow("settings.cursorSpeed", `<select id="settingsEditor-cursorSpeed">${numOptions(0.25, 4, 0.25, v => v + "×", window.settings.cursorSpeed ?? 1)}</select>`),
         ].join("") },
+        { id: "time", titleKey: "settings.cat.time", html: () => {
+            const y0 = new Date().getFullYear();
+            const yr = () => Array.from({ length: 11 }, (_, i) => y0 - 5 + i).map(y => `<option value="${y}">${y}</option>`).join("");
+            const mo = () => Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${String(i + 1).padStart(2, "0")}</option>`).join("");
+            const dd = () => Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}">${String(i + 1).padStart(2, "0")}</option>`).join("");
+            const hh = () => Array.from({ length: 24 }, (_, i) => `<option value="${i}">${String(i).padStart(2, "0")}</option>`).join("");
+            const mm = () => Array.from({ length: 60 }, (_, i) => `<option value="${i}">${String(i).padStart(2, "0")}</option>`).join("");
+            return [
+                section("settings.cat.time"),
+                settingsRow("settings.time.status", `<span id="settingsTimeStatus" class="settings_time_status">–</span>`),
+                settingsRow("settings.clockHours", `<select id="settingsEditor-clockHours">
+                    <option>${(window.settings.clockHours === 12) ? "12" : "24"}</option>
+                    <option>${(window.settings.clockHours === 12) ? "24" : "12"}</option>
+                </select>`),
+                settingsRow("settings.time.ntp", `<select id="settingsTimeNtp">
+                    <option value="1">${t("settings.time.ntp.on")}</option>
+                    <option value="0">${t("settings.time.ntp.off")}</option>
+                </select>`, "settings.time.ntp.help"),
+                // The date/time pickers are plain selects → converted to the same
+                // theme dropdowns as every other setting (no native calendar/clock
+                // popups). Day options are clamped to the selected month by the
+                // bindings below.
+                settingsRow("settings.time.date", `<div class="settings_time_grp">
+                    <select id="settingsTimeYear">${yr()}</select>
+                    <select id="settingsTimeMonth">${mo()}</select>
+                    <select id="settingsTimeDay">${dd()}</select>
+                </div>`),
+                settingsRow("settings.time.clock", `<div class="settings_time_grp">
+                    <select id="settingsTimeHour">${hh()}</select>
+                    <select id="settingsTimeMinute">${mm()}</select>
+                </div>`),
+                settingsRow("settings.time.apply", `<button type="button" id="settingsTimeApply" class="settings_time_btn">${t("settings.time.apply")}</button>`, "settings.time.apply.help"),
+            ].join("");
+        } },
         { id: "lock", titleKey: "settings.cat.lock", html: () => [
+            section("settings.cat.lock"),
             settingsRow("settings.screensaverEnabled", `<select id="settingsEditor-screensaverEnabled">
                 <option>${window.settings.screensaverEnabled}</option>
                 <option>${!window.settings.screensaverEnabled}</option>
-            </select>`, "settings.screensaverEnabled.help"),
-            settingsRow("settings.screensaverIdle", `<input type="text" id="settingsEditor-screensaverIdle" value="${window.settings.screensaverIdle || 300}">`, "settings.screensaverIdle.help"),
+            </select>`),
+            settingsRow("settings.screensaverIdle", `<input type="text" id="settingsEditor-screensaverIdle" value="${window.settings.screensaverIdle || 300}">`),
             settingsRow("settings.screenOffIdle", `<input type="text" id="settingsEditor-screenOffIdle" value="${window.settings.screenOffIdle || 1800}">`, "settings.screenOffIdle.help"),
             settingsRow("settings.screensaverStyle", `<select id="settingsEditor-screensaverStyle">
                 <option>${window.settings.screensaverStyle || "code"}</option>
                 <option>${(window.settings.screensaverStyle === "matrix") ? "code" : "matrix"}</option>
-            </select>`, "settings.screensaverStyle.help"),
+            </select>`),
             section("settings.section.lock"),
             settingsRow("settings.lockCode", `<input type="password" id="settingsEditor-lockCode" autocomplete="off" inputmode="numeric" maxlength="8" value="${window.settings.lockCode || '0000'}">`, "settings.lockCode.help"),
             settingsRow("settings.lockOnIdle", `<select id="settingsEditor-lockOnIdle">
@@ -1945,6 +1992,7 @@ window.openSettings = async () => {
             </select>`, "settings.lockOnIdle.help"),
         ].join("") },
         { id: "apps", titleKey: "settings.cat.apps", html: () => [
+            section("settings.cat.apps"),
             settingsRow("settings.appSort", `<select id="settingsEditor-appSort">
                 <option value="name-asc" ${window.settings.appSort === "name-asc" ? "selected" : ""}>${t("settings.appSort.nameAsc")}</option>
                 <option value="name-desc" ${window.settings.appSort === "name-desc" ? "selected" : ""}>${t("settings.appSort.nameDesc")}</option>
@@ -1952,15 +2000,15 @@ window.openSettings = async () => {
                 <option value="install-desc" ${window.settings.appSort === "install-desc" ? "selected" : ""}>${t("settings.appSort.installDesc")}</option>
                 <option value="freq-asc" ${window.settings.appSort === "freq-asc" ? "selected" : ""}>${t("settings.appSort.freqAsc")}</option>
                 <option value="freq-desc" ${window.settings.appSort === "freq-desc" ? "selected" : ""}>${t("settings.appSort.freqDesc")}</option>
-            </select>`, "settings.appSort.help"),
+            </select>`),
             settingsRow("settings.hideDotfiles", `<select id="settingsEditor-hideDotfiles">
                 <option>${window.settings.hideDotfiles}</option>
                 <option>${!window.settings.hideDotfiles}</option>
-            </select>`, "settings.hideDotfiles.help"),
+            </select>`),
             settingsRow("settings.fsListView", `<select id="settingsEditor-fsListView">
                 <option>${window.settings.fsListView}</option>
                 <option>${!window.settings.fsListView}</option>
-            </select>`, "settings.fsListView.help"),
+            </select>`),
             section("settings.section.appMonitor"),
             settingsRow("settings.appMonitor.enabled", `<select id="settingsEditor-appMonitor-enabled">
                 <option>${(window.settings.appMonitor || {}).enabled !== false}</option>
@@ -1972,6 +2020,14 @@ window.openSettings = async () => {
                 <option value="false" ${(window.settings.appMonitor || {}).mock === false ? "selected" : ""}>${t("settings.appMonitor.mock.real")}</option>
             </select>`, "settings.appMonitor.mock.help"),
             settingsRow("settings.appMonitor.appImageDirs", `<input type="text" id="settingsEditor-appMonitor-appImageDirs" value="${(window.settings.appMonitor || {}).appImageDirs || ''}">`, "settings.appMonitor.appImageDirs.help"),
+            section("settings.cat.download"),
+            settingsRow("settings.download.dir",
+                `<div class="settings_net_pw"><input type="text" id="settingsDlDir" placeholder="~/Downloads"></div>
+                <div class="settings_net_actions"><button type="button" id="settingsDlApply" class="settings_net_btn">${t("settings.download.apply")}</button></div>`),
+            settingsRow("settings.download.open",
+                `<button type="button" id="settingsDlOpen" class="settings_net_btn">${t("settings.download.open")}</button>`),
+            settingsRow("settings.download.note",
+                `<span class="settings_net_info">${t("settings.download.note")}</span>`),
         ].join("") },
         { id: "network", titleKey: "settings.cat.network", html: () => {
             const netOnOff = (id, on) => `<select id="${id}">
@@ -1981,9 +2037,9 @@ window.openSettings = async () => {
             return [
                 section("settings.network.wifi"),
                 settingsRow("settings.network.wifiPower", netOnOff("settingsNetWifiPower", true), "settings.network.wifiPower.help"),
-                settingsRow("settings.network.wifiStatus", `<span id="settingsNetWifiStatus" class="settings_net_status">–</span>`, "settings.network.wifiStatus.help"),
+                settingsRow("settings.network.wifiStatus", `<span id="settingsNetWifiStatus" class="settings_net_status">–</span>`),
                 settingsRow("settings.network.wifiInfo", `<div id="settingsNetWifiInfo" class="settings_net_info"></div>`, "settings.network.wifiInfo.help"),
-                settingsRow("settings.network.wifiDisconnect", `<button type="button" id="settingsNetWifiDisconnect" class="settings_net_btn">${t("settings.network.btDisc")}</button>`, "settings.network.wifiDisconnect.help"),
+                settingsRow("settings.network.wifiDisconnect", `<button type="button" id="settingsNetWifiDisconnect" class="settings_net_btn">${t("settings.network.btDisc")}</button>`),
                 settingsRow("settings.network.available", `<div id="settingsNetWifiList" class="settings_net_list" augmented-ui="bl-clip tr-clip exe"></div>
                     <div class="settings_net_pw"><input type="password" id="settingsNetWifiPassword" placeholder="${t("settings.network.pwPh")}"></div>
                     <div class="settings_net_actions">
@@ -2003,25 +2059,13 @@ window.openSettings = async () => {
                     </div>`, "settings.network.proxy.help"),
                 section("settings.network.bt"),
                 settingsRow("settings.network.btPower", netOnOff("settingsNetBtPower", true), "settings.network.btPower.help"),
-                settingsRow("settings.network.btStatus", `<span id="settingsNetBtStatus" class="settings_net_status">–</span>`, "settings.network.btStatus.help"),
+                settingsRow("settings.network.btStatus", `<span id="settingsNetBtStatus" class="settings_net_status">–</span>`),
                 settingsRow("settings.network.btDevices", `<div id="settingsNetBtList" class="settings_net_list" augmented-ui="bl-clip tr-clip exe"></div>
                     <div class="settings_net_actions"><button type="button" id="settingsNetBtScan" class="settings_net_btn">${t("settings.network.btScan")}</button></div>`, "settings.network.btDevices.help"),
             ].join("");
         } },
-        { id: "download", titleKey: "settings.cat.download", html: () => [
-            section("settings.download.title"),
-            settingsRow("settings.download.dir",
-                `<div class="settings_net_pw"><input type="text" id="settingsDlDir" placeholder="~/Downloads"></div>
-                <div class="settings_net_actions"><button type="button" id="settingsDlApply" class="settings_net_btn">${t("settings.download.apply")}</button></div>`,
-                "settings.download.dir.help"),
-            settingsRow("settings.download.open",
-                `<button type="button" id="settingsDlOpen" class="settings_net_btn">${t("settings.download.open")}</button>`,
-                "settings.download.open.help"),
-            settingsRow("settings.download.note",
-                `<span class="settings_net_info">${t("settings.download.note")}</span>`,
-                "settings.download.note.help"),
-        ].join("") },
         { id: "claude", titleKey: "settings.cat.claude", html: () => [
+            section("settings.cat.claude"),
             settingsRow("settings.claude.enabled", `<select id="settingsEditor-claude-enabled">
                 <option>${(window.settings.claude || {}).enabled}</option>
                 <option>${!(window.settings.claude || {}).enabled}</option>
@@ -2052,50 +2096,16 @@ window.openSettings = async () => {
             section("settings.section.claudeNote"),
         ].join("") },
         { id: "power", titleKey: "settings.cat.power", html: () => [
+            section("settings.cat.power"),
             settingsRow("settings.power.mode", `<div class="settings_power_modes" id="settingsPowerModes">
                 <button type="button" data-gov="powersave">${t("settings.power.powersave")}</button>
                 <button type="button" data-gov="schedutil">${t("settings.power.schedutil")}</button>
                 <button type="button" data-gov="performance">${t("settings.power.performance")}</button>
             </div>`, "settings.power.mode.help"),
-            settingsRow("settings.power.freq", `<span id="settingsPowerReadout">–</span>`, "settings.power.freq.help"),
-            settingsRow("settings.power.brightness", `<select id="settingsPowerBrightness">${numOptions(0, 100, 5, v => v + "%", 50)}</select>`, "settings.power.brightness.help"),
-            settingsRow("settings.power.volume", `<select id="settingsPowerVolume">${numOptions(0, 100, 5, v => v + "%", 70)}</select>`, "settings.power.volume.help"),
-            settingsRow("settings.power.kbdBacklight", `<select id="settingsKbdBacklight">${numOptions(0, 2, 1, v => v === 0 ? t("settings.power.kbd.off") : v === 1 ? t("settings.power.kbd.low") : t("settings.power.kbd.high"), window.settings.kbdBacklight ?? 1)}</select>`, "settings.power.kbdBacklight.help"),
+            settingsRow("settings.power.freq", `<span id="settingsPowerReadout">–</span>`),
+            settingsRow("settings.power.kbdBacklight", `<select id="settingsKbdBacklight">${numOptions(0, 2, 1, v => v === 0 ? t("settings.power.kbd.off") : v === 1 ? t("settings.power.kbd.low") : t("settings.power.kbd.high"), window.settings.kbdBacklight ?? 1)}</select>`),
             settingsRow("settings.power.touchpadTap", `<select id="settingsTouchpadTap">${numOptions(0, 1, 1, v => v === 1 ? t("settings.power.touchpad.on") : t("settings.power.touchpad.off"), window.settings.touchpadTap ?? 1)}</select>`, "settings.power.touchpadTap.help"),
         ].join("") },
-        { id: "time", titleKey: "settings.cat.time", html: () => {
-            const y0 = new Date().getFullYear();
-            const yr = () => Array.from({ length: 11 }, (_, i) => y0 - 5 + i).map(y => `<option value="${y}">${y}</option>`).join("");
-            const mo = () => Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${String(i + 1).padStart(2, "0")}</option>`).join("");
-            const dd = () => Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}">${String(i + 1).padStart(2, "0")}</option>`).join("");
-            const hh = () => Array.from({ length: 24 }, (_, i) => `<option value="${i}">${String(i).padStart(2, "0")}</option>`).join("");
-            const mm = () => Array.from({ length: 60 }, (_, i) => `<option value="${i}">${String(i).padStart(2, "0")}</option>`).join("");
-            return [
-                settingsRow("settings.time.status", `<span id="settingsTimeStatus" class="settings_time_status">–</span>`, "settings.time.status.help"),
-                settingsRow("settings.clockHours", `<select id="settingsEditor-clockHours">
-                    <option>${(window.settings.clockHours === 12) ? "12" : "24"}</option>
-                    <option>${(window.settings.clockHours === 12) ? "24" : "12"}</option>
-                </select>`, "settings.clockHours.help"),
-                settingsRow("settings.time.ntp", `<select id="settingsTimeNtp">
-                    <option value="1">${t("settings.time.ntp.on")}</option>
-                    <option value="0">${t("settings.time.ntp.off")}</option>
-                </select>`, "settings.time.ntp.help"),
-                // The date/time pickers are plain selects → converted to the same
-                // theme dropdowns as every other setting (no native calendar/clock
-                // popups). Day options are clamped to the selected month by the
-                // bindings below.
-                settingsRow("settings.time.date", `<div class="settings_time_grp">
-                    <select id="settingsTimeYear">${yr()}</select>
-                    <select id="settingsTimeMonth">${mo()}</select>
-                    <select id="settingsTimeDay">${dd()}</select>
-                </div>`, "settings.time.date.help"),
-                settingsRow("settings.time.clock", `<div class="settings_time_grp">
-                    <select id="settingsTimeHour">${hh()}</select>
-                    <select id="settingsTimeMinute">${mm()}</select>
-                </div>`, "settings.time.clock.help"),
-                settingsRow("settings.time.apply", `<button type="button" id="settingsTimeApply" class="settings_time_btn">${t("settings.time.apply")}</button>`, "settings.time.apply.help"),
-            ].join("");
-        } },
     ];
 
     // Remember the language the editor was opened in, so a change can re-open
@@ -2772,6 +2782,44 @@ window.populatePowerControls = () => {
             notify(t("settings.download.ugetMissing"));
         }
     });
+
+    // ---- System sources (apt mirrors) (#130) ----
+    // Built-in presets + a free-form custom URL. Lives in the 通用 section, so
+    // it is rendered with the category but only queries the backend on open.
+    const srcMirror = document.getElementById("settingsSrcMirror");
+    const srcCustom = document.getElementById("settingsSrcCustom");
+    const srcApply = document.getElementById("settingsSrcApply");
+    // Show the custom-URL row only when "自定义" is chosen.
+    const toggleSrcCustom = () => {
+        if (!srcCustom || !srcMirror) return;
+        const row = srcCustom.closest ? srcCustom.closest(".settings_row") : null;
+        if (row) row.style.display = srcMirror.value === "custom" ? "" : "none";
+    };
+    const applySrc = () => {
+        const mirror = srcMirror ? srcMirror.value : "custom";
+        const custom = srcCustom ? srcCustom.value.trim() : "";
+        ipc.invoke("apt:setMirror", { mirror, custom }).then(r => {
+            notify(r && r.ok ? t("settings.sources.applied")
+                             : t("settings.sources.failed") + (r && r.error ? " — " + r.error : ""));
+        }).catch(() => notify(t("settings.sources.failed")));
+    };
+    if (srcMirror) {
+        srcMirror.addEventListener("change", toggleSrcCustom);
+        ipc.invoke("apt:getMirror").then(r => {
+            if (!r || !r.ok) {
+                // Preview / non-Linux build: read-only, Apply is explained by the
+                // failure toast. Keeps the row visible so the layout is stable.
+                if (srcApply) srcApply.disabled = true;
+                if (srcCustom) srcCustom.disabled = true;
+                return;
+            }
+            if (r.mirror) srcMirror.value = r.mirror;
+            if (r.custom) srcCustom.value = r.custom;
+            toggleSrcCustom();
+        }).catch(() => {});
+    }
+    if (srcApply) srcApply.addEventListener("click", applySrc);
+    toggleSrcCustom();
 
     // Arrow-key navigation across the list rows (up/down/Home/End), Enter works
     // natively on the <button> rows.
