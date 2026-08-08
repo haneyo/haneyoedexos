@@ -124,6 +124,7 @@ if (!fs.existsSync(settingsFile)) {
         performanceMode: "",                 // CPU governor to apply at boot: "powersave" | "schedutil" | "performance" ("" = leave as-is)
         claude: {
             enabled: false,
+            provider: "",
             baseUrl: "",
             apiKey: "",
             model: "",
@@ -1365,12 +1366,26 @@ app.on('ready', async () => {
         }
     });
 
+    // Download directory: configurable via the settings "Downloads" category
+    // (#45). Persisted in settings.json as `downloadDir`; falls back to the OS
+    // Downloads folder. Lazily cached so it stays cheap per download.
+    let _dlDir = null;
+    const getDlDir = () => {
+        if (_dlDir) return _dlDir;
+        try {
+            const s = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
+            _dlDir = (s && s.downloadDir) || electron.app.getPath("downloads");
+        } catch (err) { _dlDir = electron.app.getPath("downloads"); }
+        return _dlDir;
+    };
+
     // Download manager: intercept downloads from the embedded browser AND the
-    // virtual-monitor webviews (tabs 4/5), save them to the OS Downloads folder
-    // and tell the renderer to show a toast when each finishes.
+    // virtual-monitor webviews (tabs 4/5), save them to the configured download
+    // directory (settings → Downloads) and tell the renderer to show a toast
+    // when each finishes.
     const wireDownloads = partition => {
         electron.session.fromPartition(partition).on("will-download", (event, item, webContents) => {
-            const file = path.join(electron.app.getPath("downloads"), item.getFilename());
+            const file = path.join(getDlDir(), item.getFilename());
             try { item.setSavePath(file); } catch (err) {}
             item.on("done", (e, state) => {
                 const host = webContents && webContents.hostWebContents;
@@ -1385,6 +1400,21 @@ app.on('ready', async () => {
         });
     };
     for (const p of ["persist:edex-browser", "persist:edex-monitor-a", "persist:edex-monitor-b"]) wireDownloads(p);
+
+    // Settings → Downloads category: read / update the download directory.
+    ipc.handle("dl:getDir", () => Promise.resolve({ ok: true, dir: getDlDir() }));
+    ipc.handle("dl:setDir", (e, { dir } = {}) => new Promise(resolve => {
+        if (!dir || typeof dir !== "string" || !dir.trim()) return resolve({ ok: false, error: "bad dir" });
+        dir = dir.trim();
+        try {
+            const s = JSON.parse(fs.readFileSync(settingsFile, "utf8")) || {};
+            s.downloadDir = dir;
+            fs.writeFileSync(settingsFile, JSON.stringify(s, "", 4));
+            _dlDir = dir;
+            try { fs.mkdirSync(dir, { recursive: true }); } catch (err) {}
+            resolve({ ok: true, dir });
+        } catch (err) { resolve({ ok: false, error: err.message }); }
+    }));
 
     // ---- Ad-blocking for the embedded browser (tab 5), default ON ----
     // @cliqz/adblocker (EasyList + EasyPrivacy + uBlock filters) wired into the

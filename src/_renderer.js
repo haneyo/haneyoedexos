@@ -1943,10 +1943,6 @@ window.openSettings = async () => {
                 <option>${window.settings.lockOnIdle !== false}</option>
                 <option>${window.settings.lockOnIdle === false}</option>
             </select>`, "settings.lockOnIdle.help"),
-            settingsRow("settings.bootAnimAfterUnlock", `<select id="settingsEditor-bootAnimAfterUnlock">
-                <option>${window.settings.bootAnimAfterUnlock !== false}</option>
-                <option>${window.settings.bootAnimAfterUnlock === false}</option>
-            </select>`, "settings.bootAnimAfterUnlock.help"),
         ].join("") },
         { id: "apps", titleKey: "settings.cat.apps", html: () => [
             settingsRow("settings.appSort", `<select id="settingsEditor-appSort">
@@ -2012,6 +2008,19 @@ window.openSettings = async () => {
                     <div class="settings_net_actions"><button type="button" id="settingsNetBtScan" class="settings_net_btn">${t("settings.network.btScan")}</button></div>`, "settings.network.btDevices.help"),
             ].join("");
         } },
+        { id: "download", titleKey: "settings.cat.download", html: () => [
+            section("settings.download.title"),
+            settingsRow("settings.download.dir",
+                `<div class="settings_net_pw"><input type="text" id="settingsDlDir" placeholder="~/Downloads"></div>
+                <div class="settings_net_actions"><button type="button" id="settingsDlApply" class="settings_net_btn">${t("settings.download.apply")}</button></div>`,
+                "settings.download.dir.help"),
+            settingsRow("settings.download.open",
+                `<button type="button" id="settingsDlOpen" class="settings_net_btn">${t("settings.download.open")}</button>`,
+                "settings.download.open.help"),
+            settingsRow("settings.download.note",
+                `<span class="settings_net_info">${t("settings.download.note")}</span>`,
+                "settings.download.note.help"),
+        ].join("") },
         { id: "claude", titleKey: "settings.cat.claude", html: () => [
             settingsRow("settings.claude.enabled", `<select id="settingsEditor-claude-enabled">
                 <option>${(window.settings.claude || {}).enabled}</option>
@@ -2729,6 +2738,41 @@ window.populatePowerControls = () => {
             const timer = setInterval(() => { refreshBt(); if (++n >= 6) clearInterval(timer); }, 1500);
         }).catch(() => {});
     });
+    // ---- Downloads (#45) ----
+    // The input value is set here (not in the CATS html template) so the path
+    // never needs HTML-escaping and stays readable even with odd characters.
+    const dlDirInput = document.getElementById("settingsDlDir");
+    if (dlDirInput) dlDirInput.value = (window.settings && window.settings.downloadDir) || require("os").homedir() + "/Downloads";
+    const dlApply = document.getElementById("settingsDlApply");
+    if (dlApply) dlApply.addEventListener("click", () => {
+        const dir = (dlDirInput ? dlDirInput.value : "").trim();
+        if (!dir) { notify(t("settings.download.badDir")); return; }
+        ipc.invoke("dl:setDir", { dir }).then(r => {
+            if (window.settings && r && r.ok) window.settings.downloadDir = dir;
+            notify(r && r.ok ? t("settings.download.saved") + " " + dir
+                             : t("settings.download.failed") + (r && r.error ? " — " + r.error : ""));
+        }).catch(() => {});
+    });
+    const dlOpen = document.getElementById("settingsDlOpen");
+    if (dlOpen) dlOpen.addEventListener("click", () => {
+        // Launch uGet in the app-monitor display (tab 4/5), like clicking it in
+        // the app list. Match by name so the exact .desktop Name casing doesn't
+        // matter; if uGet isn't installed the toast says so.
+        const launchUget = list => {
+            const apps = Array.isArray(list) ? list : (list && list.apps) || [];
+            const ug = apps.find(a => a && a.name && /uget/i.test(a.name));
+            if (!ug || !window.appmonitorApi) { notify(t("settings.download.ugetMissing")); return; }
+            window.appmonitorApi.launch("a", ug.id).then(r => {
+                notify(r && r.ok ? t("settings.download.ugetLaunched") : t("settings.download.launchFailed"));
+            }).catch(() => notify(t("settings.download.launchFailed")));
+        };
+        if (window.appmonitorApi) {
+            window.appmonitorApi.nativeList().then(launchUget).catch(() => notify(t("settings.download.ugetMissing")));
+        } else {
+            notify(t("settings.download.ugetMissing"));
+        }
+    });
+
     // Arrow-key navigation across the list rows (up/down/Home/End), Enter works
     // natively on the <button> rows.
     const wireListKeys = container => {
@@ -2929,7 +2973,6 @@ window.writeSettingsFile = () => {
     s.lockCode = document.getElementById("settingsEditor-lockCode").value;
     s.lockOnIdle = (document.getElementById("settingsEditor-lockOnIdle").value === "true");
     s.showKeyboard = (document.getElementById("settingsEditor-showKeyboard").value === "true");
-    s.bootAnimAfterUnlock = (document.getElementById("settingsEditor-bootAnimAfterUnlock").value === "true");
     s.terminalScrollSensitivity = Number(document.getElementById("settingsEditor-terminalScrollSensitivity").value);
     s.terminalScrollDirection = document.getElementById("settingsEditor-terminalScrollDirection").value;
     s.cursorAutoHide = (document.getElementById("settingsEditor-cursorAutoHide").value === "true");
@@ -3339,7 +3382,7 @@ function replayBoot() {
 // Re-run the module entrance animation so the panels "load" like a fresh boot,
 // WITHOUT recreating anything - terminals keep running and the file browser
 // keeps its current directory.
-function reRevealUI() {
+function reRevealUI(onComplete) {
     window._replayUI = false;
     // hide everything, then re-run the entrances
     document.querySelectorAll(".mod_column > div").forEach(d => {
@@ -3349,18 +3392,29 @@ function reRevealUI() {
     void (document.getElementById("mod_column_left") || document.body).offsetWidth; // reflow
     let divs = [...document.querySelectorAll(".mod_column > div")];
     divs.forEach(d => { d.style.animation = ""; d.style.opacity = ""; });
+    // The desktop counts as "loaded" once BOTH the module-column stagger and the
+    // cyber entrance have kicked off their last animation. Callers (the lock's
+    // deferred window restore) wait for this so pre-lock windows never appear
+    // before — or over — the loading desktop.
+    let pending = 2;
+    const maybeDone = () => {
+        if (--pending > 0 || typeof onComplete !== "function") return;
+        // The stagger only *kicks off* the last animation; give it a beat to
+        // play before the desktop is considered fully revealed.
+        setTimeout(() => { try { onComplete(); } catch (e) {} }, 400);
+    };
     let idx = 0;
     let x = setInterval(() => {
-        if (idx >= divs.length) { clearInterval(x); return; }
+        if (idx >= divs.length) { clearInterval(x); maybeDone(); return; }
         if (divs[idx]) divs[idx].style.animationPlayState = "running";
         idx++;
     }, 400);
-    cyberEntrance();
+    cyberEntrance(maybeDone);
 }
 
 // Reveal the cyber panel (DATA STREAM) + radar elements one by one, then the
 // outer frame (border) fades in last.
-function cyberEntrance() {
+function cyberEntrance(onDone) {
     // Both the panel and the (sibling) radar were kept at opacity:0 during the
     // boot welcome so their frames did not pop out prematurely - reveal them
     // now that the greeting is over, then stage the inner elements one by one.
@@ -3382,6 +3436,7 @@ function cyberEntrance() {
                 let el = document.getElementById(id);
                 if (el) el.style.setProperty("--aug-border-opacity", "0.35");
             });
+            if (typeof onDone === "function") { try { onDone(); } catch (e) {} }
             return;
         }
         let el = list[n];

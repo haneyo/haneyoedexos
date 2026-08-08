@@ -28,6 +28,11 @@ class LockScreen {
         this._boxAnimating = false;
         // 30s-idle timeout back to the screensaver (lockIdleTimeout, default 30)
         this._idleTimer = null;
+        // Real unlock defers putting the pre-lock windows back until the UI
+        // reveal (matrix entrance / lock_block fade) completes — see
+        // _flushDeferredRestore — so they never pop up over the loading desktop.
+        this._deferRestore = false;
+        this._pendingRestore = false;
     }
 
     // Locking hides (not destroys) every open window — settings editor, WiFi,
@@ -51,6 +56,22 @@ class LockScreen {
             this._hiddenModals.push(id);
             el.style.display = "none";
         });
+        // A fullscreen overlay (browser / webapp / app-monitor web app, z 9000)
+        // must not survive the lock: in code mode it sits ABOVE the lock
+        // (lock_block z 3000) and after any unlock it would pop back fullscreen.
+        // Drop it at lock time so the lock covers the normal panel view and the
+        // unlock returns to the virtual-display panels, not the fullscreen app.
+        if (window.webViewFullscreen && window.webViewFullscreen.el) {
+            try { window.webViewFullscreen.exit(); } catch (e) {}
+        }
+        // Same for a native app covering the real display via the app-monitor
+        // backend, and for any DOM-level fullscreen (e.g. the media player).
+        if (window.appmonitorApi && typeof window.appmonitorApi.exitFullscreen === "function") {
+            try { window.appmonitorApi.exitFullscreen(); } catch (e) {}
+        }
+        if (document.fullscreenElement && typeof document.exitFullscreen === "function") {
+            try { document.exitFullscreen(); } catch (e) {}
+        }
     }
 
     // Unlock: put every window that was open before the lock back on screen,
@@ -97,6 +118,10 @@ class LockScreen {
         if (!window._uiReady) {
             return;
         }
+        // A fresh lock always starts with the restore undelayed / not pending,
+        // whatever a previous lock flow left behind.
+        this._deferRestore = false;
+        this._pendingRestore = false;
         // Remember where the user was: the tab they were on and every window
         // they had open. The lock itself runs on tab 0 and hides those windows,
         // and unlock must put everything back exactly as it was.
@@ -228,23 +253,51 @@ class LockScreen {
             this._fadeTimer = setTimeout(() => {
                 this._fadeTimer = null;
                 if (block.isConnected) block.remove();
+                // Code-mode unlock: the UI is fully revealed once the dim has
+                // faded — only then put the pre-lock windows back, so they
+                // appear after the desktop, not over it.
+                if (this._pendingRestore) this._flushDeferredRestore();
             }, 430);
         }
         if (restoreWindows) {
-            // Put back every window that was open before the lock (settings
-            // editor, CLOCK & POWER, …) in its exact spot — the lock only hid them.
-            this._restoreWindows();
-            // Leave cover mode: restore the real tabs / filesystem / IP / procs.
-            if (window.cover) window.cover.set(false);
-            // Return to the tab the user was on before the lock. The lock ran
-            // on tab 0, so currentTerm differs whenever the user was elsewhere;
-            // leave it alone otherwise (matrix mode never switched tabs).
-            if (this._prevTerm != null && this._prevTerm !== window.currentTerm) {
-                try { if (window.focusShellTab) window.focusShellTab(this._prevTerm); } catch (e) {}
+            if (this._deferRestore) {
+                // The unlock is mid-reveal (matrix entrance / lock-block fade):
+                // hold the pre-lock windows off the screen until the UI has
+                // finished loading — they must not pop up over it.
+                this._pendingRestore = true;
+            } else {
+                this._applyRestore();
             }
-            this._prevTerm = null;
-            try { if (window.term && window.term[window.currentTerm]) window.term[window.currentTerm].term.focus(); } catch (e) {}
         }
+    }
+
+    // Real unlock: put every window that was open before the lock (settings
+    // editor, CLOCK & POWER, …) back in its exact spot, leave cover mode
+    // (restore the real tabs / filesystem / IP / procs) and return to the tab
+    // the user was on before the lock. Shared by the immediate unlock and the
+    // deferred one (which runs after the UI reveal finishes).
+    _applyRestore() {
+        this._restoreWindows();
+        // Leave cover mode: restore the real tabs / filesystem / IP / procs.
+        if (window.cover) window.cover.set(false);
+        // Return to the tab the user was on before the lock. The lock ran
+        // on tab 0, so currentTerm differs whenever the user was elsewhere;
+        // leave it alone otherwise (matrix mode never switched tabs).
+        if (this._prevTerm != null && this._prevTerm !== window.currentTerm) {
+            try { if (window.focusShellTab) window.focusShellTab(this._prevTerm); } catch (e) {}
+        }
+        this._prevTerm = null;
+        try { if (window.term && window.term[window.currentTerm]) window.term[window.currentTerm].term.focus(); } catch (e) {}
+    }
+
+    // Run the deferred window restore — called once the UI reveal has finished
+    // (matrix entrance via reRevealUI's completion, or the code lock_block
+    // fade), so previously-open windows appear AFTER the UI loads, not over it.
+    _flushDeferredRestore() {
+        if (!this._pendingRestore) return;
+        this._pendingRestore = false;
+        this._deferRestore = false;
+        this._applyRestore();
     }
 
     // ---- code mode: the lock is drawn entirely by the real terminal ----
@@ -809,7 +862,10 @@ class LockScreen {
             if (window.audioManager) window.audioManager.granted.play();
             if (term) this._redrawBox(0, false, "ACCESS GRANTED");
             // Grant animation: the passcode input turns to noise, then the whole
-            // box dissolves before the lock is lifted (#87).
+            // box dissolves before the lock is lifted (#87). The pre-lock
+            // windows stay hidden until the lock_block has faded out, so they
+            // appear after the UI is fully revealed, not over it.
+            this._deferRestore = true;
             this._garbleUnlock();
         } else {
             this._codeDenied();
@@ -1023,8 +1079,11 @@ class LockScreen {
             // is unchanged. The code-mode lock (_codeSubmit) never reaches here.
             if (typeof window.playCrtShutdown === "function") window.playCrtShutdown();
             const matrix = this._matrixTimer !== null;
-            if (matrix && window.settings.bootAnimAfterUnlock !== false
-                && typeof window.welcomeBack === "function") {
+            // The Matrix lock always replays the welcome-back + desktop entrance
+            // on unlock (the old "boot animation after unlock" toggle was
+            // removed — this is now fixed behaviour, and it is what lets the
+            // pre-lock windows appear only after the UI has loaded).
+            if (matrix && typeof window.welcomeBack === "function") {
                 try {
                     // The greeting is shown over a dark overlay; only once it has
                     // faded does the real UI start LOADING (its entrance
@@ -1034,11 +1093,20 @@ class LockScreen {
                     // sound only plays AFTER welcome-back has appeared AND faded
                     // (#90).
                     this._boxAnimating = true;
+                    // Keep the pre-lock windows hidden while the UI loads: put
+                    // them back only once the entrance (reRevealUI) has finished,
+                    // so a settings menu that was open before the lock does not
+                    // pop up before — or over — the desktop.
+                    this._deferRestore = true;
                     window.welcomeBack(() => {
                         this.hide();
-                        if (typeof window.reRevealUI === "function") window.reRevealUI();
+                        if (typeof window.reRevealUI === "function") {
+                            window.reRevealUI(() => this._flushDeferredRestore());
+                        } else {
+                            this._flushDeferredRestore();
+                        }
                     });
-                } catch (e) { this.hide(); }
+                } catch (e) { this.hide(); this._flushDeferredRestore(); }
             } else {
                 this.hide();
             }

@@ -489,6 +489,7 @@ div.modal_popup #settingsEditor .settings_net_bars {
 }
 div.modal_popup #settingsEditor .settings_net_lock {
     margin-left: auto;
+    margin-right: 0.6vh;
     opacity: 0.7;
     font-size: 1.4vh;
 }
@@ -895,13 +896,18 @@ div.modal_popup:has(#settingsEditor) .settings_net_list::-webkit-scrollbar-track
 div.modal_popup:has(#settingsEditor) #settingsEditor::-webkit-scrollbar-thumb,
 div.modal_popup:has(#settingsEditor) #settingsSide::-webkit-scrollbar-thumb,
 div.modal_popup:has(#settingsEditor) .settings_net_list::-webkit-scrollbar-thumb {
-    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
-    border-radius: 0.35vh;
+    /* Sharp-edged neon bar with a soft glow — not a rounded translucent pill.
+       The old rounded thumb read as a stock browser widget against the
+       clipped-corner cyber panels; this matches the panel border language. */
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.75);
+    border-radius: 0;
+    box-shadow: 0 0 0.6vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.45);
 }
 div.modal_popup:has(#settingsEditor) #settingsEditor::-webkit-scrollbar-thumb:hover,
 div.modal_popup:has(#settingsEditor) #settingsSide::-webkit-scrollbar-thumb:hover,
 div.modal_popup:has(#settingsEditor) .settings_net_list::-webkit-scrollbar-thumb:hover {
-    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.85);
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.95);
+    box-shadow: 0 0 1vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.6);
 }
 
 /* Keyboard shortcuts modal */
