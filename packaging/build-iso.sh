@@ -179,6 +179,68 @@ Categories=Network;WebBrowser;
 DESK
 fi
 
+# Bake in the mihomo proxy daemon (MetaCubeX/mihomo) + metacubexd dashboard +
+# geo databases so the built-in Clash proxy (#46) works fully offline at
+# install time. Layout: /opt/edex/mihomo/ holds the binary + geo files, with
+# /usr/local/bin/mihomo symlinking the binary (that symlink is what the in-app
+# `clash:update` replaces). Best-effort — a network hiccup warns, not fails.
+echo "[edex] baking in mihomo proxy + metacubexd dashboard"
+MIHOMO_URL=$(curl -fsSL "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest" 2>/dev/null \
+    | grep -o '"browser_download_url": *"[^"]*linux-amd64[^"]*\.gz"' | head -1 \
+    | sed -E 's/.*"browser_download_url": *"([^"]*)"/\1/') || true
+if [ -n "$MIHOMO_URL" ]; then
+    sudo mkdir -p "$WORK/rootfs/opt/edex/mihomo"
+    curl -fsSL --retry 2 -o "$WORK/mihomo.gz" "$MIHOMO_URL" || true
+    if [ -s "$WORK/mihomo.gz" ]; then
+        gzip -dc "$WORK/mihomo.gz" > "$WORK/mihomo" 2>/dev/null || true
+        if [ -s "$WORK/mihomo" ]; then
+            sudo install -m 755 "$WORK/mihomo" "$WORK/rootfs/opt/edex/mihomo/mihomo"
+            sudo ln -sf /opt/edex/mihomo/mihomo "$WORK/rootfs/usr/local/bin/mihomo" 2>/dev/null || true
+            # Geo databases come from the meta-rules-dat repo (mihomo's releases
+            # ship binaries only); geo-auto-update stays off so first boot never
+            # phones home for them.
+            for geo in Country.mmdb geoip.dat geosite.dat; do
+                curl -fsSL --retry 2 -o "$WORK/rootfs/opt/edex/mihomo/$geo" \
+                    "https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/$geo" || \
+                    echo "[edex] WARN: mihomo geo file $geo download failed (best-effort)"
+            done
+        else
+            echo "[edex] WARN: mihomo gunzip failed (best-effort)"
+        fi
+    else
+        echo "[edex] WARN: mihomo download failed (best-effort)"
+    fi
+else
+    echo "[edex] WARN: could not resolve mihomo release asset (best-effort)"
+fi
+
+# metacubexd web dashboard — served as /ui/ by mihomo's external-controller
+# (the "Open dashboard" button in the Clash settings pane points at it).
+# Older releases shipped a `gh-pages.zip` whose root was a gh-pages/ folder;
+# newer ones ship `compressed-dist.tgz` with the site files at the archive root.
+META_URL=$(curl -fsSL "https://api.github.com/repos/MetaCubeX/metacubexd/releases/latest" 2>/dev/null \
+    | grep -oE '"browser_download_url": *"[^"]*(compressed-dist\.tgz|gh-pages\.zip)[^"]*"' | head -1 \
+    | sed -E 's/.*"browser_download_url": *"([^"]*)"/\1/') || true
+if [ -n "$META_URL" ]; then
+    curl -fsSL --retry 2 -o "$WORK/metacubexd.pkg" "$META_URL" || true
+    if [ -s "$WORK/metacubexd.pkg" ]; then
+        sudo rm -rf "$WORK/rootfs/opt/edex/metacubexd"
+        sudo mkdir -p "$WORK/rootfs/opt/edex/metacubexd"
+        (rm -rf /tmp/metacubexd-x && mkdir /tmp/metacubexd-x && \
+         case "$META_URL" in
+             *.zip) unzip -q "$WORK/metacubexd.pkg" -d /tmp/metacubexd-x \
+                        && sudo cp -r /tmp/metacubexd-x/gh-pages/. "$WORK/rootfs/opt/edex/metacubexd/" ;;
+             *) tar -xzf "$WORK/metacubexd.pkg" -C /tmp/metacubexd-x \
+                        && sudo cp -r /tmp/metacubexd-x/. "$WORK/rootfs/opt/edex/metacubexd/" ;;
+         esac) || echo "[edex] WARN: metacubexd extract failed (best-effort)"
+        rm -rf /tmp/metacubexd-x
+    else
+        echo "[edex] WARN: metacubexd download failed (best-effort)"
+    fi
+else
+    echo "[edex] WARN: could not resolve metacubexd release asset (best-effort)"
+fi
+
 # Bake in the offline speech-recognition model (sherpa-onnx, streaming Chinese
 # zipformer, int8) so voice input works with zero network at run time.
 echo "[edex] baking in offline ASR model (sherpa-onnx, Chinese streaming)"

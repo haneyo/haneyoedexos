@@ -433,6 +433,22 @@ div.modal_popup #settingsEditor .settings_net_info {
     opacity: 0.85;
     min-height: 1.8vh;
 }
+div.modal_popup #settingsEditor .settings_net_log {
+    font-family: var(--font_terminal), monospace;
+    font-size: 1.3vh;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 22vh;
+    overflow-y: auto;
+    padding: 0.5vh;
+    margin: 0;
+    opacity: 0.9;
+    --aug-border: 0.12vh;
+    --aug-border-bg: rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+    background: color-mix(in srgb, var(--color_light_black) 60%, transparent);
+    box-shadow: inset 0 0 2vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.06);
+}
 div.modal_popup #settingsEditor .settings_net_list {
     display: flex;
     flex-direction: column;

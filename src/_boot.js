@@ -136,6 +136,14 @@ if (!fs.existsSync(settingsFile)) {
             httpPort: 6080,
             wsPort: 6081,
             appImageDirs: "~/Applications,~/AppImages"
+        },
+        clash: {
+            enabled: false,                   // start the mihomo proxy daemon + system proxy at boot
+            port: 7890,                       // mixed-port (HTTP/SOCKS share it)
+            controller: "127.0.0.1:9090",     // external-controller the dashboard reads from
+            secret: "",                       // controller secret (plaintext, like claude.apiKey)
+            subUrl: "",                       // subscription URL to fetch config.yaml from
+            preProxy: null                    // {method,http,https,ignore} captured before clash took the proxy
         }
     }, "", 4));
     signale.info(`Default settings written to ${settingsFile}`);
@@ -764,36 +772,43 @@ app.on('ready', async () => {
         execFile("nmcli", ["connection", "modify", String(name), "connection.autoconnect", auto ? "yes" : "no"],
             { timeout: 10000 }, (err, stdout, stderr) => resolve(err ? { ok: false, error: (stderr || err.message).trim() } : { ok: true }));
     }));
-    // Proxy config of the active WiFi connection (auto / none / manual).
-    ipc.handle("wifi:proxy", (e, cfg) => new Promise(resolve => {
-        if (process.platform !== "linux") return resolve({ ok: true, method: "auto", http: "", https: "" });
-        const activeConn = () => new Promise(res2 => {
-            execFile("nmcli", ["-t", "-f", "NAME,DEVICE,TYPE", "connection", "show", "--active"], { timeout: 8000 }, (err, stdout) => {
-                if (err) return res2("");
-                const c = (stdout || "").split("\n").filter(Boolean).map(l => l.split(":"))
-                    .find(p => p[2] === "802-11-wireless");
-                res2(c ? c[0] : "");
-            });
+    // Name of the active wireless connection (used by the proxy setters below
+    // and by the clash daemon). Empty string means "no active WiFi connection".
+    const nmActiveConn = () => new Promise(res2 => {
+        execFile("nmcli", ["-t", "-f", "NAME,DEVICE,TYPE", "connection", "show", "--active"], { timeout: 8000 }, (err, stdout) => {
+            if (err) return res2("");
+            const c = (stdout || "").split("\n").filter(Boolean).map(l => l.split(":"))
+                .find(p => p[2] === "802-11-wireless");
+            res2(c ? c[0] : "");
         });
-        activeConn().then(name => {
+    });
+    // Proxy config of the active WiFi connection (auto / none / manual).
+    // cfg.ignore (comma-separated) additionally sets proxy.ignore-servers so
+    // loopback (the terminal's ws://127.0.0.1 and the clash controller) never
+    // routes through a proxy.
+    ipc.handle("wifi:proxy", (e, cfg) => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve({ ok: true, method: "auto", http: "", https: "", ignore: "" });
+        nmActiveConn().then(name => {
             if (!name) return resolve({ ok: true, connected: false });
             if (cfg) {
                 const args = ["connection", "modify", name,
                     "proxy.method", cfg.method || "auto",
                     "proxy.http", cfg.http || "",
                     "proxy.https", cfg.https || ""];
+                if (typeof cfg.ignore === "string") args.push("proxy.ignore-servers", cfg.ignore);
                 execFile("nmcli", args, { timeout: 10000 }, (err, stdout, stderr) =>
                     resolve(err ? { ok: false, error: (stderr || err.message).trim() } : { ok: true }));
                 return;
             }
-            execFile("nmcli", ["-t", "-f", "proxy.method,proxy.http,proxy.https", "connection", "show", name],
+            execFile("nmcli", ["-t", "-f", "proxy.method,proxy.http,proxy.https,proxy.ignore-servers", "connection", "show", name],
                 { timeout: 8000 }, (err, stdout) => {
                     if (err) return resolve({ ok: true, connected: true });
                     const parts = (stdout || "").split("\n").filter(Boolean).map(l => l.split(":")[1]).join(",");
                     const pm = (stdout.match(/^proxy\.method:([^\n]*)$/m) || [])[1] || "auto";
                     const ph = (stdout.match(/^proxy\.http:([^\n]*)$/m) || [])[1] || "";
                     const ps = (stdout.match(/^proxy\.https:([^\n]*)$/m) || [])[1] || "";
-                    resolve({ ok: true, connected: true, method: pm.trim(), http: ph.trim(), https: ps.trim() });
+                    const pi = (stdout.match(/^proxy\.ignore-servers:([^\n]*)$/m) || [])[1] || "";
+                    resolve({ ok: true, connected: true, method: pm.trim(), http: ph.trim(), https: ps.trim(), ignore: pi.trim() });
                 });
         });
     }));
@@ -888,6 +903,213 @@ app.on('ready', async () => {
         bt(["remove", String(address)], 15000, r => resolve(r.ok ? { ok: true } : r));
     }));
 
+    // ---- Clash / mihomo proxy daemon (#46) ----
+    // The bundled binary only exists on a Linux eDEX-OS install (/opt/edex/mihomo
+    // baked into the ISO, /usr/local/bin/mihomo fallback). On macOS preview there
+    // is none, so every handler reports the mock/disabled state and the settings
+    // UI can still be exercised. The daemon is a plain spawn (mihomo is a native
+    // binary, unlike the app monitor's Node server) and streams stdout/stderr to
+    // the renderer log ring buffer.
+    let clashProc = null;
+    let clashRunning = false;
+    let clashLog = [];
+    let clashWatcher = null;
+    let clashWatchTimer = null;
+    // Layout on the ISO: /opt/edex/mihomo/ is a DIRECTORY holding the binary
+    // (mihomo) plus the geo databases; /usr/local/bin/mihomo symlinks the
+    // binary. Prefer the symlink target first so `clash:update` (which installs
+    // over /usr/local/bin/mihomo) takes effect on the running daemon.
+    const CLASH_BIN = process.platform === "linux"
+        ? (fs.existsSync("/usr/local/bin/mihomo") ? "/usr/local/bin/mihomo"
+            : (fs.existsSync("/opt/edex/mihomo/mihomo") ? "/opt/edex/mihomo/mihomo" : null))
+        : null;
+    const CLASH_DIR = path.join(electron.app.getPath("home"), ".config", "edex-proxy");
+    const CLASH_CONF = path.join(CLASH_DIR, "config.yaml");
+    const clashConf = () => {
+        const def = { enabled: false, port: 7890, controller: "127.0.0.1:9090", secret: "", subUrl: "", preProxy: null };
+        try {
+            const s = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
+            return Object.assign(def, s.clash || {});
+        } catch (e) { return def; }
+    };
+    const clashLogLine = line => {
+        clashLog.push(line);
+        if (clashLog.length > 400) clashLog.splice(0, clashLog.length - 400);
+        if (win && !win.isDestroyed()) win.webContents.send("clash-log", line);
+    };
+    const clashValid = () => {
+        try {
+            const st = fs.statSync(CLASH_CONF);
+            if (!st.size) return false;
+        } catch (e) { return false; }
+        return true;
+    };
+    const clashVersion = () => new Promise(resolve => {
+        if (!CLASH_BIN) return resolve("");
+        execFile(CLASH_BIN, ["-v"], { timeout: 5000 }, (err, stdout) => {
+            const m = String(stdout || "").match(/v([0-9][0-9.]*)/);
+            resolve(m ? m[1] : "");
+        });
+    });
+    // System proxy of the active wireless connection. Loopback is always in
+    // ignore-servers so the renderer's ws://127.0.0.1:3000 terminal connection
+    // and the dashboard's own http://127.0.0.1:9090 never route into mihomo.
+    const clashProxySet = (method, http, https, ignore) => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve(true);
+        nmActiveConn().then(name => {
+            if (!name) return resolve(true);
+            execFile("nmcli", ["connection", "modify", name,
+                "proxy.method", method,
+                "proxy.http", http || "",
+                "proxy.https", https || "",
+                "proxy.ignore-servers", ignore || "127.0.0.1,localhost,::1"],
+                { timeout: 10000 }, () => resolve(true));
+        });
+    });
+    const clashProxyOn = () => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve(true);
+        nmActiveConn().then(name => {
+            if (!name) return resolve(true);
+            // Stash the current proxy so off restores exactly what was there.
+            execFile("nmcli", ["-t", "-f", "proxy.method,proxy.http,proxy.https,proxy.ignore-servers", "connection", "show", name],
+                { timeout: 8000 }, (err, stdout) => {
+                    const read = key => ((stdout || "").match(new RegExp("^" + key + ":([^\\n]*)$", "m")) || [])[1] || "";
+                    const pre = {
+                        method: read("proxy.method").trim() || "auto",
+                        http: read("proxy.http").trim(),
+                        https: read("proxy.https").trim(),
+                        ignore: read("proxy.ignore-servers").trim()
+                    };
+                    try {
+                        const s = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
+                        if (!s.clash) s.clash = {};
+                        s.clash.preProxy = pre;
+                        fs.writeFileSync(settingsFile, JSON.stringify(s, "", 4));
+                    } catch (e) {}
+                    clashProxySet("manual", "127.0.0.1:7890", "127.0.0.1:7890", "127.0.0.1,localhost,::1").then(() => resolve(true));
+                });
+        });
+    });
+    const clashProxyOff = () => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve(true);
+        nmActiveConn().then(name => {
+            if (!name) return resolve(true);
+            const pre = clashConf().preProxy || {};
+            clashProxySet(pre.method || "auto", pre.http || "", pre.https || "", pre.ignore || "").then(() => resolve(true));
+        });
+    });
+    const clashStart = () => new Promise(resolve => {
+        if (!CLASH_BIN) return resolve({ ok: false, error: "NO_BINARY" });
+        if (!clashValid()) return resolve({ ok: false, error: "NO_CONFIG" });
+        if (clashRunning) return resolve({ ok: true, already: true });
+        try { fs.mkdirSync(CLASH_DIR, { recursive: true }); } catch (e) {}
+        // Seed geo databases from the baked /opt/edex/mihomo dir on first run so
+        // a fresh install never needs to phone home for them (geo-auto-update
+        // is off in the seeded config).
+        const baked = "/opt/edex/mihomo";
+        if (fs.existsSync(baked)) {
+            for (const geo of ["Country.mmdb", "geoip.dat", "geosite.dat"]) {
+                try {
+                    if (fs.existsSync(path.join(baked, geo)) && !fs.existsSync(path.join(CLASH_DIR, geo))) {
+                        fs.copyFileSync(path.join(baked, geo), path.join(CLASH_DIR, geo));
+                    }
+                } catch (e) {}
+            }
+        }
+        const { spawn } = require("child_process");
+        const proc = spawn(CLASH_BIN, ["-f", CLASH_CONF, "-d", CLASH_DIR], { stdio: ["ignore", "pipe", "pipe"] });
+        const pump = d => String(d).split("\n").forEach(l => l.trim() && clashLogLine(l.trim()));
+        proc.stdout.on("data", pump);
+        proc.stderr.on("data", pump);
+        proc.on("exit", code => {
+            clashRunning = false; clashProc = null;
+            clashLogLine("[mihomo exited, code " + code + "]");
+        });
+        proc.on("error", e => {
+            clashRunning = false; clashProc = null;
+            clashLogLine("[mihomo spawn error: " + e.message + "]");
+            resolve({ ok: false, error: "SPAWN_FAILED" });
+        });
+        global.clashProc = clashProc = proc;
+        clashRunning = true;
+        clashLogLine("[mihomo started " + CLASH_BIN + "]");
+        // Let the ports bind before pointing the system proxy at them.
+        setTimeout(() => clashProxyOn(), 400);
+        resolve({ ok: true });
+    });
+    const clashStop = () => new Promise(resolve => {
+        if (clashProc) { try { clashProc.kill("SIGTERM"); } catch (e) {} }
+        clashProc = null;
+        global.clashProc = null;
+        clashRunning = false;
+        clashProxyOff().then(() => resolve({ ok: true }));
+    });
+    const clashRestart = () => new Promise(resolve => {
+        if (!clashRunning) return resolve();
+        clashStop().then(() => clashStart()).then(r => resolve(r));
+    });
+    const clashWatch = () => {
+        try {
+            if (clashWatcher || !CLASH_BIN) return;
+            clashWatcher = fs.watch(CLASH_CONF, () => {
+                clearTimeout(clashWatchTimer);
+                clashWatchTimer = setTimeout(() => {
+                    if (clashRunning) clashRestart();
+                }, 800);
+            });
+        } catch (e) {}
+    };
+    clashWatch();
+
+    ipc.handle("clash:status", () => new Promise(async resolve => {
+        const cfg = clashConf();
+        const version = await clashVersion();
+        resolve({
+            ok: true,
+            available: !!CLASH_BIN,
+            running: clashRunning,
+            version,
+            port: cfg.port,
+            controller: cfg.controller,
+            secret: cfg.secret,
+            configValid: clashValid(),
+            configPath: CLASH_CONF,
+            log: clashLog.slice(-200)
+        });
+    }));
+    ipc.handle("clash:start", () => clashStart());
+    ipc.handle("clash:stop", () => clashStop());
+    ipc.handle("clash:set-enabled", (e, { enabled }) =>
+        enabled ? clashStart().then(r => ({ ok: !!r.ok })) : clashStop().then(() => ({ ok: true })));
+    ipc.handle("clash:fetch-subscription", (e, { url }) => new Promise(resolve => {
+        if (!CLASH_BIN) return resolve({ ok: false, error: "NO_BINARY" });
+        const u = String(url || "").trim();
+        if (!/^https?:\/\//i.test(u)) return resolve({ ok: false, error: "BAD_URL" });
+        const { spawn } = require("child_process");
+        const tmp = path.join(CLASH_DIR, ".config.yaml.tmp");
+        const proc = spawn("curl", ["-fsSL", "--connect-timeout", "15", "--retry", "2", "-o", tmp, u]);
+        proc.on("error", () => resolve({ ok: false, error: "CURL_FAILED" }));
+        proc.on("close", code => {
+            if (code !== 0) { try { fs.unlinkSync(tmp); } catch (e) {} return resolve({ ok: false, error: "CURL_FAILED" }); }
+            try {
+                const cfg = clashConf();
+                // Append our controller block. mihomo accepts duplicate top-level
+                // scalars (last wins) — verified with `mihomo -t`.
+                const base = fs.readFileSync(tmp, "utf8");
+                const add = "\nmixed-port: " + (cfg.port || 7890) +
+                            "\nexternal-controller: " + (cfg.controller || "127.0.0.1:9090") +
+                            "\nsecret: " + (cfg.secret || "") +
+                            "\nexternal-ui: /opt/edex/metacubexd" +
+                            "\nallow-lan: false" +
+                            "\ngeo-auto-update: false\n";
+                fs.writeFileSync(tmp, base.replace(/\s*$/, "") + add);
+                fs.copyFileSync(tmp, CLASH_CONF);
+                try { fs.unlinkSync(tmp); } catch (e) {}
+            } catch (e) { return resolve({ ok: false, error: "WRITE_FAILED" }); }
+            clashRestart().then(() => resolve({ ok: true }));
+        });
+    }));
+
     // System update: sudo apt update && full-upgrade, streaming output to the
     // renderer (needs passwordless sudo + network — both set up at install).
     ipc.handle("system:update", () => new Promise(resolve => {
@@ -898,7 +1120,19 @@ app.on('ready', async () => {
         const send = line => { if (win && !win.isDestroyed()) win.webContents.send("system-update-output", line); };
         proc.stdout.on("data", d => String(d).split("\n").forEach(l => l.trim() && send(l.trim())));
         proc.stderr.on("data", d => String(d).split("\n").forEach(l => l.trim() && send(l.trim())));
-        proc.on("close", code => resolve({ ok: code === 0, code }));
+        proc.on("close", code => {
+            if (code === 0) {
+                // Stamp when apt lists were last refreshed so the Updates pane
+                // can show a "last update" line. Best-effort write.
+                try {
+                    const s = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
+                    if (!s.updates) s.updates = {};
+                    s.updates.lastSystemUpdate = Date.now();
+                    fs.writeFileSync(settingsFile, JSON.stringify(s, "", 4));
+                } catch (e) {}
+            }
+            resolve({ ok: code === 0, code });
+        });
         proc.on("error", e => resolve({ ok: false, error: e.message }));
     }));
 
@@ -1317,7 +1551,157 @@ app.on('ready', async () => {
         });
     }));
 
+    // ---- Updates category (#47) ----
+    // Central update IPC: app self-update status, apt last-update timestamp,
+    // per-bundled-program status. The GitHub query mirrors the renderer's
+    // UpdateChecker so the Updates settings pane can re-check on demand (and
+    // works from the macOS preview too — it needs no Linux-side bits).
+    const githubLatest = () => new Promise(resolve => {
+        const https = require("https");
+        https.get({
+            protocol: "https:",
+            host: "api.github.com",
+            path: "/repos/haneyo/haneyoedexos/releases/latest",
+            headers: { "User-Agent": "eDEX-OS update" }
+        }, res => {
+            if (res.statusCode !== 200) { res.resume(); return resolve(null); }
+            let raw = "";
+            res.on("data", d => { raw += d; });
+            res.on("end", () => {
+                try {
+                    const rel = JSON.parse(raw);
+                    const assets = rel.assets || [];
+                    const appImage = assets.find(a => /\.AppImage$/i.test(a.name));
+                    const sha = assets.find(a => /\.AppImage\.sha256$/i.test(a.name));
+                    resolve({
+                        tag: rel.tag_name || "",
+                        name: rel.name || "",
+                        body: rel.body || "",
+                        releaseUrl: rel.html_url || "",
+                        appImageUrl: appImage ? appImage.browser_download_url : "",
+                        sha256Url: sha ? sha.browser_download_url : ""
+                    });
+                } catch (e) { resolve(null); }
+            });
+        }).on("error", () => resolve(null))
+          .setTimeout(8000, () => resolve(null));
+    });
+
+    // App self-update status: installed version vs latest GitHub tag. The
+    // renderer drives the actual install through the existing
+    // `system:edex-update` handler with the returned asset URLs.
+    ipc.handle("edex:latest-release", () => new Promise(async resolve => {
+        const current = electron.app.getVersion();
+        const rel = await githubLatest();
+        if (!rel) return resolve({ ok: false, current, error: "FETCH_FAILED" });
+        resolve({
+            ok: true, current, tag: rel.tag,
+            latest: rel.tag.replace(/^v/, ""),
+            name: rel.name, body: rel.body,
+            appImageUrl: rel.appImageUrl, sha256Url: rel.sha256Url, releaseUrl: rel.releaseUrl
+        });
+    }));
+
+    // Last time apt lists were refreshed. `system:update` stamps
+    // settings.updates.lastSystemUpdate on every successful full-upgrade so
+    // the Updates pane can say "last update: 2 days ago". macOS preview → null.
+    ipc.handle("apt:last-update", () => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve({ ok: true, lastUpdate: null });
+        fs.stat("/var/lib/apt/lists", (err, st) =>
+            resolve({ ok: !err, lastUpdate: err ? null : Math.round(st.mtimeMs) }));
+    }));
+
+    // Version probes for the bundled programs. Best-effort: any failure leaves
+    // that slot empty and the UI shows "—". Firefox's official tarball does not
+    // self-update, so it is flagged manual (snap/deb do, but eDEX-OS ships the
+    // tarball). Claude ships via npm → auto. mihomo ships via our own updater.
+    const bundledClaudeVersion = () => new Promise(resolve => {
+        const { execFile } = require("child_process");
+        execFile("claude", ["--version"], { timeout: 5000 }, (err, stdout) => {
+            const m = String(stdout || "").match(/[\d]+\.[\d]+\.[\d]+/);
+            resolve({ installed: !!m, version: m ? m[0] : "" });
+        });
+    });
+    const bundledFirefoxVersion = () => {
+        try {
+            const ini = fs.readFileSync("/opt/firefox/browser/application.ini", "utf8");
+            const m = /^Version=([^\r\n]+)$/m.exec(ini);
+            return { installed: !!m, version: m ? m[1] : "" };
+        } catch (e) { return { installed: false, version: "" }; }
+    };
+    ipc.handle("bundled:status", () => new Promise(async resolve => {
+        const claude = await bundledClaudeVersion();
+        resolve({
+            ok: true,
+            claude: { update: "auto", ...claude },
+            firefox: { update: "manual", ...bundledFirefoxVersion() },
+            clash: { update: "auto", installed: !!CLASH_BIN, version: await clashVersion() }
+        });
+    }));
+
+    // mihomo update check: GitHub latest tag vs installed version. `clash:update`
+    // then downloads the linux-amd64 asset and passwordless-sudo-installs it over
+    // /usr/local/bin/mihomo (same swap pattern as system:edex-update). macOS has
+    // no binary → mocked disabled.
+    ipc.handle("clash:check-update", () => new Promise(resolve => {
+        if (!CLASH_BIN) return resolve({ ok: true, available: false });
+        clashVersion().then(current => {
+            const https = require("https");
+            https.get({
+                protocol: "https:",
+                host: "api.github.com",
+                path: "/repos/MetaCubeX/mihomo/releases/latest",
+                headers: { "User-Agent": "eDEX-OS update" }
+            }, res => {
+                if (res.statusCode !== 200) { res.resume(); return resolve({ ok: false, available: true, current, error: "FETCH_FAILED" }); }
+                let raw = "";
+                res.on("data", d => { raw += d; });
+                res.on("end", () => {
+                    try {
+                        const rel = JSON.parse(raw);
+                        const latest = (rel.tag_name || "").replace(/^v/, "");
+                        const dl = (rel.assets || []).find(a => /linux-amd64\.gz$/i.test(a.name));
+                        resolve({ ok: true, available: true, current, latest, downloadUrl: dl ? dl.browser_download_url : "" });
+                    } catch (e) { resolve({ ok: false, available: true, current, error: "FETCH_FAILED" }); }
+                });
+            }).on("error", () => resolve({ ok: false, available: true, current, error: "FETCH_FAILED" }))
+              .setTimeout(8000, () => resolve({ ok: false, available: true, current, error: "FETCH_FAILED" }));
+        });
+    }));
+    ipc.handle("clash:update", (e, { url }) => new Promise(resolve => {
+        if (!CLASH_BIN) return resolve({ ok: false, error: "NO_BINARY" });
+        if (!url) return resolve({ ok: false, error: "NO_URL" });
+        const { spawn } = require("child_process");
+        const log = line => { if (win && !win.isDestroyed()) win.webContents.send("clash-log", line); };
+        const tmp = path.join(electron.app.getPath("temp"), `mihomo-${Date.now()}`);
+        const gz = tmp + ".gz";
+        const cleanup = () => { try { fs.unlinkSync(gz); } catch (_) {} try { fs.unlinkSync(tmp); } catch (_) {} };
+        const fail = error => { cleanup(); log("[mihomo update failed: " + error + "]"); resolve({ ok: false, error }); };
+        log("[mihomo update: downloading " + url + " …]");
+        const dl = spawn("curl", ["-fL", "--connect-timeout", "15", "--retry", "2", "-o", gz, url]);
+        dl.on("error", e => fail(e.message));
+        dl.on("close", code => {
+            if (code !== 0) return fail("download failed (curl exit " + code + ")");
+            // gunzip into place, then passwordless-sudo install (the autologin
+            // user has passwordless sudo — fail fast with -n if not).
+            const p = spawn("bash", ["-c",
+                `gzip -dc '${gz}' > '${tmp}' && chmod 755 '${tmp}' && sudo -n install -m 755 -o root -g root '${tmp}' '/usr/local/bin/mihomo'`]);
+            p.on("error", e => fail(e.message));
+            p.on("close", code2 => {
+                if (code2 !== 0) return fail("install failed (exit " + code2 + ")");
+                cleanup();
+                log("[mihomo updated — restarting…]");
+                if (clashRunning) clashRestart();
+                resolve({ ok: true });
+            });
+        });
+    }));
+
     startAppMonitor(settings, cleanEnv);
+
+    // Clash proxy daemon auto-start (settings.clash.enabled). Deliberately
+    // best-effort: a missing binary or invalid config just logs and stays off.
+    if (clashConf().enabled) clashStart().then(r => { if (!r.ok) clashLogLine("[clash auto-start skipped: " + r.error + "]"); });
 
     // Re-apply the saved CPU performance mode (governor) on every boot.
     if (settings.performanceMode) {
@@ -1705,6 +2089,9 @@ app.on('before-quit', () => {
     });
     if (global.appMonitor && global.appMonitor.proc) {
         try { global.appMonitor.proc.kill("SIGTERM"); } catch (e) {}
+    }
+    if (global.clashProc) {
+        try { global.clashProc.kill("SIGTERM"); } catch (e) {}
     }
     if (fsExitWin && !fsExitWin.isDestroyed()) { try { fsExitWin.close(); } catch (e) {} }
     try { electron.globalShortcut.unregisterAll(); } catch (e) {}

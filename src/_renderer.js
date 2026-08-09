@@ -1644,6 +1644,195 @@ async function initUI() {
         if (pre && line) pre.textContent += line + "\n";
     });
 
+    // Clash / mihomo proxy (#46): settings category + browser dashboard. All
+    // state comes from the main-process daemon over IPC (on macOS preview the
+    // daemon reports the no-binary mock state and this pane still works).
+    window.clash = {
+        status: null,
+        refreshStatus() {
+            ipc.invoke("clash:status").then(st => {
+                this.status = st;
+                const status = document.getElementById("settingsClashStatus");
+                if (status) {
+                    if (!st.available) status.textContent = t("settings.clash.mock");
+                    else if (st.running) status.textContent = t("settings.clash.running") + (st.version ? " · v" + st.version : "");
+                    else if (!st.configValid) status.textContent = t("settings.clash.noConfig");
+                    else status.textContent = t("settings.clash.stopped");
+                }
+                const port = document.getElementById("settingsClashPort");
+                if (port) port.textContent = st.port || "–";
+                const cfg = document.getElementById("settingsClashConfigPath");
+                if (cfg) cfg.textContent = st.configPath || "–";
+                const log = document.getElementById("settingsClashLog");
+                if (log && st.log && st.log.length) log.textContent = st.log.join("\n");
+            }).catch(() => {});
+        },
+        // Live application of the enabled toggle: starts/stops the daemon now
+        // AND persists so boot auto-start picks it up (the main process reads
+        // settings.clash.enabled at startup). Merges into window.settings so a
+        // later Save doesn't reintroduce the old value.
+        applyEnabled() {
+            const el = document.getElementById("settingsClashEnabled");
+            const on = el ? el.value === "true" : false;
+            window.settings.clash = Object.assign({}, window.settings.clash, { enabled: on });
+            try { fs.writeFileSync(settingsFile, JSON.stringify(window.settings, "", 4)); } catch (e) {}
+            ipc.invoke("clash:set-enabled", { enabled: on }).then(() => this.refreshStatus());
+        },
+        start() {
+            ipc.invoke("clash:start").then(r => {
+                const status = document.getElementById("settingsClashStatus");
+                if (status && r && !r.ok) {
+                    status.textContent = r.error === "NO_BINARY" ? t("settings.clash.mock")
+                        : r.error === "NO_CONFIG" ? t("settings.clash.noConfig")
+                        : (r.error || "?");
+                }
+                this.refreshStatus();
+            });
+        },
+        stop() { ipc.invoke("clash:stop").then(() => this.refreshStatus()); },
+        toggleSecret() {
+            const el = document.getElementById("settingsClashSecret");
+            if (!el) return;
+            const btn = document.getElementById("settingsClashSecretToggle");
+            if (el.type === "password") { el.type = "text"; if (btn) btn.textContent = "HIDE"; }
+            else { el.type = "password"; if (btn) btn.textContent = t("settings.clash.toggleSecret"); }
+        },
+        fetchSub() {
+            const url = document.getElementById("settingsClashSubUrl");
+            if (!url) return;
+            ipc.invoke("clash:fetch-subscription", { url: url.value.trim() }).then(r => {
+                this.refreshStatus();
+                const status = document.getElementById("settingsClashStatus");
+                if (status && r) {
+                    if (r.ok) status.textContent = t("settings.clash.subFetched");
+                    else if (r.error === "BAD_URL") status.textContent = "Bad URL";
+                    else if (r.error === "NO_BINARY") status.textContent = t("settings.clash.mock");
+                    else status.textContent = t("settings.clash.subFailed");
+                }
+            });
+        },
+        openConfig() {
+            const st = this.status;
+            if (!st || !st.configPath) return;
+            // Open the directory the config lives in (so the user can edit
+            // config.yaml by hand); shell.openPath on the file itself works too.
+            const dir = st.configPath.replace(/[^/]+\.yaml$/, "");
+            require("electron").shell.openPath(dir);
+        },
+        openDashboard() {
+            const ctrl = (this.status && this.status.controller) || "127.0.0.1:9090";
+            // metacubexd serves /ui/ from the controller; fullscreen overlay
+            // because the multi-tab browser was retired (see webViewFullscreen).
+            window.webViewFullscreen.enter("http://" + ctrl + "/ui/", "persist:edex-browser");
+        }
+    };
+    ipc.on("clash-log", (e, line) => {
+        const log = document.getElementById("settingsClashLog");
+        if (!log || !line) return;
+        if (log.textContent === "–") log.textContent = "";
+        log.textContent += (log.textContent ? "\n" : "") + line;
+        log.scrollTop = log.scrollHeight;
+    });
+
+    // Updates category (#47): app self-update, apt system update + last-update,
+    // and per-bundled-program status. All data comes from the main-process IPC
+    // added alongside (edex:latest-release, apt:last-update, bundled:status,
+    // clash:check-update). The app update itself reuses window.edexUpdate, and
+    // the apt modal reuses window.systemUpdate.
+    const cmpVer = (a, b) => {
+        const pa = (a || "").replace(/[^0-9.]/g, "").split(".").map(Number);
+        const pb = (b || "").replace(/[^0-9.]/g, "").split(".").map(Number);
+        const n = Math.max(pa.length, pb.length);
+        for (let i = 0; i < n; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0) ? 1 : -1;
+        return 0;
+    };
+    const relTime = ts => {
+        if (!ts) return null;
+        const sec = Math.round((Date.now() - ts) / 1000);
+        if (sec < 60) return "<1m";
+        if (sec < 3600) return Math.round(sec / 60) + "m";
+        if (sec < 86400) return Math.round(sec / 3600) + "h";
+        if (sec < 86400 * 30) return Math.round(sec / 86400) + "d";
+        return Math.round(sec / (86400 * 30)) + "mo";
+    };
+    window.updates = {
+        app: null,
+        clash: null,
+        refresh() {
+            this.checkApp();
+            this.refreshBundled();
+            this.refreshLastUpdate();
+            this.checkClashUpdate();
+        },
+        checkApp() {
+            ipc.invoke("edex:latest-release").then(r => {
+                this.app = r;
+                const ver = document.getElementById("settingsUpAppVersion");
+                const upd = document.getElementById("settingsUpAppUpdate");
+                if (!ver) return;
+                const current = (r && r.current) || remote.app.getVersion();
+                if (r && r.ok) {
+                    const c = cmpVer(r.latest, current);
+                    if (c > 0) ver.textContent = "v" + current + " → " + t("settings.updates.newVersion") + " v" + r.latest;
+                    else if (c === 0) ver.textContent = "v" + current + " (" + t("settings.updates.upToDate") + ")";
+                    else ver.textContent = "v" + current + " (dev)";
+                    if (upd) upd.style.display = (c > 0 && r.appImageUrl) ? "" : "none";
+                } else {
+                    ver.textContent = "v" + current + (r && r.error === "FETCH_FAILED" ? " — GitHub unreachable" : "");
+                    if (upd) upd.style.display = "none";
+                }
+            }).catch(() => {});
+        },
+        updateApp() {
+            const r = this.app;
+            if (!r) return;
+            window.edexUpdate.start(r.appImageUrl || "", r.sha256Url || "", r.releaseUrl || "");
+        },
+        systemUpdate() { window.systemUpdate.open(); },
+        refreshBundled() {
+            ipc.invoke("bundled:status").then(st => {
+                if (!st) return;
+                const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+                set("settingsUpClashVer", (st.clash && st.clash.installed) ? (st.clash.version ? "v" + st.clash.version : "installed") : "–");
+                set("settingsUpFirefoxVer", (st.firefox && st.firefox.version) ? "v" + st.firefox.version : "–");
+                set("settingsUpClaudeVer", (st.claude && st.claude.version) ? "v" + st.claude.version : "–");
+            }).catch(() => {});
+        },
+        refreshLastUpdate() {
+            ipc.invoke("apt:last-update").then(r => {
+                const el = document.getElementById("settingsUpLastUpdate");
+                if (!el) return;
+                const saved = (window.settings.updates && window.settings.updates.lastSystemUpdate) || 0;
+                const apt = (r && r.ok && r.lastUpdate) || 0;
+                const ts = Math.max(saved, apt);
+                el.textContent = ts ? relTime(ts) + " ago" : t("settings.updates.never");
+            }).catch(() => {
+                const el = document.getElementById("settingsUpLastUpdate");
+                if (el) el.textContent = t("settings.updates.never");
+            });
+        },
+        checkClashUpdate() {
+            ipc.invoke("clash:check-update").then(r => {
+                this.clash = r;
+                const el = document.getElementById("settingsUpClashVer");
+                const upd = document.getElementById("settingsUpClashUpdate");
+                if (el) {
+                    if (r && r.available) el.textContent = (r.current ? "v" + r.current : "–") + (r.ok && r.latest && cmpVer(r.latest, r.current) > 0 ? " → v" + r.latest : "");
+                    else el.textContent = t("settings.clash.mock");
+                }
+                if (upd) upd.style.display = (r && r.available && r.ok && r.downloadUrl && cmpVer(r.latest, r.current) > 0) ? "" : "none";
+            }).catch(() => {});
+        },
+        updateClash() {
+            const r = this.clash;
+            if (!r || !r.downloadUrl) return;
+            ipc.invoke("clash:update", { url: r.downloadUrl }).then(() => {
+                window.clash.refreshStatus();
+                this.checkClashUpdate();
+            });
+        }
+    };
+
     // GitHub self-update of the eDEX-UI AppImage (eDEX-OS install). Downloads
     // the new AppImage from a release asset, verifies its sha256 and atomically
     // replaces /opt/edex/eDEX-UI.AppImage in the main process, then relaunches.
@@ -2157,6 +2346,38 @@ window.openSettings = async () => {
                     <div class="settings_net_actions"><button type="button" id="settingsNetBtScan" class="settings_net_btn">${t("settings.network.btScan")}</button></div>`, "settings.network.btDevices.help"),
             ].join("");
         } },
+        { id: "clash", titleKey: "settings.cat.clash", html: () => {
+            // Clash on/off is a persisted boolean (settings.clash.enabled), so it
+            // uses true/false values like every other toggle (the dropdown renderer
+            // shows TRUE/FALSE) rather than the network category's live 1/0.
+            const clashBool = (id, on) => `<select id="${id}">
+                <option value="true" ${on ? "selected" : ""}>${t("settings.network.on")}</option>
+                <option value="false" ${!on ? "selected" : ""}>${t("settings.network.off")}</option>
+            </select>`;
+            return [
+                section("settings.cat.clash"),
+                settingsRow("settings.clash.enabled", clashBool("settingsClashEnabled", !!((window.settings.clash || {}).enabled)), "settings.clash.enabled.help"),
+                settingsRow("settings.clash.status", `<span id="settingsClashStatus" class="settings_net_status">–</span>`),
+                settingsRow("settings.clash.port", `<span id="settingsClashPort" class="settings_net_info">–</span>`),
+                settingsRow("settings.clash.controller", `<input type="text" id="settingsClashController" value="${(window.settings.clash || {}).controller || '127.0.0.1:9090'}">`, "settings.clash.controller.help"),
+                settingsRow("settings.clash.secret", `<div class="settings_api_pw">
+                    <input type="password" id="settingsClashSecret" autocomplete="off" value="${(window.settings.clash || {}).secret || ''}">
+                    <button type="button" id="settingsClashSecretToggle" class="settings_pw_toggle" onclick="window.clash.toggleSecret()">${t("settings.clash.toggleSecret")}</button>
+                </div>`, "settings.clash.secret.help"),
+                settingsRow("settings.clash.subUrl", `<div class="settings_net_pw"><input type="text" id="settingsClashSubUrl" placeholder="https://…" value="${(window.settings.clash || {}).subUrl || ''}"></div>
+                    <div class="settings_net_actions">
+                        <button type="button" id="settingsClashSubFetch" class="settings_net_btn">${t("settings.clash.subFetch")}</button>
+                        <button type="button" id="settingsClashStart" class="settings_net_btn">${t("settings.clash.start")}</button>
+                        <button type="button" id="settingsClashStop" class="settings_net_btn">${t("settings.clash.stop")}</button>
+                    </div>`, "settings.clash.subUrl.help"),
+                settingsRow("settings.clash.configPath", `<span id="settingsClashConfigPath" class="settings_net_info">–</span>
+                    <div class="settings_net_actions">
+                        <button type="button" id="settingsClashOpenConfig" class="settings_net_btn">${t("settings.clash.openConfig")}</button>
+                        <button type="button" id="settingsClashOpenDashboard" class="settings_net_btn">${t("settings.clash.openDashboard")}</button>
+                    </div>`),
+                settingsRow("settings.clash.log", `<pre id="settingsClashLog" class="settings_net_log">–</pre>`),
+            ].join("");
+        } },
         { id: "claude", titleKey: "settings.cat.claude", html: () => [
             section("settings.cat.claude"),
             settingsRow("settings.claude.enabled", `<select id="settingsEditor-claude-enabled">
@@ -2187,6 +2408,27 @@ window.openSettings = async () => {
                 <div class="mod_loc_list"></div>
             </div>`, "settings.claude.haikuModel.help"),
             section("settings.section.claudeNote"),
+        ].join("") },
+        { id: "updates", titleKey: "settings.cat.updates", html: () => [
+            section("settings.section.updatesApp"),
+            settingsRow("settings.updates.app", `<span id="settingsUpAppVersion" class="settings_net_info">v${remote.app.getVersion()}</span>
+                <div class="settings_net_actions">
+                    <button type="button" id="settingsUpAppCheck" class="settings_net_btn">${t("settings.updates.check")}</button>
+                    <button type="button" id="settingsUpAppUpdate" class="settings_net_btn">${t("settings.updates.updateBtn")}</button>
+                </div>`),
+            section("settings.section.updatesSystem"),
+            settingsRow("settings.updates.system", `<div class="settings_net_actions">
+                    <button type="button" id="settingsUpSystemBtn" class="settings_net_btn">${t("settings.updates.check")}</button>
+                </div>`, "settings.updates.system.help"),
+            settingsRow("settings.updates.lastUpdate", `<span id="settingsUpLastUpdate" class="settings_net_status">–</span>`),
+            section("settings.section.updatesBundled"),
+            settingsRow("settings.updates.clash", `<span id="settingsUpClashVer" class="settings_net_info">–</span>
+                <div class="settings_net_actions">
+                    <button type="button" id="settingsUpClashCheck" class="settings_net_btn">${t("settings.updates.check")}</button>
+                    <button type="button" id="settingsUpClashUpdate" class="settings_net_btn">${t("settings.updates.updateBtn")}</button>
+                </div>`),
+            settingsRow("settings.updates.firefox", `<span id="settingsUpFirefoxVer" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.manual")}</span>`),
+            settingsRow("settings.updates.claude", `<span id="settingsUpClaudeVer" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.auto")}</span>`),
         ].join("") },
         { id: "power", titleKey: "settings.cat.power", html: () => [
             section("settings.cat.power"),
@@ -2226,7 +2468,7 @@ window.openSettings = async () => {
             {label: t("settings.btn.openExternal"), action:`electron.shell.openPath('${settingsFile}');electronWin.minimize();`},
             {label: t("settings.btn.save"), action: "window.writeSettingsFile()"},
             {label: t("settings.btn.shortcuts"), action: "window.openShortcutsHelp()"},
-            {label: t("settings.btn.update"), action: "window.systemUpdate.open()"},
+            {label: t("settings.btn.update"), action: "window.openSettingsCategory('updates')"},
             {label: t("settings.btn.reload"), action: "window.location.reload(true);"},
             {label: t("settings.btn.restart"), action: "remote.app.relaunch();remote.app.quit();"}
         ]
@@ -2250,6 +2492,14 @@ window.openSettings = async () => {
     document.querySelectorAll("#settingsSide .settings_cat_btn").forEach(btn => {
         btn.addEventListener("click", () => activateCategory(btn));
     });
+
+    // Switch to a category from outside the sidebar (e.g. the footer UPDATE
+    // button → the Updates pane). The sidebar button's click listener handles
+    // the activation, so just click it.
+    window.openSettingsCategory = cat => {
+        const btn = document.querySelector(`#settingsSide .settings_cat_btn[data-cat="${cat}"]`);
+        if (btn) btn.click();
+    };
 
     // "i" info buttons toggle their sibling help popover (bound once per page).
     if (!window._settingsInfoBound) {
@@ -2310,6 +2560,33 @@ window.openSettings = async () => {
         // clobbered).
         if (window.setupSettingsComboboxes) window.setupSettingsComboboxes();
         if (window.sysCmd.applyClaudeProvider) window.sysCmd.applyClaudeProvider(false);
+        // Clash category bindings: the enabled toggle is live (applies the
+        // system proxy now AND persists so boot auto-start sees it); the action
+        // buttons map straight onto window.clash; then pull current daemon state.
+        const clashEnabled = document.getElementById("settingsClashEnabled");
+        if (clashEnabled) clashEnabled.addEventListener("change", () => window.clash.applyEnabled());
+        const bindClash = (id, fn) => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener("click", fn);
+        };
+        bindClash("settingsClashStart", () => window.clash.start());
+        bindClash("settingsClashStop", () => window.clash.stop());
+        bindClash("settingsClashSubFetch", () => window.clash.fetchSub());
+        bindClash("settingsClashOpenConfig", () => window.clash.openConfig());
+        bindClash("settingsClashOpenDashboard", () => window.clash.openDashboard());
+        if (window.clash) window.clash.refreshStatus();
+        // Updates category bindings: app check/update, apt system update,
+        // mihomo check/update — then pull all the statuses once.
+        const bindUpd = (id, fn) => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener("click", fn);
+        };
+        bindUpd("settingsUpAppCheck", () => window.updates.checkApp());
+        bindUpd("settingsUpAppUpdate", () => window.updates.updateApp());
+        bindUpd("settingsUpSystemBtn", () => window.updates.systemUpdate());
+        bindUpd("settingsUpClashCheck", () => window.updates.checkClashUpdate());
+        bindUpd("settingsUpClashUpdate", () => window.updates.updateClash());
+        if (window.updates) window.updates.refresh();
         const active = document.querySelector("#settingsSide .settings_cat_btn.active");
         if (active) active.focus();
         // Lock passcode field: digits only, 4-8 characters. Fewer than 4 turns
@@ -3139,6 +3416,18 @@ window.writeSettingsFile = () => {
             ? null
             : (document.getElementById("settingsEditor-appMonitor-mock").value === "true"),
         appImageDirs: document.getElementById("settingsEditor-appMonitor-appImageDirs").value
+    };
+    s.clash = {
+        enabled: (document.getElementById("settingsClashEnabled").value === "true"),
+        // No form control for port — the mixed port is fixed by the seeded
+        // config; keep whatever is stored (default 7890).
+        port: Number((window.settings.clash || {}).port) || 7890,
+        controller: document.getElementById("settingsClashController").value,
+        secret: document.getElementById("settingsClashSecret").value,
+        subUrl: document.getElementById("settingsClashSubUrl").value,
+        // preProxy is owned by the main process (captured/restored around
+        // system-proxy take-over) — preserve it untouched.
+        preProxy: (window.settings.clash && window.settings.clash.preProxy) || null
     };
 
     Object.keys(s).forEach(key => {

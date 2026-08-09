@@ -315,10 +315,40 @@ lsblk -o NAME,SIZE,TYPE,MOUNTPOINTS | grep -E "sd[b-z]"   # 挂载点是否出�
 
 ---
 
-## 13. 其他遗留项状态(不阻塞本轮)
+## 13. 内置 clash 代理(#46)+ 集中「更新」分类(#47)— 已实现,需真机验证
+
+**已落地**(本批):
+- **App 侧(macOS 已 CDP 验证)**:设置新增 `clash` 分类(启用开关 / 状态 / 混合端口 / 控制接口 / 控制密钥 / 订阅 URL + 拉取 / 配置目录 / 运行日志)+ `updates` 分类(App 自更新检查 / apt 系统更新 + 上次更新时间 / 内置程序状态:clash、Firefox、Claude Code)。底部 UPDATE 按钮改路由到 `updates` 分类。macOS 无 mihomo 二进制 → 全部返回 mock 态。
+- **主进程**:clash 守护(clashDaemon 闭包,`~/.config/edex-proxy/config.yaml`,ring 日志,fs.watch 配置变更重启,设置 `enabled` 开机自启,before-quit SIGTERM);系统代理联动(nmcli proxy.method/http/https + ignore-servers 绕过内网 ws 与面板自身);更新 IPC(`edex:latest-release` / `apt:last-update` / `bundled:status` / `clash:check-update` / `clash:update` 走 `sudo -n install` 换 `/usr/local/bin/mihomo`);`system:update` 完成时写 `updates.lastSystemUpdate` 时间戳。
+- **构建侧(Phase B,已写入 build-iso.sh,CI 触发)**:烤入 mihomo 二进制(`/opt/edex/mihomo/mihomo` + `/usr/local/bin/mihomo` 软链)、geo 数据(Country.mmdb / geoip.dat / geosite.dat,来自 MetaCubeX meta-rules-dat)、metacubexd 面板(`/opt/edex/metacubexd`)。全部 best-effort WARN 不中断。
+
+**真机验证清单:**
+```bash
+# 1) 二进制与配置就位
+mihomo -v                                   # 应有版本号(烤入或 clash:update 后)
+ls -l /opt/edex/mihomo/{mihomo,Country.mmdb,geoip.dat,geosite.dat}
+ls -l /usr/local/bin/mihomo                 # 软链
+# 2) 设置里启用 clash → 自动 start + 设系统代理
+nmcli -t -f proxy.method,proxy.http,proxy.https,proxy.ignore-servers connection show "<WiFi名>"
+#    期望 manual / 127.0.0.1:7890 / 127.0.0.1:7890 / 127.0.0.1,localhost,::1
+# 3) 面板:设置 → clash → 打开面板(全屏 webview 加载 http://127.0.0.1:9090/ui/)
+#    面板自身应正常打开(ignore-servers 含 127.0.0.1 → 不打进 mihomo,无代理循环)
+# 4) 订阅:填机场 URL → 拉取订阅 → config.yaml 被替换并重启;跑 curl 走代理验证
+#    curl -s https://api.ip.sb/geoip          # 出口 IP 应是机场节点
+# 5) 内网绕过:终端 ws://127.0.0.1:3000 连接不受代理影响(ignore-servers)
+# 6) 更新:updates 分类 → mihomo 检查更新/更新(换 /usr/local/bin/mihomo + 重启);
+#    App 检查更新 → v2.3.7+ 提示与现有 UpdateChecker 一致;系统更新 → apt 全量升级
+# 7) 关闭 clash → 恢复原代理(settings.clash.preProxy);再开 → 重新捕获
+# 8) 若 webview 流量不走 nmcli 代理(Chromium 读 GSettings 而非 NM 连接代理):
+#    gsettings set org.gnome.system.proxy mode manual
+#    gsettings set org.gnome.system.proxy host 127.0.0.1
+#    gsettings set org.gnome.system.proxy port 7890   # 标记为备选方案
+```
+
+---
+
+## 14. 其他遗留项状态(不阻塞本轮)
 
 - **#143「Welcome back 显示真实用户名」** = 已完成的 #133,重复项,可关。
 - **#11 GRUB `file '/boot/' not found`** = 见第 4 节,装饰性报错,不进本轮。
 - **#128 安装器 subiquity 崩溃** = 见第 8 节,需真机装 v2.3.0 抓 traceback。
-- **#46 clash 代理 / #47 内置程序更新机制** = 大功能,尚未开工,优先做 app 侧(Mac 可做),
-  系统侧完成后在此登记真机验证项。
