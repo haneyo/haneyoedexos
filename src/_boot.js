@@ -909,47 +909,79 @@ app.on('ready', async () => {
 
     // Laptop battery for the clock's battery readout. Desktops (no battery)
     // report present:false and the renderer hides the indicator.
+    //
+    // Read the battery out of a kernel power_supply tree. Extracted so it can be
+    // unit-tested against a fake tree (a Mac cannot exercise the Linux path).
+    // Devices are matched on the `type` file (must read "Battery") rather than on
+    // a name pattern like /^BAT[0-9]+$/: only the type file is guaranteed across
+    // hardware (BAT0, BAT1, CMB0, BATC, ...), and this also ignores AC/Mains
+    // pseudo-devices. Returns null when no battery is readable.
+    function readSysfsBattery(baseDir) {
+        try {
+            const fs = require("fs");
+            for (const name of fs.readdirSync(baseDir)) {
+                const dir = baseDir + "/" + name;
+                let type;
+                try {
+                    type = fs.readFileSync(dir + "/type", "utf8").trim();
+                } catch (err) { continue; }
+                if (type !== "Battery") continue;
+                let capacity;
+                try {
+                    capacity = parseInt(fs.readFileSync(dir + "/capacity", "utf8"), 10);
+                } catch (err) {
+                    // Some batteries only expose energy_now/energy_full.
+                    try {
+                        const now = parseInt(fs.readFileSync(dir + "/energy_now", "utf8"), 10);
+                        const full = parseInt(fs.readFileSync(dir + "/energy_full", "utf8"), 10);
+                        if (full > 0) capacity = Math.round(100 * now / full);
+                    } catch (err2) {}
+                }
+                if (isNaN(capacity)) continue;
+                let status = "";
+                try { status = fs.readFileSync(dir + "/status", "utf8").trim(); } catch (err) {}
+                return {
+                    present: true,
+                    level: Math.max(0, Math.min(100, capacity)) / 100,
+                    charging: status === "Charging" || status === "Full"
+                };
+            }
+        } catch (err) {
+            // No readable power_supply tree — genuinely not a laptop.
+        }
+        return null;
+    }
+
     ipc.handle("battery:level", () => {
+        // Primary: Electron's powerMonitor (on Linux it reads the UPower D-Bus
+        // daemon, package "upower"). The server-minimal base can lack that
+        // daemon, and powerMonitor may then report -1 or even throw — neither
+        // may prevent the sysfs fallback, so each probe is guarded separately.
+        let level = null;
         try {
             const pm = require("electron").powerMonitor;
-            const level = pm.getSystemBatteryLevel();
-            let charging = false;
-            if (typeof pm.getBatteryState === "function") {
-                const st = pm.getBatteryState();
-                charging = st === "charging" || st === "full";
+            if (typeof pm.getSystemBatteryLevel === "function") {
+                const v = pm.getSystemBatteryLevel();
+                if (typeof v === "number" && v >= 0) level = v;
             }
-            let present = typeof level === "number" && level >= 0;
-            if (!present && process.platform === "linux") {
-                // powerMonitor on Linux reads the battery through the UPower
-                // D-Bus daemon (package "upower"). On the server-minimal base
-                // that daemon can be absent, which makes it report -1 even on a
-                // laptop — so fall back to the kernel's sysfs interface, which
-                // is always there for a machine that has a battery at all.
-                try {
-                    const fs = require("fs");
-                    const base = "/sys/class/power_supply";
-                    const bats = fs.readdirSync(base).filter(d => /^BAT[0-9]+$/.test(d));
-                    if (bats.length) {
-                        const dir = base + "/" + bats[0];
-                        const capacity = parseInt(fs.readFileSync(dir + "/capacity", "utf8"), 10);
-                        if (!isNaN(capacity)) {
-                            const status = fs.readFileSync(dir + "/status", "utf8").trim();
-                            charging = status === "Charging" || status === "Full";
-                            return {
-                                present: true,
-                                level: Math.max(0, Math.min(100, capacity)) / 100,
-                                charging
-                            };
-                        }
-                    }
-                } catch (err) {
-                    // No readable battery in sysfs — genuinely not a laptop.
-                }
-            }
-            return { present, level: present ? level : -1, charging };
-        } catch (e) {
-            return { present: false, level: -1, charging: false };
+        } catch (err) {
+            // UPower D-Bus unavailable — fall through to sysfs below.
         }
+        if (level !== null) {
+            let charging = false;
+            try {
+                if (typeof pm.getBatteryState === "function") {
+                    const st = pm.getBatteryState();
+                    charging = st === "charging" || st === "full";
+                }
+            } catch (err) {}
+            return { present: true, level, charging };
+        }
+        if (process.platform === "linux") {
+            const sys = readSysfsBattery("/sys/class/power_supply");
+            if (sys) return sys;
+        }
+        return { present: false, level: -1, charging: false };
     });
 
     // Pointer speed (settings.cursorSpeed, 0.25x-4x). Applied at the OS level
