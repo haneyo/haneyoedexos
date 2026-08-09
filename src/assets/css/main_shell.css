@@ -299,6 +299,15 @@ div#main_shell_innercontainer pre.terminal-closed {
     box-sizing: border-box;
 }
 
+/* A closed terminal's last output stays readable only while its own tab is
+   active. Switching away must hide it — the base rule above kept opacity:1
+   unconditionally, so a closed Claude tab lingered over every other tab (and
+   showed through behind the screensaver's fake code). */
+div#main_shell_innercontainer pre.terminal-closed:not(.active) {
+    z-index: -999;
+    opacity: 0;
+}
+
 div#main_shell_innercontainer pre#terminal1 {
     top: -100%;
 }
