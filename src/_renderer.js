@@ -1479,7 +1479,7 @@ async function initUI() {
             new Modal({ type: "custom", title: "DISK MANAGEMENT",
                 html: `<div class="mod_menu">
                     <button onclick="window.sysCmd.open('Disks', 'lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE')">List Disks</button>
-                    <button onclick="window.sysCmd.open('Disk Space', 'df -h')">Disk Space</button>
+                    <button onclick="window.sysCmd.open('Disk Space', 'lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,MOUNTPOINT 2>/dev/null; echo; echo ==== df -h ====; df -h -x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null')">Disk Space</button>
                     <button onclick="window.sysCmd.open('Mount', 'lsblk -o NAME,SIZE,MOUNTPOINT,FSTYPE; echo; echo Use: udisksctl mount -b /dev/XXX')">Mount / Unmount</button>
                     <button class="mod_menu_danger" onclick="window.sysCmd.formatDialog()">Format USB / Disk…</button>
                 </div>`, closeLabel: "Close" });
