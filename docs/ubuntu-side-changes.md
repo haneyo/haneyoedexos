@@ -102,17 +102,26 @@ en→中 一键落到它)+ `rime`(小狼毫,第二中文选项),并播种到 `/e
 **真机验证:**
 ```bash
 cat ~/.config/fcitx5/profile          # 应含 keyboard-us + pinyin + rime 三项
-cat ~/.config/fcitx5/conf/classicui.conf   # Font 应为 Noto Sans CJK SC
+cat ~/.config/fcitx5/conf/classicui.conf   # Font 应为 Noto Sans CJK SC;且含 #aacfd1/#05080d 配色
 fcitx5-diagnose | head -60            # 应看到 fcitx5-pinyin 与 fcitx5-rime 引擎
 # 终端点 EN/中 切到"中"(pinyin),打字应立刻出现候选框,空格上屏中文
+# 候选框应为黑底青色(#aacfd1)选中高亮,与 tron 主题一致(#144)
 ```
 
-若仍无候选框,按顺序诊断并输出发回:
+**#144 候选框现状**:切换已修复(#16);候选框**配色**已改成 tron 主题同款(上面 classicui.conf)。
+但用户报告:切到"中"后打字**只有拼音/英文上屏,候选框仍不出现**。Mac 侧无法跑 fcitx5,
+以下诊断在真机执行,输出发回:
+
 ```bash
 ps aux | grep fcitx5                  # 守护进程应在跑(edex-session.sh 启动)
 echo $GTK_IM_MODULE $QT_IM_MODULE $XMODIFIERS   # 应都是 fcitx / @im=fcitx
 fcitx5-diagnose | head -80            # 重点看 input method 与 profile/engine 段
 cat ~/.config/fcitx5/rime/build/*.bin 2>/dev/null | head -1   # 空=Rime 未部署
+# 候选窗渲染确认(打字时):
+xdotool search --name "" getwindowname 2>/dev/null || xwininfo -root -children | tail -20
+#   若打字时多出一个 fcitx/fcitx5 窗口 → 候选窗在渲染,可能是 z-order/位置问题
+#   若没有任何新窗口 → fcitx5 没进组合状态,是 app 输入路径/IM 上下文问题
+tail -60 ~/.local/share/fcitx5/log/fcitx5.log 2>/dev/null    # 或 ~/.cache/fcitx5/
 ```
 
 ---
@@ -252,3 +261,64 @@ cat /etc/edex-settings.json 2>/dev/null | grep -E "lockCode|lockOnIdle|language"
 grep -E "lockCode|lockOnIdle|language" ~/.config/eDEX-UI/settings.json            # 首启后应写入
 timedatectl show -p Timezone                                                     # 应等于所选时区
 ```
+
+---
+
+## 10. 电源键按下 → 电源菜单(非锁屏态)(#140)— 需真机验证
+
+锁屏/屏保下的电源键行为已按 #148 做掉(矩阵→熄屏,code→电源菜单)。**非锁屏态**按下物理
+电源键,预期是弹出 eDEX 电源菜单而不是直接关机。macOS 侧无法模拟 ThinkPad 电源键/ACPI 事件,
+按键路由依赖真机。
+
+**真机验证:**
+```bash
+# 正常桌面(未锁屏)按一下电源键 → 应弹出 eDEX 电源菜单(SHUTDOWN / RESTART / SLEEP / SCREENSAVER…)
+# 长按(>5s)应仍由固件强制断电(BIOS 行为,软件管不到)
+# 若直接关机了:看谁在响应
+systemd-inhibit --list                       # 谁持有电源键 inhibit
+grep -iE "handle_power_key|PowerKeyIgnore|PowerKeyInhibit" /etc/systemd/logind.conf /etc/systemd/logind.conf.d/* 2>/dev/null
+loginctl show-session $(loginctl | awk 'NR==2{print $1}') -p IdleHint   # 空闲状态
+```
+
+---
+
+## 11. 笔记本电量不显示(upower + sysfs 兜底)(#139)— 需真机验证
+
+电量显示组件(时钟左上角)已在 #30/#50 做好并在无电池机器上验证过。笔记本真机上若仍不显示,
+是电池信息源(upower 拿不到 → 回退 sysfs `/sys/class/power_supply/`)的问题。
+
+**真机验证:**
+```bash
+upower -e | grep -i battery || echo "upower 无电池设备"
+cat /sys/class/power_supply/BAT*/capacity 2>/dev/null || echo "无 BAT* sysfs 节点"
+ls /sys/class/power_supply/                 # 看电池枚举名(如 BAT0 / BAT1 / CMB0)
+grep . /sys/class/power_supply/*/type 2>/dev/null   # type 是否为 Battery
+# eDEX 时钟旁应显示电量百分比 + 状态(充电/低电),插拔电源应实时变化
+```
+
+---
+
+## 12. Show disks 显示未挂载 U 盘 + 点击挂载(#145)— 需真机验证
+
+文件浏览器 "Show disks" 视图预期列出**未挂载的 U 盘/移动盘**,点击即挂载。macOS 侧已实现
+app 侧调用(lsblk 枚举 + `udisksctl mount`),但真实 U 盘插拔、挂载权限、vfat/ntfs 行为只能在
+真机上验。
+
+**真机验证:**
+```bash
+# 插入 U 盘 → 文件浏览器 Show disks 应出现该设备(未挂载)
+# 点击设备 → 应自动挂载并进入其目录;再点 → 卸载
+udisksctl status                            # 应看到该 U 盘节点
+lsblk -o NAME,SIZE,TYPE,MOUNTPOINTS | grep -E "sd[b-z]"   # 挂载点是否出现
+# 若点击无反应,把 app 终端里报错发回(挂载走 udisksctl,权限由 polkit 控制)
+```
+
+---
+
+## 13. 其他遗留项状态(不阻塞本轮)
+
+- **#143「Welcome back 显示真实用户名」** = 已完成的 #133,重复项,可关。
+- **#11 GRUB `file '/boot/' not found`** = 见第 4 节,装饰性报错,不进本轮。
+- **#128 安装器 subiquity 崩溃** = 见第 8 节,需真机装 v2.3.0 抓 traceback。
+- **#46 clash 代理 / #47 内置程序更新机制** = 大功能,尚未开工,优先做 app 侧(Mac 可做),
+  系统侧完成后在此登记真机验证项。
