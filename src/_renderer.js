@@ -1579,8 +1579,24 @@ async function initUI() {
     window.wifiPanel = new WifiPanel();
     ipc.on("open-wifi-panel", () => { if (window.wifiPanel) window.wifiPanel.open(); });
     ipc.on("lock-screen", () => { if (window.lockScreen) window.lockScreen.engage(); });
-    // OS power button → POWER menu (main listens on 127.0.0.1:17322).
-    ipc.on("show-power-menu", () => { if (window.openPowerMenu) window.openPowerMenu(); });
+    // OS power button → POWER menu (main listens on 127.0.0.1:17322). While
+    // the display is covered the key means something different per overlay:
+    // the matrix rain (screensaver or its adopted lock) is the "machine is
+    // dreaming" state, so the power key blanks the display — any key wakes it.
+    // The code box is the idle state, so the power menu stays reachable.
+    ipc.on("show-power-menu", () => {
+        const covered = (window.lockScreen && window.lockScreen.active)
+            || (window.screensaver && window.screensaver.isActive());
+        if (covered) {
+            const matrix = (window.screensaver && typeof window.screensaver.isMatrixActive === "function" && window.screensaver.isMatrixActive())
+                || (window.lockScreen && window.lockScreen._matrixTimer !== null);
+            if (matrix) {
+                try { showScreenOff(); } catch (e) {}
+                return;
+            }
+        }
+        if (window.openPowerMenu) window.openPowerMenu();
+    });
     ipc.on("edex-download-done", (e, d) => {
         if (window.wifiPanel) window.wifiPanel._notify((d && d.ok ? "Saved to Downloads: " : "Download failed: ") + ((d && d.name) || ""));
     });
@@ -3301,9 +3317,33 @@ window.useAppShortcut = action => {
         case "COPY":
             window.term[window.currentTerm].clipboard.copy();
             return true;
-        case "PASTE":
+        case "PASTE": {
+            // A focused modal field (e.g. the file browser's doc editor) wins
+            // over the terminal: paste the clipboard into it instead. Guards
+            // against stealing Ctrl+Shift+V from xterm, whose helper textarea
+            // would otherwise match the tag check below.
+            const ae = document.activeElement;
+            const inModal = ae && ae.closest && ae.closest(".modal_popup");
+            const editable = inModal && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA");
+            if (editable) {
+                try {
+                    const text = remote.clipboard.readText();
+                    // `|| length` would misread a real cursor at position 0 as
+                    // "no selection" and shift the insert to the end — then slice
+                    // with the two different offsets duplicates the tail. Null-check
+                    // instead (#147).
+                    const s = ae.selectionStart != null ? ae.selectionStart : ae.value.length;
+                    const e = ae.selectionEnd != null ? ae.selectionEnd : s;
+                    ae.value = ae.value.slice(0, s) + text + ae.value.slice(e);
+                    const at = s + text.length;
+                    ae.selectionStart = ae.selectionEnd = at;
+                    ae.dispatchEvent(new Event("input", { bubbles: true }));
+                } catch (err) {}
+                return true;
+            }
             window.term[window.currentTerm].clipboard.paste();
             return true;
+        }
         case "NEXT_TAB":
                 if (window.term[window.currentTerm+1]) {
                     window.focusShellTab(window.currentTerm+1);
@@ -3943,6 +3983,23 @@ window.screensaver = (() => {
                 sessionUsed.clear();
                 winding = false;
                 pendingLines = [];
+                // The fake code streams straight into the real terminal, and the
+                // lock that follows this screensaver re-serializes that same
+                // buffer for its unlock replay — so without a clean snapshot the
+                // replay would carry the fake code and the wind-down blank lines,
+                // pushing the user's content up and leaving a blank gap (#148).
+                // Capture the clean buffer BEFORE the first fake line is written;
+                // the lock prefers this over a live re-serialize.
+                this.preSaverTerm0 = null;
+                try {
+                    const t0 = window.term && window.term[0];
+                    if (t0 && t0.term) {
+                        const {SerializeAddon} = require("xterm-addon-serialize");
+                        const addon = new SerializeAddon();
+                        t0.term.loadAddon(addon);
+                        this.preSaverTerm0 = addon.serialize();
+                    }
+                } catch (e) { this.preSaverTerm0 = null; }
                 codeTimer = setInterval(codeTick, 100);
             }
             // While the screensaver plays, eDEX wears its cover identity (fake
@@ -3952,6 +4009,12 @@ window.screensaver = (() => {
         hide(immediate, keepCover, keepMatrixRain) {
             if (!active) return;
             active = false;
+            // The pre-screensaver buffer snapshot (preSaverTerm0) is only valid
+            // for the dismiss-into-lock handoff, which passes keepCover=true.
+            // Any other dismissal returns to the live terminal whose buffer has
+            // since changed — drop the snapshot so a later direct lock (Win+L)
+            // re-serializes the CURRENT state, not a stale pre-screensaver one.
+            if (!keepCover) this.preSaverTerm0 = null;
             document.body.classList.remove("screensaver_on");
             if (window.cursorTrap) window.cursorTrap.show();
             // Leave cover mode: restore the real tabs / filesystem / IP / procs.

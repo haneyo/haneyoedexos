@@ -190,6 +190,10 @@ class LockScreen {
         clearInterval(this._timer);
         clearInterval(this._focusRet);
         clearInterval(this._matrixTimer);
+        // Null the handle too: a stale non-null interval id would make the NEXT
+        // lock on this instance read as Matrix (unlock() replay-boot, power-key
+        // blanking) even when it is a code lock (#148).
+        this._matrixTimer = null;
         clearInterval(this._lockAnim);
         this._lockAnim = null;
         clearTimeout(this._shakeTimer);
@@ -408,10 +412,26 @@ class LockScreen {
                 // the user's command history and output vanish from view after
                 // unlock. Replayed by _teardownLock on a real unlock.
                 try {
-                    const {SerializeAddon} = require("xterm-addon-serialize");
-                    this._serializeAddon = new SerializeAddon();
-                    t.term.loadAddon(this._serializeAddon);
-                    this._savedTerm = this._serializeAddon.serialize();
+                    // Prefer the clean pre-screensaver snapshot when this lock is
+                    // reached from the code screensaver: the fake code streamed
+                    // into this very buffer and wind-down left it there, so a
+                    // live re-serialize would replay the pollution and push the
+                    // user's content up into scrollback on unlock (#148). The
+                    // screensaver took the snapshot BEFORE the fake code started.
+                    const clean = window.screensaver && window.screensaver.preSaverTerm0;
+                    if (clean && typeof clean === "string" && clean.length) {
+                        this._savedTerm = clean;
+                        this._serializeAddon = null;
+                        // One-shot: a later direct lock (no screensaver between)
+                        // must re-serialize the CURRENT live buffer, not reuse
+                        // this pre-screensaver snapshot.
+                        window.screensaver.preSaverTerm0 = null;
+                    } else {
+                        const {SerializeAddon} = require("xterm-addon-serialize");
+                        this._serializeAddon = new SerializeAddon();
+                        t.term.loadAddon(this._serializeAddon);
+                        this._savedTerm = this._serializeAddon.serialize();
+                    }
                 } catch (e) { this._savedTerm = null; this._serializeAddon = null; }
                 this._boxAnimating = true;
                 this._drawLockBox(true);

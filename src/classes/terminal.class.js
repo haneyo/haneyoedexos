@@ -342,9 +342,24 @@ class Terminal {
             this.clipboard = {
                 copy: () => {
                     if (!this.term.hasSelection()) return false;
+                    // xterm's selection is a virtual DOM selection, so
+                    // document.execCommand("copy") can silently no-op. Pull the
+                    // selected text out and write it to the OS clipboard directly
+                    // — then it pastes into text docs, the file browser, anywhere.
+                    let sel = "";
+                    try { sel = this.term.getSelection(); } catch (e) {}
+                    if (sel) {
+                        try {
+                            remote.clipboard.writeText(sel);
+                            this.term.clearSelection();
+                            this.clipboard.didCopy = true;
+                            return true;
+                        } catch (e) {}
+                    }
                     document.execCommand("copy");
                     this.term.clearSelection();
                     this.clipboard.didCopy = true;
+                    return true;
                 },
                 paste: () => {
                     this.write(remote.clipboard.readText());
