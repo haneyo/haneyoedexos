@@ -363,14 +363,27 @@ if command -v plymouthd >/dev/null 2>&1; then
             cp -n "$f" /usr/share/plymouth/themes/edex/ 2>/dev/null || true
         done
     fi
-    if [ -f /cdrom/nocloud/edex.plymouth ] && [ -f /cdrom/nocloud/edex-boot-logo.png ]; then
-        cp /cdrom/nocloud/edex.plymouth /usr/share/plymouth/themes/edex/edex.plymouth
-        cp /cdrom/nocloud/edex-boot-logo.png /usr/share/plymouth/themes/edex/bgrt-fallback.png
+    # This script runs inside the curtin chroot (/target), where the live ISO's
+    # /cdrom is NOT mounted — the payload is copied to /root by user-data
+    # late-commands. Check /root first, then /cdrom/nocloud as a fallback for
+    # older ISOs / manual runs. Falling back to the stock spinner theme is the
+    # "keep something working" path, but its bgrt-fallback.png is the Ubuntu
+    # circle — so a silent fallback is exactly the bug the user sees as "still
+    # the Ubuntu logo" (#142). The payload must land.
+    PLYMOUTH_SRC=""
+    if [ -f /root/edex.plymouth ] && [ -f /root/edex-boot-logo.png ]; then
+        PLYMOUTH_SRC=/root
+    elif [ -f /cdrom/nocloud/edex.plymouth ] && [ -f /cdrom/nocloud/edex-boot-logo.png ]; then
+        PLYMOUTH_SRC=/cdrom/nocloud
+    fi
+    if [ -n "$PLYMOUTH_SRC" ]; then
+        cp "$PLYMOUTH_SRC/edex.plymouth" /usr/share/plymouth/themes/edex/edex.plymouth
+        cp "$PLYMOUTH_SRC/edex-boot-logo.png" /usr/share/plymouth/themes/edex/bgrt-fallback.png
         plymouth-set-default-theme edex 2>/dev/null || true
         echo "[edex] plymouth theme: edex"
     else
-        # payload missing (old ISO / manual run) — spinner is a text-category
-        # theme (always works, no GPU requirement) and still animates.
+        # payload missing — spinner is a text-category theme (always works, no
+        # GPU requirement) and still animates.
         echo "[edex] WARN: edex theme payload missing — keeping spinner theme"
         plymouth-set-default-theme spinner 2>/dev/null || true
     fi
