@@ -95,7 +95,7 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 libasound2t64 libgbm1 libdrm2 \
     libxkbcommon0 xdg-utils libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 \
     libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 \
-    linux-firmware network-manager bluez rfkill upower \
+    linux-firmware network-manager wpasupplicant bluez rfkill upower \
     pulseaudio alsa-utils \
     uget aria2 \
     nodejs npm \
@@ -219,6 +219,11 @@ mkdir -p "$EXTRACT/nocloud"
 cp "$REPO_DIR/packaging/autoinstall/user-data"     "$EXTRACT/nocloud/user-data"
 cp "$REPO_DIR/packaging/autoinstall/meta-data"     "$EXTRACT/nocloud/meta-data"
 cp "$REPO_DIR/packaging/install/install-edex.sh"   "$EXTRACT/nocloud/install-edex.sh"
+# eDEX boot-splash theme: install-edex.sh copies these into the target's
+# /usr/share/plymouth/themes/edex (the logo replaces the stock Ubuntu
+# "bgrt-fallback" image that plymouth otherwise draws on boot).
+cp "$REPO_DIR/packaging/boot/edex.plymouth"        "$EXTRACT/nocloud/edex.plymouth"
+cp "$REPO_DIR/packaging/boot/edex-boot-logo.png"   "$EXTRACT/nocloud/edex-boot-logo.png"
 
 echo "[edex] enabling autoinstall on the kernel command line"
 # Append  autoinstall ds=nocloud\;s=/cdrom/nocloud/  just before the '---'

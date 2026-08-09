@@ -247,11 +247,20 @@ PROFILE
 # even though the engine is working; pin a CJK font explicitly so 候选框 always
 # draws. PerScreenDPI=False stops the popup from picking a wrong DPI in
 # nested/Xvfb displays and mis-scaling (or flying off-screen).
+# The colors match the seeded "tron" theme (#144): near-black panel on the
+# terminal's #05080d, accent #aacfd1 text, and the selected candidate as an
+# accent block with dark text — the same dark/cyan look as the rest of the UI.
 mkdir -p "/home/$U/.config/fcitx5/conf"
 cat > "/home/$U/.config/fcitx5/conf/classicui.conf" <<'CUI'
 [Appearance]
 Font="Noto Sans CJK SC 12"
 PerScreenDPI=False
+NormalColor=#aacfd1
+NormalBackgroundColor=#05080d
+HighlightColor=#05080d
+HighlightBackgroundColor=#aacfd1
+SpellHintColor=#6b7f80
+ShadowColor=#000000
 CUI
 chown -R "$U":"$U" "/home/$U/.config/fcitx5" 2>/dev/null || true
 # seed /etc/skel so any account created later gets the same IM list + UI config
@@ -340,10 +349,31 @@ GRUB_COLOR_NORMAL="white/black"
 GRUB_COLOR_HIGHLIGHT="cyan/black"
 GRUB_DISABLE_OS_PROBER=true
 GRUB
-# spinner is a text-category theme (always works, no GPU/framebuffer requirement)
-# while still showing a boot animation; details would be plain scrolling text.
+# eDEX boot theme. The stock spinner theme is kept as a fallback; we build an
+# "edex" theme on top of its assets: the animation/dialog PNGs are generic
+# (no Ubuntu branding), and the two branded bits come from the ISO payload —
+# edex.plymouth (config) and edex-boot-logo.png, installed as bgrt-fallback.png
+# because the two-step plugin draws that image centered when the firmware has no
+# BGRT logo (that is precisely where the stock Ubuntu circle came from).
 if command -v plymouthd >/dev/null 2>&1; then
-    plymouth-set-default-theme spinner 2>/dev/null || true
+    mkdir -p /usr/share/plymouth/themes/edex
+    if [ -d /usr/share/plymouth/themes/spinner ]; then
+        for f in /usr/share/plymouth/themes/spinner/*.png; do
+            [ "$(basename "$f")" = "bgrt-fallback.png" ] && continue
+            cp -n "$f" /usr/share/plymouth/themes/edex/ 2>/dev/null || true
+        done
+    fi
+    if [ -f /cdrom/nocloud/edex.plymouth ] && [ -f /cdrom/nocloud/edex-boot-logo.png ]; then
+        cp /cdrom/nocloud/edex.plymouth /usr/share/plymouth/themes/edex/edex.plymouth
+        cp /cdrom/nocloud/edex-boot-logo.png /usr/share/plymouth/themes/edex/bgrt-fallback.png
+        plymouth-set-default-theme edex 2>/dev/null || true
+        echo "[edex] plymouth theme: edex"
+    else
+        # payload missing (old ISO / manual run) — spinner is a text-category
+        # theme (always works, no GPU requirement) and still animates.
+        echo "[edex] WARN: edex theme payload missing — keeping spinner theme"
+        plymouth-set-default-theme spinner 2>/dev/null || true
+    fi
 else
     echo "[edex] WARN: plymouthd missing — 'plymouth plymouth-theme-spinner' must be in build-iso.sh APTOPTS"
 fi
