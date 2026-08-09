@@ -918,7 +918,34 @@ app.on('ready', async () => {
                 const st = pm.getBatteryState();
                 charging = st === "charging" || st === "full";
             }
-            const present = typeof level === "number" && level >= 0;
+            let present = typeof level === "number" && level >= 0;
+            if (!present && process.platform === "linux") {
+                // powerMonitor on Linux reads the battery through the UPower
+                // D-Bus daemon (package "upower"). On the server-minimal base
+                // that daemon can be absent, which makes it report -1 even on a
+                // laptop — so fall back to the kernel's sysfs interface, which
+                // is always there for a machine that has a battery at all.
+                try {
+                    const fs = require("fs");
+                    const base = "/sys/class/power_supply";
+                    const bats = fs.readdirSync(base).filter(d => /^BAT[0-9]+$/.test(d));
+                    if (bats.length) {
+                        const dir = base + "/" + bats[0];
+                        const capacity = parseInt(fs.readFileSync(dir + "/capacity", "utf8"), 10);
+                        if (!isNaN(capacity)) {
+                            const status = fs.readFileSync(dir + "/status", "utf8").trim();
+                            charging = status === "Charging" || status === "Full";
+                            return {
+                                present: true,
+                                level: Math.max(0, Math.min(100, capacity)) / 100,
+                                charging
+                            };
+                        }
+                    }
+                } catch (err) {
+                    // No readable battery in sysfs — genuinely not a laptop.
+                }
+            }
             return { present, level: present ? level : -1, charging };
         } catch (e) {
             return { present: false, level: -1, charging: false };
@@ -1266,6 +1293,25 @@ app.on('ready', async () => {
     }
 
     createWindow(settings);
+
+    // Power button → POWER menu. On the eDEX-OS device logind ignores the ACPI
+    // power key (HandlePowerKey=ignore), so openbox receives it as an
+    // XF86PowerOff keypress and runs /usr/local/sbin/edex-power-menu.sh, which
+    // hits this loopback endpoint; the renderer then opens the same power modal
+    // the clock opens. Loopback-only, fixed port, no auth needed — it can only
+    // be reached by processes on this machine.
+    try {
+        const powerServer = http.createServer((req, res) => {
+            res.setHeader("Content-Type", "text/plain");
+            res.end("ok");
+            if (win && !win.isDestroyed()) {
+                try { win.webContents.send("show-power-menu"); } catch (e) {}
+            }
+        });
+        powerServer.listen(17322, "127.0.0.1");
+    } catch (e) {
+        signale.warn("Could not start power-menu listener: " + (e && e.message));
+    }
 
     // Exit native fullscreen: global hotkey (backup) + the corner button's IPC.
     try {

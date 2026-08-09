@@ -13,7 +13,7 @@
 | 2 | 首启向导中文变方块字,要求改英文界面 | OS | v2.3.5 起向导整个换成**应用内** code 锁屏风格(英文,类 firstRun.class.js),xterm 向导已删(见 ubuntu-side-changes.md §9) |
 | 3 | 搜不到 WiFi | OS(需真机诊断) | 已修(源码,待装验):netplan 双 renderer 冲突 + 关 wifi 电源管理(见 ubuntu-side-changes.md §2);设置菜单已加网络分类(连接/断开/已保存/代理/蓝牙),依赖 nmcli + bluetoothctl |
 | 4 | 系统时间不对:需要时区 + 手动改时间 + 联网同步功能 | OS + App | App 已修(源码,待装验):设置加时间分类(实时状态/时区/手动设时间/联网同步 IPC);OS 侧需装验 |
-| 5 | 语音输入按钮按下后卡死,无法再按、无法语音输入 | App | 已修(源码,待装验) |
+| 5 | 语音输入按钮按下后卡死(变灰不可再点),无语音 UI | App | 已定位+已修(打包,待装验):灰 = voice:init 返回失败 = 缺 sherpa-onnx 离线 ASR 模型(旧 ISO 未烘焙模型到 /opt/edex/models);新 ISO build-iso.sh 已烘焙(带重试),路径与 _boot.js voiceModelDirs() 匹配 |
 | 6 | 输入法切换无反应,一直 EN | OS | 已修(源码,待装验):fcitx5-rime 已内置 + 写 fcitx5 profile(keyboard-us 默认 + rime 中文,Ctrl+Space 切换,见 ubuntu-side-changes.md §3) |
 | 7 | 文件浏览器默认标签连不上(XDG 目录不存在) | OS | 已修(源码,待装验) |
 | 8 | 设置-通用-用户名显示 `undefined` | App | 已修(源码,待装验):v2.3.5 起 `getDisplayName()` 优先 GECOS `os.userInfo().realname`(安装时 "Your name" 写入的全名) |
@@ -50,11 +50,13 @@
 | 51 | 时钟加日期显示(不改布局) | App | 已修(源码,待装验) |
 | 52 | 确认休眠/挂起/锁屏等系统电源管理完善(Ubuntu Server 基底可能缺) | OS | 已核查:挂起/合盖/关机由 systemd-logind 管,install-edex.sh 写 edex.conf 合盖即挂起(外接电源也挂);休眠需 swap 且 Secure Boot 下默认禁用,不走;电源档走 App 性能控制器(cpupower,#37),不装 power-profiles-daemon(与手动 governor 冲突)。待装验 |
 | 53 | 确认驱动/固件内置完整(对照现代桌面发行版) | OS | 已核查:linux-firmware 已内置(覆盖 E580 的 iwlwifi/蓝牙/Intel 核显/声卡固件);缺 intel-microcode(CPU 微码),已加进 build-iso.sh APTOPTS(下一版 ISO 生效);触控板/键盘背光走内核驱动无需固件。待装验 |
+| 54 | 屏幕在设置的熄灭超时**之前**就熄灭;唤醒按键后无屏保/无锁屏,直接是真实 UI | App + OS | 已修(源码,待装验):(a) OS 侧关掉 Xorg 默认 ~10min DPMS 物理熄屏(xset -dpms / s off / s noblank),熄灭改由 app 的 screenOffIdle 掌控;(b) 重写 idle 轮询——黑屏只盖在**已建立**的屏保/锁屏上(不再同 tick 盖住刚启动的屏保,否则唤醒找不到屏保可解散→真实 UI)、屏保关闭时空闲按屏保超时直接锁定、模态框(如自动更新弹窗)不再挡住锁屏/熄屏;(c) 锁屏 30s 无操作回屏保时,屏保已禁用则不重启屏保。CDP 三场景(A 屏保关锁定/B 同超时唤醒进锁/C 错峰)已 PASS |
+| 55 | 输入法切到"中"后拼音直通(白字、空格提交成英文),无候选框 | OS | 已修(打包,待装验):Rime 首启 schema 编译失败会退化成 latin 直通。改 fcitx5 profile 为 keyboard-us + pinyin + rime(pinyin 靠 libime **开箱即有候选窗**,en→中 一键落到 pinyin)+ classicui.conf 显式 CJK 字体/关 PerScreenDPI + 安装时 rime_deployer 预部署(best-effort)。APTOPTS 补 fcitx5-pinyin librime-bin |
 ## 修复顺序建议
 
 1. **第一批(OS 侧,一次重装验多项)**: #2 向导英文、#4 时区/NTP、#7 XDG 目录、#3 WiFi、#9 plymouth(均已在源码,待装验)、#1 GRUB 报错(已定位,暂不改)
-2. **App 侧(edex-ui 源码)**: #5 语音、#6 输入法、#8 用户名、#10 虚拟显示器、#11 app 列表过滤、#12 锁屏残留
-3. **需要真机诊断**: #3 WiFi(修复后需真机复验)、#6 输入法、#10 虚拟显示器、#5 语音
+2. **App 侧(edex-ui 源码)**: #5 语音、#6 输入法、#8 用户名、#10 虚拟显示器、#11 app 列表过滤、#12 锁屏残留、#54 屏幕熄灭/锁屏(idle 轮询重写)
+3. **需要真机诊断**: #3 WiFi(修复后需真机复验)、#55 输入法候选框、#10 虚拟显示器、#5 语音(新 ISO 烘焙模型后复验)
 
 ## 诊断命令(真机上跑)
 
@@ -138,3 +140,42 @@ fcitx5-diagnose | head -60; pgrep -a fcitx5
 - 定位:**不是 claude 崩溃,是认证失败快速退出**;根因在渲染端 `onclose`:原逻辑清空 pane + `PREVIOUS_TAB` 切走,把错误抹掉了。
 - 修复(`src/_renderer.js` + `main_shell.css`):claude tab 退出后**留在原 tab**,保留最后 ~60 行输出 + `[ claude process ended ]` 提示;错误文本含 `API key/auth/401/403/login` 时额外提示去 Settings→Claude 配置;再点该 tab 重新启动。其他 tab 关闭行为不变。
 - 真机验证:无 API key 进 claude → 应留在 claude tab 显示认证错误 + 提示;配好 key 后点 tab 可正常进入。
+
+## v2.3.7 批(2026-08-09,待提交待装验)
+
+**电量图标不显示**(App + OS,App 侧 CDP 已验证):
+- 现象:笔记本(E580)装上后时钟左上角没有电量图标。
+- 定位:Electron `powerMonitor.getSystemBatteryLevel()` 在 Linux 走 **UPower D-Bus 守护进程**(`upower` 包);server-minimal 没装 → 返回 -1 → 渲染端隐藏图标。真机 `rfkill` 也缺失(诊断输出 `rfkill: command not found`)。
+- 修复:build-iso.sh APTOPTS 加 `upower` + `rfkill`(下一版 ISO 生效);`_boot.js` battery:level 加 **sysfs 兜底** —— `powerMonitor` 报告无电池时读 `/sys/class/power_supply/BAT*/capacity|status`,内核接口对真笔记本永远存在,不依赖 upower。CDP 已验证无电池机器仍返回 `present:false` 不报错。
+
+**电源键直接关机 → 改为弹出电源菜单**(App + OS):
+- 现象:真机按下电源键 Ubuntu 直接关机。
+- 定位:logind 默认 `HandlePowerKey=poweroff`(硬关机),install-edex.sh 的 edex.conf 只配了合盖,没配电源键。
+- 修复(链式):
+  1. logind `edex.conf` 加 `HandlePowerKey=ignore` → 电源键不再关机;
+  2. openbox `rc.xml` 绑 `XF86PowerOff` → `/usr/local/sbin/edex-power-menu.sh`(ACPI 电源键在 logind 忽略后会作为 XF86PowerOff 键送到 X 会话);
+  3. 脚本 `curl http://127.0.0.1:17322/` 通知应用;
+  4. `_boot.js` 主进程起 127.0.0.1:17322 固定端口 HTTP 监听 → `webContents.send("show-power-menu")`;
+  5. `_renderer.js` 把时钟点击的内联 POWER 弹窗抽成 `window.openPowerMenu()`,新增 `ipc.on("show-power-menu")` 复用同一弹窗(Restart / Lock Screen / Suspend / Shutdown,锁屏时隐藏 Lock Screen)。
+- CDP 已验证:直接调 `openPowerMenu()` 弹 POWER 菜单;`curl 127.0.0.1:17322` 200 → 渲染端经 IPC 弹出同一菜单。
+- 真机验证:短按电源键应弹出电源菜单而非关机;**长按电源键仍是硬件级强制断电**(嵌入式控制器行为,不可重映射);应用未启动(greeter/首启锁屏前)时按电源键无动作,不再直接断电。
+- 备注:电量/电源键两项的 App 侧改动(`_boot.js`/`_renderer.js`)已在 CDP 预览验证;OS 侧(install-edex.sh / build-iso.sh)需重装装验。
+
+**搜不到 WiFi(E580 RTL8821CE)+ 全网卡最大兼容批**(OS):
+- 现象:真机已装 linux-firmware、WiFi 已使能,但 `nmcli device wifi list` 永远为空、wlp5s0 状态 unavailable。
+- 定位(真机诊断照片):网卡是 **Realtek RTL8821CE**(10ec:c821),**不是 Intel** —— 内核自带 `rtw88_8821ce` 虽然绑定设备但**无法扫描**,刷屏 "PCIe Bus Error: Correctable Physical Layer (Receiver ID)",接口一直 unavailable。之前 grep iwlwifi 全是空转(该卡根本不是 Intel)。
+- 修复 A:`GRUB_CMDLINE_LINUX_DEFAULT` 加 `pcie_aspm=off` —— 关掉 PCIe ASPM 省电,是 PCIe 错误风暴 + 笔记本 WiFi 不稳的常见解法(代价:略耗电)。
+- 修复 B(最大兼容批):新增 `packaging/build-wifi-drivers.sh`,在 chroot/proot 内对**目标内核**(`KVER=$(ls /lib/modules | sort -V | tail -1)`,不是 chroot 里报主机内核的 `uname -r`)批量编译出树驱动,装进 `/lib/modules/$KVER/extra/`(modules.dep alias 优先级高于内核自带),并**只对成功落地的 .ko 写 blacklist**(失败留内核驱动兜底,绝不裸 blacklist):
+  - PCIe 笔记本:8821CE(E580,替换坏掉的 rtw88_8821ce)、8822CE;
+  - USB 网卡:8821CU、8822CU、8821AU、88x2bu(8822bu/8812bu)、8188EU、8192EU、8812AU、8723BU、8723DU;
+  - WiFi6 USB:8852AU、8852BU、8852CU —— 内核 6.8 的 rtw89 **根本没有 USB 支持**,出树驱动是唯一选项;且**不 blacklist rtw89 core**,否则连带废掉还能用的 PCIe 8852ae/8852be/8852ce;
+  - Broadcom(老 Dell/HP/Lenovo):BCM43142/4360/4352 用 multiverse `broadcom-sta-dkms` 编 wl,blacklist b43/b43legacy/ssb/brcmsmac/bcma。
+  - 有线网卡 r8169/e1000e/igc/alx/r8152 已由内核 + linux-firmware 完整覆盖,无需处理。
+- 真机验证:重装后 `nmcli device wifi list` 应列出家里 WiFi;`lspci -k` 应显示 `Kernel driver in use: 8821ce`(出树驱动)。其他 PC 常见的 Realtek/Broadcom 网卡同一镜像直接支持。
+- 备注:每个驱动 best-effort,单个编译失败只 WARN 跳过不影响出 ISO;14 个驱动源 URL 已逐个 curl 验证 200。
+
+**锁屏再解锁后终端命令/文字消失**(App,CDP 已验证):
+- 现象:code 锁屏(终端式)锁屏再解锁后,之前敲的命令和输出从终端上消失。
+- 定位:code 锁屏直接把**主 shell 终端**当锁屏画面 —— `_drawLockBox()` 先 `term.reset()` 清屏画框,解锁 `_teardownLock()` 又 `term.reset()` 一次再向 pty 要新提示符 → 整个 scrollback(1500 行)被两次清掉。矩阵锁屏是全屏覆盖层、不碰终端,不受影响。
+- 修复:锁屏画框前用 `xterm-addon-serialize` 把当前 buffer(含 scrollback)序列化存 `_savedTerm`,解锁 `term.reset()` 后**重放**回终端;已恢复快照就不再发 `\r`(避免误执行输入到一半的命令)。新增依赖 `xterm-addon-serialize@0.7.0`(兼容 xterm 4.14,CI `npm install` 自动带上)。
+- CDP 已验证:写入 60+ 行(含深 scrollback 标记)→ code 锁屏(标记从可视区消失)→ 解锁后两个标记原样回到 buffer,行号/scrollback 深度一致。

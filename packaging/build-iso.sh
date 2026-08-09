@@ -95,15 +95,15 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 libasound2t64 libgbm1 libdrm2 \
     libxkbcommon0 xdg-utils libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 \
     libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 \
-    linux-firmware network-manager bluez \
+    linux-firmware network-manager bluez rfkill upower \
     pulseaudio alsa-utils \
     uget aria2 \
     nodejs npm \
     flatpak xdg-desktop-portal xdg-desktop-portal-gtk \
     playerctl \
     gvfs gvfs-backends libglib2.0-bin \
-    fcitx5 fcitx5-rime fcitx5-chinese-addons fcitx5-config-qt \
-    fcitx5-frontend-gtk3 fcitx5-frontend-qt5 \
+    fcitx5 fcitx5-rime fcitx5-pinyin fcitx5-chinese-addons librime-bin \
+    fcitx5-config-qt fcitx5-frontend-gtk3 fcitx5-frontend-qt5 \
     p7zip-full intel-microcode \
     plymouth plymouth-theme-spinner xcursor-themes"
 
@@ -132,7 +132,6 @@ if [ "$MOUNTS_OK" = "1" ]; then
     sudo -E chroot "$WORK/rootfs" /bin/bash -c \
         "set -e; export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean; $INSTALL_CLAUDE" \
         || { echo "ERROR: chroot apt install failed"; exit 1; }
-    for m in /proc /sys /dev; do sudo umount "$WORK/rootfs$m" 2>/dev/null || true; done
 else
     echo "[edex] installing proot and using userspace chroot"
     sudo apt-get install -y proot >/dev/null 2>&1 || true
@@ -140,6 +139,22 @@ else
         "set -e; export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean; $INSTALL_CLAUDE" \
         || { echo "ERROR: proot apt install failed"; exit 1; }
 fi
+
+# Out-of-tree WiFi drivers (RTL8821CE on the E580 + the other common Realtek /
+# Broadcom cards the in-tree drivers handle poorly) — see build-wifi-drivers.sh.
+# Best-effort: the script itself always exits 0; this || guard is for the
+# chroot/proot wrapper failing entirely (mount, missing /bin/bash, ...).
+echo "[edex] building out-of-tree WiFi drivers into the rootfs"
+sudo cp "$SCRIPT_DIR/build-wifi-drivers.sh" "$WORK/rootfs/tmp/edex-build-wifi-drivers.sh"
+if [ "$MOUNTS_OK" = "1" ]; then
+    sudo -E chroot "$WORK/rootfs" /bin/bash /tmp/edex-build-wifi-drivers.sh \
+        || echo "[edex] WARN: WiFi driver build failed (best-effort)"
+else
+    proot -S "$WORK/rootfs" /bin/bash /tmp/edex-build-wifi-drivers.sh \
+        || echo "[edex] WARN: WiFi driver build failed (best-effort)"
+fi
+sudo rm -f "$WORK/rootfs/tmp/edex-build-wifi-drivers.sh"
+for m in /proc /sys /dev; do sudo umount "$WORK/rootfs$m" 2>/dev/null || true; done
 
 echo "[edex] baking in Firefox (official tarball — offline, no snap)"
 # Ubuntu 24.04's 'firefox' package is a snap; for a fully offline system we
@@ -169,7 +184,7 @@ fi
 echo "[edex] baking in offline ASR model (sherpa-onnx, Chinese streaming)"
 # rootfs is root-owned (unsquashfs ran via sudo) — a plain mkdir trips set -e.
 sudo mkdir -p "$WORK/rootfs/opt/edex/models"
-curl -fsSL -o "$WORK/zh-asr.tar.bz2" \
+curl -fSL --retry 3 --retry-delay 3 -o "$WORK/zh-asr.tar.bz2" \
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-multi-zh-hans-2023-12-12.tar.bz2" \
     || echo "[edex] WARN: ASR model download failed (best-effort)"
 if [ -s "$WORK/zh-asr.tar.bz2" ]; then

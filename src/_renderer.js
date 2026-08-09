@@ -1441,6 +1441,22 @@ async function initUI() {
         }
     };
 
+    // Open the POWER menu — shared by the clock click and the OS power button
+    // (the main process listens on 127.0.0.1:17322 and sends "show-power-menu").
+    window.openPowerMenu = () => {
+        // While the lock screen is up the clock stays interactive so the power
+        // options remain reachable — but "Lock Screen" is pointless when we're
+        // already locked, so drop that entry.
+        const alreadyLocked = window.lockScreen && window.lockScreen.active;
+        new Modal({ type: "custom", title: "POWER",
+            html: `<div class="mod_menu">
+                <button onclick="window.sysCmd.act('sudo systemctl reboot')">Restart</button>
+                ${alreadyLocked ? "" : `<button onclick="window.sysCmd.startScreensaver(true)">Lock Screen</button>`}
+                <button onclick="window.sysCmd.act('sudo systemctl suspend')">Suspend</button>
+                <button class="mod_menu_danger" onclick="window.sysCmd.act('sudo poweroff')">Shutdown</button>
+            </div>`, closeLabel: "Close" });
+    };
+
     // One delegated click handler for all modules (their DOM is rebuilt by later
     // modules, so direct listeners would be lost). The weather's location editor
     // is handled separately in netstat.class.js.
@@ -1450,17 +1466,7 @@ async function initUI() {
         if (t.closest("button") || t.closest("#keyboard_layer")) return; // interactive children
 
         if (t.closest("#mod_clock")) {
-            // While the lock screen is up the clock stays interactive so the
-            // power options remain reachable — but "Lock Screen" is pointless
-            // when we're already locked, so drop that entry.
-            const alreadyLocked = window.lockScreen && window.lockScreen.active;
-            new Modal({ type: "custom", title: "POWER",
-                html: `<div class="mod_menu">
-                    <button onclick="window.sysCmd.act('sudo systemctl reboot')">Restart</button>
-                    ${alreadyLocked ? "" : `<button onclick="window.sysCmd.startScreensaver(true)">Lock Screen</button>`}
-                    <button onclick="window.sysCmd.act('sudo systemctl suspend')">Suspend</button>
-                    <button class="mod_menu_danger" onclick="window.sysCmd.act('sudo poweroff')">Shutdown</button>
-                </div>`, closeLabel: "Close" });
+            window.openPowerMenu();
         } else if (t.closest("#mod_cpuinfo")) {
             window.sysCmd.open("CPU INFO", "lscpu 2>/dev/null | head -25; echo; echo '--- LOAD ---'; uptime");
         } else if (t.closest("#mod_ramwatcher_inner")) {
@@ -1573,6 +1579,8 @@ async function initUI() {
     window.wifiPanel = new WifiPanel();
     ipc.on("open-wifi-panel", () => { if (window.wifiPanel) window.wifiPanel.open(); });
     ipc.on("lock-screen", () => { if (window.lockScreen) window.lockScreen.engage(); });
+    // OS power button → POWER menu (main listens on 127.0.0.1:17322).
+    ipc.on("show-power-menu", () => { if (window.openPowerMenu) window.openPowerMenu(); });
     ipc.on("edex-download-done", (e, d) => {
         if (window.wifiPanel) window.wifiPanel._notify((d && d.ok ? "Saved to Downloads: " : "Download failed: ") + ((d && d.name) || ""));
     });
@@ -4229,24 +4237,51 @@ const bumpActivity = () => {
 );
 setInterval(() => {
     const idleMs = Date.now() - lastActivity;
-    // Screen-off blanking is independent of the screensaver (the timeout is
-    // clamped to be ≥ screensaverIdle, so the screensaver starts first) but
-    // never while locked or a modal is up.
-    if (!screenOffEl()
-        && !(window.lockScreen && window.lockScreen.active)
-        && Object.keys(window.modals).length === 0
-        && idleMs >= (Number(window.settings.screenOffIdle) || 1800) * 1000) {
-        showScreenOff();
+    const locked = window.lockScreen && window.lockScreen.active;
+    const screensaverOn = window.screensaver.isActive();
+    const screenOffIdle = (Number(window.settings.screenOffIdle) || 1800) * 1000;
+    const screensaverIdle = (Number(window.settings.screensaverIdle) || 300) * 1000;
+    const shouldLockOnIdle = window.settings.lockOnIdle !== false
+        && String(window.settings.lockCode || "").length > 0;
+
+    if (screensaverOn || locked) {
+        // Established screensaver or lock: after screenOffIdle the display blanks
+        // OVER it. The overlay only ever covers a screensaver that is already
+        // running (never the tick it starts on), so a wake keypress always has an
+        // active screensaver to dismiss into the lock — not "real UI, no lock".
+        // Blanking a locked screen is safe too: bumpActivity hides the overlay and
+        // the lock reads the passcode off a window-level keydown.
+        if (!screenOffEl() && idleMs >= screenOffIdle) showScreenOff();
+        return;
     }
-    if (window.screensaver.isActive()) return;
-    if (window.lockScreen && window.lockScreen.active) return; // locked: stay locked
-    if (Object.keys(window.modals).length > 0) return; // keep modals (settings etc.) usable
-    if (!window.settings.screensaverEnabled) return;
-    let idle = (Number(window.settings.screensaverIdle) || 300) * 1000;
-    if (idleMs > idle) {
-        // Idle always plays the screensaver first; the lock screen appears on
-        // dismiss (bumpActivity) when a passcode is configured.
+
+    // Idle with the screensaver animation disabled must still honor the lock
+    // timeout. Turning off 屏保 while keeping 空闲自动锁定 used to mean idle
+    // NEVER locked — the screen just blanked at screenOffIdle and a wake
+    // keypress (bumpActivity) found no active screensaver to dismiss, landing
+    // on the real UI. Lock straight at screensaverIdle; blanking follows one
+    // tick later once locked (handled above). Nothing below gates on modalUp:
+    // a stray modal (auto update notice, settings) must never pin the display
+    // on forever.
+    if (!window.settings.screensaverEnabled) {
+        if (shouldLockOnIdle && idleMs >= screensaverIdle
+            && window.lockScreen && !window.lockScreen.active) {
+            window.lockScreen.show();
+            return;
+        }
+        if (!screenOffEl() && idleMs >= screenOffIdle) showScreenOff();
+        return;
+    }
+
+    // Screensaver first, blanking one tick later over the established
+    // screensaver (screenOffIdle is clamped >= screensaverIdle in settings, so
+    // the screensaver always wins the boundary tick and the black never covers
+    // a bare desktop). The lock screen appears on dismiss (bumpActivity) when
+    // a passcode is configured.
+    if (idleMs >= screensaverIdle) {
         window.screensaver.show();
+    } else if (!screenOffEl() && idleMs >= screenOffIdle) {
+        showScreenOff();
     }
 }, 1000);
 

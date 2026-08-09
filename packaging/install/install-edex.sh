@@ -46,6 +46,17 @@ fi
 xsetroot -solid black 2>/dev/null || true
 export XCURSOR_THEME=DMZ-Black
 openbox --replace >/dev/null 2>&1 &
+# Kill Xorg's own screen blanking/DPMS. X ships a ~10-minute idle default that
+# physically blanks the display regardless of the app, so on real hardware the
+# panel would go dark before eDEX's configured screen-off timeout (and a wake
+# keypress would land on whatever the app had up — often the real UI, with no
+# lock). eDEX blanks the display itself with the #screen_off overlay at its own
+# screenOffIdle, so OS blanking must be fully disabled for that setting to mean
+# anything. xset s off + noblank kill the X screen-saver; -dpms stops the
+# monitor powering down on its own.
+xset -dpms 2>/dev/null || true
+xset s off 2>/dev/null || true
+xset s noblank 2>/dev/null || true
 fcitx5 -d >/dev/null 2>&1 &
 sleep 1
 exec /opt/edex/eDEX-UI.AppImage --no-sandbox
@@ -140,20 +151,39 @@ cat > /etc/xdg/openbox/rc.xml <<'OPENBOX'
     <keybind key="XF86AudioMute"><action name="Execute"><command>/usr/local/sbin/edex-volume.sh mute</command></action></keybind>
     <keybind key="XF86MonBrightnessUp"><action name="Execute"><command>/usr/local/sbin/edex-brightness.sh up</command></action></keybind>
     <keybind key="XF86MonBrightnessDown"><action name="Execute"><command>/usr/local/sbin/edex-brightness.sh down</command></action></keybind>
+    <!-- Power button: logind is told to ignore the ACPI power key (edex.conf),
+         so it reaches X as XF86PowerOff and opens the in-app POWER menu. -->
+    <keybind key="XF86PowerOff"><action name="Execute"><command>/usr/local/sbin/edex-power-menu.sh</command></action></keybind>
   </keyboard>
 </openbox_config>
 OPENBOX
+cat > /usr/local/sbin/edex-power-menu.sh <<'PWR'
+#!/usr/bin/env bash
+# Power button → eDEX POWER menu. logind ignores the ACPI power key
+# (HandlePowerKey=ignore in edex.conf), so openbox gets it as an XF86PowerOff
+# keypress and runs this script, which asks the running eDEX app to open the
+# same power modal the clock opens (Restart / Lock Screen / Suspend / Shutdown).
+# If the app is not up yet (greeter / pre-login) nothing happens — the button
+# does nothing rather than yanking power. Long-pressing the hardware power
+# button still force-powers-off (embedded-controller behavior, not remappable).
+curl -s -m 2 http://127.0.0.1:17322/ >/dev/null 2>&1 || true
+PWR
+chmod +x /usr/local/sbin/edex-power-menu.sh
 
-echo "[edex] logind: suspend on lid close"
+echo "[edex] logind: suspend on lid close, power key → app power menu"
 # Laptops must suspend when the lid closes (on AC too — eDEX runs in a terminal
 # anyway, so there is no "docked monitor" use case). On resume the eDEX app
 # re-locks the screen when a passcode is configured.
+# HandlePowerKey=ignore makes the ACPI power button NOT power off (logind's
+# default is a hard poweroff). Instead openbox receives it as an XF86PowerOff
+# keypress and shows the in-app POWER menu — see the openbox keybind below.
 mkdir -p /etc/systemd/logind.conf.d
 cat > /etc/systemd/logind.conf.d/edex.conf <<'LOGIND'
 [Login]
 HandleLidSwitch=suspend
 HandleLidSwitchExternalPower=suspend
 HandleLidSwitchDocked=ignore
+HandlePowerKey=ignore
 LOGIND
 
 echo "[edex] detecting installed user"
@@ -181,12 +211,15 @@ fi
 usermod -aG video "$U" 2>/dev/null || true
 echo "[edex] configured for user: $U"
 
-echo "[edex] fcitx5 profile: keyboard-us + Rime, default US (input method #16)"
+echo "[edex] fcitx5 profile: keyboard-us + pinyin + Rime, default US (input method #16)"
 # fcitx5 is launched and the IM env is set (edex-session.sh), but without a
 # profile the engine list is EMPTY — so Ctrl+Space has nothing to switch to and
 # the system is stuck on "EN" no matter what. Writing the profile gives fcitx5
-# two input methods: keyboard-us (English, the default) and rime (中文, via
-# Ctrl+Space). Rime initializes ~/.config/fcitx5/rime on first activation.
+# three input methods: keyboard-us (English, the default), pinyin (libime —
+# instant candidates, no schema compile) and rime (小狼毫, builds its schemas
+# on first activation). pinyin comes FIRST so the EN/中 toggle lands on a
+# candidate window that works out of the box; rime stays available for users
+# who want it. Rime initializes ~/.config/fcitx5/rime on first activation.
 mkdir -p "/home/$U/.config/fcitx5"
 cat > "/home/$U/.config/fcitx5/profile" <<'PROFILE'
 [Groups/0]
@@ -199,16 +232,38 @@ Name=keyboard-us
 Layout=
 
 [Groups/0/Items/1]
+Name=pinyin
+Layout=
+
+[Groups/0/Items/2]
 Name=rime
 Layout=
 
 [GroupOrder]
 0=Default
 PROFILE
+# classicui renders the candidate window. On a minimal X build its font
+# fallback can produce a window that is blank or tofu (no visible candidates)
+# even though the engine is working; pin a CJK font explicitly so 候选框 always
+# draws. PerScreenDPI=False stops the popup from picking a wrong DPI in
+# nested/Xvfb displays and mis-scaling (or flying off-screen).
+mkdir -p "/home/$U/.config/fcitx5/conf"
+cat > "/home/$U/.config/fcitx5/conf/classicui.conf" <<'CUI'
+[Appearance]
+Font="Noto Sans CJK SC 12"
+PerScreenDPI=False
+CUI
 chown -R "$U":"$U" "/home/$U/.config/fcitx5" 2>/dev/null || true
-# seed /etc/skel so any account created later gets the same IM list
+# seed /etc/skel so any account created later gets the same IM list + UI config
 mkdir -p /etc/skel/.config/fcitx5
-cp "/home/$U/.config/fcitx5/profile" /etc/skel/.config/fcitx5/profile
+cp -r "/home/$U/.config/fcitx5/profile" "/home/$U/.config/fcitx5/conf" /etc/skel/.config/fcitx5/
+# Best-effort: pre-deploy Rime so the first switch to 中 doesn't stall on the
+# schema build — a stalled/failed deploy degrades Rime to latin pass-through
+# with no candidate window. pinyin above is the reliable default; this only
+# makes Rime usable immediately. Never fail the install over it.
+if command -v rime_deployer >/dev/null 2>&1; then
+    HOME="/home/$U" rime_deployer --build >/dev/null 2>&1 || true
+fi
 
 echo "[edex] NetworkManager as the network stack (WiFi via nmcli)"
 # CRITICAL: the interactive installer (subiquity) writes /etc/netplan/00-installer-config.yaml
@@ -268,7 +323,12 @@ cat > /etc/default/grub <<'GRUB'
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=2
 GRUB_DISTRIBUTOR=`lsb_release -i -s 2>/dev/null || echo Debian`
-GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"
+# pcie_aspm=off: PCIe Active State Power Management is the single most common
+# cause of flaky built-in WiFi on laptops (RTL8821CE/8822CE flood the log with
+# "PCIe Bus Error: Correctable Physical Layer" and never scan; some Broadcom and
+# Intel cards drop off the bus entirely). Disabling it costs a little idle power
+# but makes WiFi across arbitrary hardware far more reliable.
+GRUB_CMDLINE_LINUX_DEFAULT="quiet splash pcie_aspm=off"
 GRUB_CMDLINE_LINUX=""
 # Dark sci-fi GRUB menu: keep the reliable VGA text console (works on every GPU)
 # but restyle it — black background, white normal text, cyan highlight — instead

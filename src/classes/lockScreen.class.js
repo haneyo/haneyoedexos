@@ -234,12 +234,23 @@ class LockScreen {
                     this._suppressOutput = false;
                     this._term.term.reset();
                     this._term.term.write("\x1b[?25h");
+                    // Replay the pre-lock buffer so the user's command history
+                    // and output survive the lock instead of vanishing (#141).
+                    // The prompt is already part of the restored content, so no
+                    // fresh "\r" is needed — and sending one would execute any
+                    // half-typed command the shell still holds in readline.
+                    if (restoreWindows && this._savedTerm) {
+                        this._term.term.write(this._savedTerm);
+                        this._savedTerm = null;
+                        this._serializeAddon = null;
+                    }
                 }
-                // term.reset() wiped the shell's prompt off the screen and the
-                // idle shell will not redraw it on its own — ask the pty for a
-                // fresh prompt so the tab is not left blank after unlock (#62).
-                // On a timeout the screensaver re-owns the terminal instead.
-                if (restoreWindows && this._term.socket && this._term.socket.readyState === 1) {
+                // No buffer to restore (fallback): term.reset() wiped the shell's
+                // prompt off the screen and the idle shell will not redraw it on
+                // its own — ask the pty for a fresh prompt so the tab is not left
+                // blank after unlock (#62). On a timeout the screensaver re-owns
+                // the terminal instead.
+                if (restoreWindows && !this._savedTerm && this._term.socket && this._term.socket.readyState === 1) {
                     try { this._term.socket.send("\r"); } catch (e) {}
                 }
             } catch (e) {}
@@ -392,6 +403,16 @@ class LockScreen {
                 // The box decrypts in over the cleared terminal (the fake code
                 // scrolled away accelerated); input is dropped until it has fully
                 // materialised, then _startLockAnim hands over focus (#88).
+                // FIRST capture the shell's live buffer (scrollback + screen) —
+                // the lock's term.reset() below wipes it, and without a snapshot
+                // the user's command history and output vanish from view after
+                // unlock. Replayed by _teardownLock on a real unlock.
+                try {
+                    const {SerializeAddon} = require("xterm-addon-serialize");
+                    this._serializeAddon = new SerializeAddon();
+                    t.term.loadAddon(this._serializeAddon);
+                    this._savedTerm = this._serializeAddon.serialize();
+                } catch (e) { this._savedTerm = null; this._serializeAddon = null; }
                 this._boxAnimating = true;
                 this._drawLockBox(true);
             } catch (e) {}
@@ -916,6 +937,11 @@ class LockScreen {
             if (Date.now() - last >= idleMs) {
                 clearInterval(this._idleTimer);
                 this._idleTimer = null;
+                // With the screensaver animation disabled the lock can also be
+                // reached straight from idle (no screensaver to dismiss); the
+                // 30s idle hand-back must then keep the lock up rather than
+                // re-awaken a screensaver the user turned off.
+                if (window.settings.screensaverEnabled === false) return;
                 if (this._mode === "matrix") this._timeoutToScreensaverMatrix();
                 else this._timeoutToScreensaverCode();
             }

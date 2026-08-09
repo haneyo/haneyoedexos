@@ -81,28 +81,38 @@ journalctl -u NetworkManager -b --no-pager | grep -iE "wifi|wlan|error" | tail -
 
 ---
 
-## 3. 输入法 fcitx5 + Rime(#16)— 已自动化,需真机验证
+## 3. 输入法 fcitx5 + pinyin + Rime(#16 + #55)— 已自动化,需真机验证
 
-根因:fcitx5 守护进程和 IM 环境变量都正常(edex-session.sh 启动 `fcitx5 -d`,
-GTK_IM_MODULE/QT_IM_MODULE/XMODIFIERS 已导出),但**没写 fcitx5 profile** →
-引擎列表为空 → Ctrl+Space 无输入法可切换 → 一直 EN。
+根因 1(一直 EN):fcitx5 守护进程和 IM 环境变量都正常(edex-session.sh 启动
+`fcitx5 -d`,GTK_IM_MODULE/QT_IM_MODULE/XMODIFIERS 已导出),但**没写 fcitx5
+profile** → 引擎列表为空 → Ctrl+Space 无输入法可切换 → 一直 EN。
 
-install-edex.sh 现在会写 `/home/<user>/.config/fcitx5/profile`:
-两个输入法 = `keyboard-us`(英文,默认)+ `rime`(中文,Ctrl+Space 切换),
-并同步播种到 `/etc/skel`(后续新建用户也带)。Rime 首次激活时自动初始化词库。
+根因 2(候选框不出现,#55):只装了 Rime,而 Rime **首次激活时才编译 schema**;
+编译失败/未完成会退化成 latin 直通(输入白字、空格提交成英文、无候选框)。
+且 minimal 系统里 classicui 候选窗字体回退可能渲染成空白/豆腐块。
+
+install-edex.sh 现在写 `/home/<user>/.config/fcitx5/profile`:
+三个输入法 = `keyboard-us`(英文,默认)+ `pinyin`(libime,**开箱即有候选窗**,
+en→中 一键落到它)+ `rime`(小狼毫,第二中文选项),并播种到 `/etc/skel`。
+同时写 `conf/classicui.conf`(`Font="Noto Sans CJK SC 12"` + `PerScreenDPI=False`,
+候选窗显式 CJK 字体、防嵌套/Xvfb 下错 DPI 跑偏),并在安装时 best-effort
+`rime_deployer --build` 预部署 Rime(装 librime-bin 提供该命令)。APTOPTS 补
+`fcitx5-pinyin librime-bin`。
 
 **真机验证:**
 ```bash
-cat ~/.config/fcitx5/profile          # 应含 Groups/Items 的 keyboard-us + rime
-fcitx5-diagnose | head -60            # 应看到 fcitx5-rime 引擎与 profile 加载
-# 在任意应用(终端/浏览器)按 Ctrl+Space,候选窗应出现,可输入中文
+cat ~/.config/fcitx5/profile          # 应含 keyboard-us + pinyin + rime 三项
+cat ~/.config/fcitx5/conf/classicui.conf   # Font 应为 Noto Sans CJK SC
+fcitx5-diagnose | head -60            # 应看到 fcitx5-pinyin 与 fcitx5-rime 引擎
+# 终端点 EN/中 切到"中"(pinyin),打字应立刻出现候选框,空格上屏中文
 ```
 
-若 Ctrl+Space 仍无效,按顺序诊断并输出发回:
+若仍无候选框,按顺序诊断并输出发回:
 ```bash
 ps aux | grep fcitx5                  # 守护进程应在跑(edex-session.sh 启动)
 echo $GTK_IM_MODULE $QT_IM_MODULE $XMODIFIERS   # 应都是 fcitx / @im=fcitx
-fcitx5-diagnose | head -80            # 重点看 input method 与 profile 段
+fcitx5-diagnose | head -80            # 重点看 input method 与 profile/engine 段
+cat ~/.config/fcitx5/rime/build/*.bin 2>/dev/null | head -1   # 空=Rime 未部署
 ```
 
 ---

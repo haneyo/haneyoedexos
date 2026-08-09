@@ -1,7 +1,7 @@
 {
   "name": "edex-ui",
   "productName": "eDEX-UI",
-  "version": "2.3.6",
+  "version": "2.2.9",
   "description": "eDEX-UI sci-fi interface",
   "keywords": [
     "desktop",
@@ -37,8 +37,8 @@
     "node-pty": "^1.1.0",
     "pdfjs-dist": "2.11.338",
     "pretty-bytes": "5.6.0",
-    "sherpa-onnx-node": "^1.13.4",
     "shell-env": "3.0.1",
+    "sherpa-onnx-node": "^1.13.4",
     "signale": "1.4.0",
     "smoothie": "1.35.0",
     "systeminformation": "^5.33.1",
@@ -51,6 +51,7 @@
     "xterm-addon-attach": "0.6.0",
     "xterm-addon-fit": "0.5.0",
     "xterm-addon-ligatures": "0.5.1",
+    "xterm-addon-serialize": "^0.7.0",
     "xterm-addon-webgl": "^0.11.2"
   },
   "allowScripts": {
