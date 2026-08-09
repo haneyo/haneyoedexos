@@ -123,6 +123,27 @@ class FilesystemDisplay {
             }
         });
 
+        // A +x bit alone is not proof a file is a program — FAT/exFAT USB
+        // sticks store no Unix permissions, so every file mounts as 0777/0755
+        // and a plain .txt would look runnable. Peek the header: a shebang
+        // ("#!") or ELF magic means the file can actually execute; anything
+        // else is data, so it stays a plain document (#165).
+        this._looksExecutable = p => {
+            try {
+                const fd = fs.openSync(p, "r");
+                const buf = Buffer.alloc(4);
+                const n = fs.readSync(fd, buf, 0, 4, 0);
+                fs.closeSync(fd);
+                if (n >= 2 && buf[0] === 0x23 && buf[1] === 0x21) return true; // "#!"
+                if (n >= 4 && buf[0] === 0x7f && buf[1] === 0x45 && buf[2] === 0x4c && buf[3] === 0x46) return true; // "\x7fELF"
+                return false;
+            } catch (e) {
+                // Unreadable (permissions, IO error) — trust the bit rather
+                // than risk hiding a real executable.
+                return true;
+            }
+        };
+
         this.setFailedState = failedDir => {
             this.failed = true;
             this._reading = false;
@@ -1093,11 +1114,15 @@ class FilesystemDisplay {
                             e.category = "file";
                             e.type = "file";
                             e.size = fstat.size;
-                            // Runnable files: any file with the executable bit,
-                            // plus shell scripts (a .sh without +x still runs
-                            // via `bash`). Drives the click-to-run feature.
-                            e.executable = (fstat.mode & 0o111) !== 0;
+                            // Runnable files: a +x bit is only trusted when the
+                            // content actually looks executable (shebang / ELF,
+                            // see _looksExecutable) — FAT mounts make every
+                            // file look +x. Shell scripts (.sh/.bash) always
+                            // run via `bash` regardless of the bit. Drives the
+                            // click-to-run feature (#165).
                             e.isScript = /\.(sh|bash)$/i.test(file);
+                            e.executable = ((fstat.mode & 0o111) !== 0)
+                                && this._looksExecutable(path.resolve(tcwd, file));
                         }
                     } else {
                         e.type = "system";
