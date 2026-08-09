@@ -312,7 +312,18 @@ function createWindow(settings) {
     }));
 
     signale.complete("Frontend window created!");
-    win.show();
+    // Show only once the first frame is painted. win.show() right after loadURL
+    // exposes a blank canvas before the renderer installs its themed cursor and
+    // dark background — the white-flash + native-arrow moment seen on real
+    // hardware between lightdm and the eDEX lock screen. backgroundColor is
+    // black and ui.html paints dark from the first byte, so ready-to-show (first
+    // render) appears already dark. A safety timer force-shows if the renderer
+    // stalls before first paint, so a slow first boot never sits on black forever.
+    const showWindow = () => {
+        if (win && !win.isDestroyed()) win.show();
+    };
+    win.once("ready-to-show", showWindow);
+    setTimeout(showWindow, 4000);
     if (!settings.allowWindowed) {
         win.setResizable(false);
     } else if (!require(lastWindowStateFile)["useFullscreen"]) {
@@ -948,8 +959,23 @@ app.on('ready', async () => {
     // bug) and re-lock when a passcode is configured.
     try {
         const pm = require("electron").powerMonitor;
+        pm.on("suspend", () => {
+            // Lid closing / system suspending: paint the lock BEFORE the screen
+            // freezes, so the frame buffer that survives the sleep is the lock,
+            // not the live desktop — otherwise the lid-open frame shows a flash
+            // of the real UI before the renderer catches up and re-locks.
+            if (win && !win.isDestroyed()) win.webContents.send("pm:suspend");
+        });
         pm.on("resume", () => {
-            if (win && !win.isDestroyed()) win.webContents.send("pm:resume");
+            if (win && !win.isDestroyed()) {
+                win.webContents.send("pm:resume");
+                // After lid-open the window can come back without keyboard focus,
+                // which reads as a dead keyboard while the touchpad still moves.
+                // Re-assert focus + visibility so key events reach the lock.
+                win.show();
+                win.focus();
+                if (win.webContents) win.webContents.focus();
+            }
         });
     } catch (e) {}
 
@@ -1243,13 +1269,21 @@ app.on('ready', async () => {
 
     // Exit native fullscreen: global hotkey (backup) + the corner button's IPC.
     try {
-        electron.globalShortcut.register("CommandOrControl+Shift+Q", exitFullscreenViaMain);
+        electron.globalShortcut.register("CommandOrControl+Shift+Q", () => {
+            if (global.__edexLocked) return;
+            exitFullscreenViaMain();
+        });
     } catch (e) { signale.warn("Could not register exit-fullscreen hotkey: " + (e && e.message)); }
     ipc.on("edex-exit-fullscreen", exitFullscreenViaMain);
+    // The renderer pushes its lock / first-run state so these OS-level hotkeys
+    // (which fire outside DOM keydown — a lock screen cannot intercept them)
+    // stay inert while the screen is locked or the first-boot setup is up.
+    ipc.on("edex-lock-state", (e, locked) => { global.__edexLocked = !!locked; });
 
     // Open the WiFi connect panel.
     try {
         electron.globalShortcut.register("CommandOrControl+Shift+W", () => {
+            if (global.__edexLocked) return;
             if (win && !win.isDestroyed()) win.webContents.send("open-wifi-panel");
         });
     } catch (e) { signale.warn("Could not register wifi-panel hotkey: " + (e && e.message)); }
@@ -1257,6 +1291,7 @@ app.on('ready', async () => {
     // Lock the screen (Ctrl+Shift+O).
     try {
         electron.globalShortcut.register("CommandOrControl+Shift+O", () => {
+            if (global.__edexLocked) return;
             if (win && !win.isDestroyed()) win.webContents.send("lock-screen");
         });
     } catch (e) { signale.warn("Could not register lock hotkey: " + (e && e.message)); }

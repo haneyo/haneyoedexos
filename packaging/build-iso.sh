@@ -104,7 +104,8 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     gvfs gvfs-backends libglib2.0-bin \
     fcitx5 fcitx5-rime fcitx5-chinese-addons fcitx5-config-qt \
     fcitx5-frontend-gtk3 fcitx5-frontend-qt5 \
-    p7zip-full intel-microcode"
+    p7zip-full intel-microcode \
+    plymouth plymouth-theme-spinner xcursor-themes"
 
 # Bind-mount /proc,/sys,/dev for the chroot. If the runner forbids mounts
 # (GitHub containers), fall back to proot (userspace chroot, no mounts).

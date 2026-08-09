@@ -10,13 +10,13 @@
 | # | 问题 | 侧 | 状态 |
 |---|------|----|------|
 | 1 | 开机 GRUB 报 `error: file '/boot/' not found`(不影响引导) | OS/ISO | 已定位:Ubuntu 签名 grubx64.efi 内嵌配置所致,装饰性,暂不改(详见 ubuntu-side-changes.md §4) |
-| 2 | 首启向导中文变方块字,要求改英文界面 | OS | 已修(源码,待装验) |
+| 2 | 首启向导中文变方块字,要求改英文界面 | OS | v2.3.5 起向导整个换成**应用内** code 锁屏风格(英文,类 firstRun.class.js),xterm 向导已删(见 ubuntu-side-changes.md §9) |
 | 3 | 搜不到 WiFi | OS(需真机诊断) | 已修(源码,待装验):netplan 双 renderer 冲突 + 关 wifi 电源管理(见 ubuntu-side-changes.md §2);设置菜单已加网络分类(连接/断开/已保存/代理/蓝牙),依赖 nmcli + bluetoothctl |
 | 4 | 系统时间不对:需要时区 + 手动改时间 + 联网同步功能 | OS + App | App 已修(源码,待装验):设置加时间分类(实时状态/时区/手动设时间/联网同步 IPC);OS 侧需装验 |
 | 5 | 语音输入按钮按下后卡死,无法再按、无法语音输入 | App | 已修(源码,待装验) |
 | 6 | 输入法切换无反应,一直 EN | OS | 已修(源码,待装验):fcitx5-rime 已内置 + 写 fcitx5 profile(keyboard-us 默认 + rime 中文,Ctrl+Space 切换,见 ubuntu-side-changes.md §3) |
 | 7 | 文件浏览器默认标签连不上(XDG 目录不存在) | OS | 已修(源码,待装验) |
-| 8 | 设置-通用-用户名显示 `undefined` | App | 已修(源码,待装验) |
+| 8 | 设置-通用-用户名显示 `undefined` | App | 已修(源码,待装验):v2.3.5 起 `getDisplayName()` 优先 GECOS `os.userInfo().realname`(安装时 "Your name" 写入的全名) |
 | 9 | 默认跳过启动动画,要恢复 | OS | 已修(源码,待装验):install-edex.sh 配 quiet splash + update-initramfs/grub(见 ubuntu-side-changes.md §1) |
 | 10 | 虚拟显示器(tab 4/5)黑屏,无 app 画面 | App | 已修(源码,待装验) |
 | 11 | app 列表混入 google/bing/uxterm/fcitx5,只应显示用户应用;且要能在设置里配置(设置项可执行命令行) | App + seed | 已修过滤(源码,待装验);设置项未加 |
@@ -104,3 +104,29 @@ fcitx5-diagnose | head -60; pgrep -a fcitx5
 - **设置-时间分类**:实时状态、时区、手动设时间、联网同步(`time:get`/`time:set` IPC)。
 - **bluez OS 侧依赖**:蓝牙分类用 `bluetoothctl`,`bluez` 已加入 packaging/build-iso.sh APTOPTS 预装列表(装机离线也有);若机器无蓝牙适配器,分类显示"不可用"。
 - 本次系统侧改动:install-edex.sh(WiFi/plymouth)+ docs/ubuntu-side-changes.md 新增
+
+## v2.3.5 批(2026-08-09,已提交待装验)
+
+**A/B/C(首启向导 + 用户名 + 锁屏快捷键)** — App 侧全部完成并 CDP 验证:
+- **A**:xterm 向导 → 应用内 code 锁屏风格设置画面(firstRun.class.js:语言 → 时区 → 设置 PIN,去掉 root 密码)。触发=种子 settings.json 无 lockCode。
+- **B**:`getDisplayName()` 优先 GECOS realname → "Welcome back, <全名>"。
+- **C**:锁屏/首启期间 `uiLocked()` + `edex-lock-state` IPC 屏蔽全部快捷键(含 Ctrl+Tab 切 tab)。
+
+**开机/过渡画面打磨**(本次真机反馈批,已在源码,待装验):
+- 开机 plymouth **之前根本没装上**(APTOPTS 缺 plymouth,set-default-theme 静默失败)→ 现已加入 APTOPTS,开机有黑底 spinner 动画,不再滚纯文本。
+- GRUB 菜单改黑底白字/青色高亮(原紫色难看);`error: file '/boot/' not found` 为装饰性(#11)。
+- 进 UI 前白屏 + 原生箭头:win.show() 改 ready-to-show 门 + ui.html 首字节黑底/隐藏原生光标 + 会话 `xsetroot -solid black`。
+- 系统级光标:默认 X 光标主题 DMZ-Black(暗色),eDEX 内部仍是自己的科幻图像光标。
+- 合盖开盖先闪真实 UI:`powerMonitor` suspend 时立即 engage 锁,唤醒帧就是屏保/锁,不再闪桌面。
+- 合盖开盖后键盘/触摸板失效:`pm:resume` 时 win.show()+focus() 重夺焦点 + resumeFromSuspend 整体 try/catch(单点 throw 不再卡死输入)。**真机待验;若仍失效需诊断输出(见下)。**
+- `TypeError: t.setAttribute is not a function` 在合盖恢复路径重现(#24 复现)——resume 已加保险,但根因需要**真机报错完整文本/栈**才能定点。
+
+**待真机诊断(把输出发回)**:
+1. WiFi(#13):跑 docs/ubuntu-side-changes.md §2 的诊断块。
+2. 合盖恢复后输入失效:若 v2.3.5 仍失效,跑:
+   ```bash
+   xinput list                                   # 键盘/触摸板设备是否还在
+   dmesg | grep -iE "i8042|atkbd|psmouse|i2c_hid" | tail -30   # 恢复时驱动日志
+   journalctl -b -1 -u systemd-suspend --no-pager | tail -20  # 挂起/恢复日志
+   ```
+3. t.setAttribute 报错:把错误弹窗的**完整文本(含文件名/行号)**拍下发回。

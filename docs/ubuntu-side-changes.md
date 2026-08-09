@@ -10,34 +10,36 @@
 
 ---
 
-## 1. 开机 plymouth 启动动画(#19)— 已自动化,需真机验证
+## 1. 开机画面打磨(plymouth 动画 + GRUB 暗色 + 光标)(#19 + v2.3.5 批)
 
-install-edex.sh 现在会在装系统时自动执行(chroot 依赖,正是只能 Ubuntu 侧做的原因):
+**重要发现**:旧 ISO 里 plymouth **从未真正装上** —— build-iso.sh APTOPTS 没列 plymouth,
+install 里的 `plymouth-set-default-theme spinner` 一直静默失败(`|| true`),开机其实在滚
+纯文本。v2.3.5 起:
 
-```bash
-cat > /etc/default/grub <<'GRUB'
-GRUB_DEFAULT=0
-GRUB_TIMEOUT=2
-GRUB_DISTRIBUTOR=`lsb_release -i -s 2>/dev/null || echo Debian`
-GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"     # ← 关键:让 plymouth 真正启动
-GRUB_CMDLINE_LINUX=""
-GRUB_TERMINAL_OUTPUT="console"
-GRUB_DISABLE_OS_PROBER=true
-GRUB
-plymouth-set-default-theme spinner
-update-initramfs -u
-update-grub
-```
+1. **plymouth 真正内置**:build-iso.sh APTOPTS 加入 `plymouth plymouth-theme-spinner`
+   (随 squashfs 打进系统),install 时 `plymouth-set-default-theme spinner` + `update-initramfs -u`
+   才真正生效 → 开机黑底 spinner 动画,不再滚文本。
+2. **GRUB 暗色主题**:`/etc/default/grub` 保留可靠的 VGA 文本控制台(任何 GPU 都能用),
+   但改黑底白字/青色高亮(原 Ubuntu 紫色界面是"难看"的元凶之一)。
+   GRUB 菜单上方闪的 `error: file '/boot/' not found` 与这份配置无关 —— 来自 UEFI 签名
+   grubx64.efi 内嵌配置,纯装饰(#11,不影响引导)。
+3. **光标统一 + 黑根窗口**:系统默认 X 光标主题改 DMZ-Black(暗色,和 eDEX 配色一致),
+   会话启动时 `xsetroot -solid black` 把 X 根窗口涂黑 —— lightdm greeter 关掉、eDEX
+   窗口还没映射的瞬间(之前白屏 + 原生箭头)变黑底黑光标。
 
 **真机验证:**
 ```bash
 cat /etc/default/grub | grep CMDLINE_LINUX_DEFAULT   # 应含 quiet splash
+cat /etc/default/grub | grep -E "GRUB_COLOR|TERMINAL" # 应见 dark 配色
 plymouth-set-default-theme                             # 应输出 spinner
-sudo update-initramfs -u && sudo update-grub           # 兜底,重跑一遍
 lsinitramfs /boot/initrd.img-* | grep plymouth | head   # 应列出 plymouth 文件
+update-alternatives --list x-cursor-theme               # 应含 DMZ-Black
+grep -A2 "Icon Theme" /usr/share/icons/default/index.theme  # 默认主题
 ```
 
-开机应看到 spinner 动画代替纯文本滚动;看不到时跑上面兜底命令后重启。
+开机应看到:GRUB 黑底菜单 → spinner 动画 → 黑底 lightdm → eDEX 锁屏,全程无白屏无原生
+箭头。看到纯文本滚动 = plymouth 没生效(跑 `sudo update-initramfs -u && sudo update-grub`
+后重启)。
 
 ---
 
@@ -217,3 +219,26 @@ mkdir -p ~/7ztest && cd ~/7ztest && echo hi > a.txt
    sudo dmesg | tail -50
    ```
    注意安装器日志在内存盘,重启即失——优先在崩溃现场直接抓。
+
+---
+
+## 9. 首启向导(应用内,替代 xterm)(#132, v2.3.5)— 已自动化,需真机验证
+
+**v2.3.5 起,开机首启的 xterm bash 向导已整个删除,换成应用内的 code 锁屏风格设置画面**
+(`classes/firstRun.class.js`):全屏点阵背景 + 居中 ASCII 终端框,纯英文,分三步 ——
+界面语言(ENGLISH / CHINESE)→ 时区(8 区列表,默认 Asia/Shanghai)→ 设置解锁 PIN(4-8 位,
+输两遍确认)。**root 密码已移除**(装系统时 Ubuntu 已设 `edex` 用户密码)。
+
+- 触发条件:种子里 settings.json 的 `lockCode` 为空(首启天然命中;设置过 PIN 后不再出现)。
+- 完成时写 `lockCode` / `lockOnIdle: true` / `language` 到 settings.json,并
+  `sudo timedatectl set-timezone <tz>`(edex 用户有 passwordless sudo),然后进 UI,
+  语言选择器自动跳过。
+- 设置画面期间 `edex-lock-state` IPC 置锁 → 全局快捷键全部屏蔽。
+
+**真机验证:**
+```bash
+cat /etc/edex-settings.json 2>/dev/null | grep -E "lockCode|lockOnIdle|language"   # 装完首启前应无 lockCode
+# 首次进系统应直接看到 SETUP TERMINAL 框;完成语言/时区/PIN 后进入桌面
+grep -E "lockCode|lockOnIdle|language" ~/.config/eDEX-UI/settings.json            # 首启后应写入
+timedatectl show -p Timezone                                                     # 应等于所选时区
+```

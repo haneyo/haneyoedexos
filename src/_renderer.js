@@ -321,9 +321,18 @@ window._uiReady = false;
 // the real desktop. bootShow() queues the continuation via lockScreen._onUnlocked.
 function bootLockThenRun(then) {
     if (String(window.settings.lockCode || "").length > 0) {
+        // A lock passcode exists — show the boot lock first; nothing real is
+        // exposed until the user unlocks (lockScreen fires _onUnlocked → then).
         if (window.cover && !window.cover.isActive()) window.cover.set(true);
         window.lockScreen._onUnlocked = () => { then(); };
         window.lockScreen.bootShow();
+    } else if (!window.firstRun) {
+        // First boot: the seeded settings.json has no lockCode yet, so run the
+        // in-app setup (language → timezone → unlock PIN). It writes lockCode /
+        // language / lockOnIdle, then fires onDone → then (initUI), which skips
+        // its own language picker because settings.language is already set.
+        window.firstRun = new FirstRun({ onDone: () => { then(); } });
+        window.firstRun.show();
     } else {
         then();
     }
@@ -346,6 +355,9 @@ const keyboardsDir = path.join(settingsDir, "keyboards");
 const fontsDir = path.join(settingsDir, "fonts");
 const cursorsDir = path.join(settingsDir, "cursors");
 const settingsFile = path.join(settingsDir, "settings.json");
+// Expose the path on window so the first-boot setup (classes/firstRun.class.js)
+// can persist lockCode/language/lockOnIdle with the same write the editor uses.
+window.settingsFile = settingsFile;
 const shortcutsFile = path.join(settingsDir, "shortcuts.json");
 const lastWindowStateFile = path.join(settingsDir, "lastWindowState.json");
 
@@ -830,15 +842,28 @@ async function displayTitleScreen() {
     });
 }
 
-// Returns the user's desired display name
+// Returns the user's desired display name. The `username` npm package only
+// returns the POSIX login name (whoami/$USER) — on this appliance that is the
+// fixed "edex" account, never the name the user typed during Ubuntu install
+// ("Your name" → the GECOS full name). Prefer the GECOS real name so "Welcome
+// back" shows the real identity; fall back to the login name when GECOS is
+// empty or identical to it.
 async function getDisplayName() {
     let user = settings.username || null;
     if (user)
         return user;
 
+    let login = null;
     try {
-        user = await require("username")();
+        login = await require("username")();
     } catch (e) {}
+    try {
+        const info = require("os").userInfo();
+        if (info && typeof info.realname === "string" && info.realname.trim() !== "" && info.realname !== login) {
+            user = info.realname;
+        }
+    } catch (e) {}
+    if (!user) user = login;
     if (user) settings.username = user; // remember it so the settings UI shows a real name
 
     return user;
@@ -3207,7 +3232,19 @@ window.openShortcutsHelp = () => {
     });
 };
 
+// True while the screen is locked or the first-boot setup is up. The lock and
+// the setup screen are the only states where NO keyboard shortcut may act — the
+// OS-level hotkeys (globalShortcut) fire outside DOM keydown, so they are gated
+// in their dispatcher instead of on the keydown path.
+function uiLocked() {
+    return Boolean(
+        (window.lockScreen && window.lockScreen.active) ||
+        (window.firstRun && window.firstRun.active)
+    );
+}
+
 window.useAppShortcut = action => {
+    if (uiLocked()) return false;
     switch(action) {
         case "COPY":
             window.term[window.currentTerm].clipboard.copy();
@@ -3309,6 +3346,7 @@ window.registerKeyboardShortcuts = () => {
             }
         } else if (cut.type === "shell") {
             globalShortcut.register(cut.trigger, () => {
+                if (uiLocked()) return;   // never type into a locked terminal
                 let fn = (cut.linebreak) ? "writelr" : "write";
                 window.term[window.currentTerm][fn](cut.action);
             });
@@ -3334,6 +3372,7 @@ document.addEventListener("keydown", e => {
     // lock on dismiss, exactly like the power menu's Lock Screen action.
     if (e.metaKey && (e.key === "l" || e.key === "L")) {
         e.preventDefault();
+        if (uiLocked()) return;   // already locked / setting up — don't re-trigger
         if (window.sysCmd && typeof window.sysCmd.startScreensaver === "function") {
             window.sysCmd.startScreensaver(true);
         } else if (window.lockScreen) {
@@ -4171,25 +4210,44 @@ setInterval(() => {
 // overlay frozen mid-suspend (screensaver canvas or lock block) would sit on
 // top and swallow every click — the "lid closed, can't click anything" bug.
 // Tear all overlays down, un-hide the cursor, re-fit the terminals, and
-// re-lock when a passcode is configured.
+// re-lock when a passcode is configured. The whole body is fenced: a throw
+// mid-teardown leaves the cursor hidden and the overlay stuck — exactly the
+// "dead keyboard/touchpad after lid-open" the resume path used to produce.
 const resumeFromSuspend = () => {
-    lastActivity = Date.now();
-    window.hideScreenOff();
-    if (window.screensaver) window.screensaver.hide(true);
-    if (window.cursorTrap) window.cursorTrap.show();
-    if (window.lockScreen && !window.lockScreen.active
-        && window.settings.lockOnIdle !== false
-        && String(window.settings.lockCode || "").length > 0) {
-        window.lockScreen.engage();
-    }
     try {
+        lastActivity = Date.now();
+        window.hideScreenOff();
+        if (window.screensaver) window.screensaver.hide(true);
+        if (window.cursorTrap) window.cursorTrap.show();
+        if (window.lockScreen && !window.lockScreen.active
+            && window.settings.lockOnIdle !== false
+            && String(window.settings.lockCode || "").length > 0) {
+            window.lockScreen.engage();
+        }
         Object.keys(window.term || {}).forEach(k => {
             const t = window.term[k];
             if (t && t.term && typeof t.fit === "function") t.fit();
         });
-    } catch (e) {}
+    } catch (e) {
+        try { console.error("resumeFromSuspend failed:", e && e.stack || e); } catch (_) {}
+    }
 };
 ipc.on("pm:resume", resumeFromSuspend);
+// Lid closing / system suspending: engage the lock NOW so the frame buffer that
+// survives the sleep is the lock, not the live desktop. On wake the lock is
+// already active, so resumeFromSuspend only restores cursor + terminals and the
+// user types the PIN — no flash of the real UI before the screensaver.
+ipc.on("pm:suspend", () => {
+    try {
+        if (window.lockScreen && !window.lockScreen.active
+            && window.settings && String(window.settings.lockCode || "").length > 0
+            && window.settings.lockOnIdle !== false) {
+            window.lockScreen.engage();
+        }
+    } catch (e) {
+        try { console.error("pm:suspend handler failed:", e && e.stack || e); } catch (_) {}
+    }
+});
 // A lid close that only blanks the display (no full suspend) arrives as a
 // visibility change instead — run the same recovery.
 document.addEventListener("visibilitychange", () => {

@@ -22,8 +22,9 @@ cat > /usr/local/sbin/edex-session.sh <<'SESH'
 #!/bin/bash
 # Runs inside the lightdm X session. openbox is the WM (no decorations — kiosk
 # look), Fcitx5 + Rime (小狼毫) are started for Chinese input, then eDEX takes
-# the whole screen. On the FIRST boot the one-time setup wizard runs first
-# (root password + unlock PIN); the marker file skips it on later boots.
+# the whole screen. The one-time first-boot setup (interface language / timezone
+# / unlock PIN) now runs INSIDE the app — classes/firstRun.class.js, triggered by
+# the seeded settings.json having no lockCode — so there is no xterm step here.
 export DISPLAY=:0
 export GTK_IM_MODULE=fcitx
 export QT_IM_MODULE=fcitx
@@ -37,17 +38,31 @@ nmcli radio wifi on 2>/dev/null || true
 if [ -d /sys/class/leds/tpacpi::kbd_backlight ]; then
     echo 2 > /sys/class/leds/tpacpi::kbd_backlight/brightness 2>/dev/null || true
 fi
+# Black the X root window + use the dark DMZ-Black cursor theme for the gap
+# between the lightdm greeter closing and the eDEX window mapping — this is the
+# "white flash with the default arrow" seen on real hardware at boot. Once eDEX
+# is up it paints its own sci-fi image cursor over the whole screen, so the OS
+# cursor only ever shows during this handoff and should be dark + minimal.
+xsetroot -solid black 2>/dev/null || true
+export XCURSOR_THEME=DMZ-Black
 openbox --replace >/dev/null 2>&1 &
 fcitx5 -d >/dev/null 2>&1 &
 sleep 1
-if [ ! -f /etc/edex-setup-done ]; then
-    # -fa gives xterm a CJK-capable font (fonts-noto-cjk is baked into the
-    # squashfs), so the wizard's "中文" language option renders instead of tofu.
-    xterm -geometry 96x28 -fa "Noto Sans CJK SC" -fs 12 -T "eDEX-OS · SYSTEM INITIALIZATION" -e /usr/local/sbin/edex-first-setup.sh
-fi
 exec /opt/edex/eDEX-UI.AppImage --no-sandbox
 SESH
 chmod +x /usr/local/sbin/edex-session.sh
+
+# Default X cursor theme (system-wide): DMZ-Black, so the lightdm greeter and any
+# native window show a dark pointer that matches the eDEX palette instead of the
+# stock white/black arrow. The dark root window + XCURSOR_THEME in
+# edex-session.sh cover the per-session case; this covers the greeter too.
+if [ -e /usr/share/icons/DMZ-Black/cursor.theme ]; then
+    update-alternatives --install /usr/share/icons/default/index.theme x-cursor-theme \
+        /usr/share/icons/DMZ-Black/cursor.theme 100 2>/dev/null || true
+    update-alternatives --set x-cursor-theme DMZ-Black 2>/dev/null || true
+else
+    echo "[edex] WARN: DMZ-Black cursor theme missing — 'xcursor-themes' must be in build-iso.sh APTOPTS"
+fi
 
 # Fcitx5 as the system input-method framework (Rime/小狼毫 engine), so any
 # GTK/Qt app (including the ones in the nested virtual displays) can type
@@ -151,8 +166,8 @@ if [ -z "$U" ]; then
     # No login user was created — the interactive identity answer can be lost on
     # an installer restart. Self-heal so the system still boots to a usable
     # autologin desktop. The password is a documented kiosk default (autologin +
-    # passwordless sudo); edex-first-setup.sh rekeys root + the lock PIN on the
-    # first boot.
+    # passwordless sudo); the in-app first-run setup (classes/firstRun.class.js)
+    # lets the user set the unlock PIN on the first boot.
     echo "[edex] WARN: no login user in /etc/passwd — creating default user 'edex'"
     U="edex"
     if ! id "$U" >/dev/null 2>&1; then
@@ -243,23 +258,35 @@ addgroup --system bluetooth 2>/dev/null || true
 systemctl enable bluetooth.service 2>/dev/null || true
 
 echo "[edex] plymouth boot splash (#19)"
-# plymouth + themes are baked into the squashfs, but two things are missing on a
-# fresh install: GRUB does not pass "splash" so plymouth never starts, and the
-# initramfs has no plymouth embedded. All three commands below must run INSIDE the
-# installed system — update-initramfs/update-grub are chroot/mount dependent, which
-# is exactly why this lives here (curtin in-target) and not on the macOS build side.
+# plymouth + the spinner theme are BAKED into the squashfs (build-iso.sh APTOPTS);
+# this block is what makes plymouth actually RUN on a fresh install: GRUB does not
+# pass "splash" unless /etc/default/grub says so, and the initramfs must embed the
+# plymouth modules. update-initramfs and update-grub are chroot/mount dependent,
+# which is exactly why this lives here (curtin in-target) and not on the macOS
+# build side.
 cat > /etc/default/grub <<'GRUB'
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=2
 GRUB_DISTRIBUTOR=`lsb_release -i -s 2>/dev/null || echo Debian`
 GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"
 GRUB_CMDLINE_LINUX=""
+# Dark sci-fi GRUB menu: keep the reliable VGA text console (works on every GPU)
+# but restyle it — black background, white normal text, cyan highlight — instead
+# of the stock Ubuntu purple that made the boot screen ugly. The `error: file
+# '/boot/' not found` line that flashes above the menu is UNRELATED to this file:
+# it comes from the signed grubx64.efi's embedded config and is cosmetic (#11).
 GRUB_TERMINAL_OUTPUT="console"
+GRUB_COLOR_NORMAL="white/black"
+GRUB_COLOR_HIGHLIGHT="cyan/black"
 GRUB_DISABLE_OS_PROBER=true
 GRUB
 # spinner is a text-category theme (always works, no GPU/framebuffer requirement)
 # while still showing a boot animation; details would be plain scrolling text.
-plymouth-set-default-theme spinner 2>/dev/null || true
+if command -v plymouthd >/dev/null 2>&1; then
+    plymouth-set-default-theme spinner 2>/dev/null || true
+else
+    echo "[edex] WARN: plymouthd missing — 'plymouth plymouth-theme-spinner' must be in build-iso.sh APTOPTS"
+fi
 update-initramfs -u >/tmp/edex-update-initramfs.log 2>&1 \
     || { echo "[edex] WARN: update-initramfs failed"; tail -20 /tmp/edex-update-initramfs.log; }
 update-grub >/tmp/edex-update-grub.log 2>&1 \
@@ -393,116 +420,11 @@ SETTINGS
 sed -i "s|/home/edex|/home/$U|" "/home/$U/.config/eDEX-UI/settings.json" || true
 chown -R "$U":"$U" "/home/$U/.config" || echo "[edex] WARN: chown ~/.config failed"
 
-# First-boot setup wizard. The autoinstall's late-commands run in the chroot
-# with no interactive stdin, so the root password + unlock PIN cannot be asked
-# for here — edex-session.sh launches this wizard once (in an xterm) on the
-# first boot, before eDEX starts. It sets the root password and writes the
-# numeric PIN into settings.json's lockCode, then marks the system configured.
-echo "[edex] first-boot setup wizard (root password + unlock PIN)"
-cat > /usr/local/sbin/edex-first-setup.sh <<'WIZARD'
-#!/usr/bin/env bash
-# eDEX-OS first-boot setup — runs once (before eDEX) in the autologin X session.
-# Sets the interface language (used by eDEX, and skips eDEX's own first-launch
-# picker), the root password and the numeric unlock PIN (4-8 digits), writes the
-# language + PIN into eDEX's settings.json (language / lockCode) so the idle
-# lock/screensaver unlocks with it, then marks the system configured. A later
-# boot skips straight to eDEX.
-set -euo pipefail
-
-if [ -f /etc/edex-setup-done ]; then
-    exit 0
-fi
-
-echo
-echo "================================================================"
-echo "    eDEX-OS · SYSTEM INITIALIZATION"
-echo "    Choose the language, then set the root password + unlock PIN"
-echo "================================================================"
-echo
-
-# --- interface language ---
-# Drives eDEX's settings-menu language. Writing it here also sets
-# settings.language before eDEX's first launch, which makes eDEX skip its own
-# first-launch language picker — the choice is asked exactly once.
-echo "Select interface language (default 1 = English):"
-echo "   1) English"
-echo "   2) 中文"
-read -rp "Choice [1-2, default 1]: " UILANG
-case "${UILANG:-1}" in
-    2) UILANG="zh";;
-    *) UILANG="en";;
-esac
-echo "  Interface language: $UILANG"
-echo
-
-# --- timezone ---
-echo "Select timezone (default 1 = Asia/Shanghai):"
-echo "   1) Asia/Shanghai       5) Europe/Berlin"
-echo "   2) Asia/Tokyo          6) Europe/London"
-echo "   3) Asia/Singapore      7) America/New_York"
-echo "   4) Asia/Seoul          8) America/Los_Angeles"
-read -rp "Choice [1-8, default 1]: " TZCHOICE
-case "${TZCHOICE:-1}" in
-    2) TZ="Asia/Tokyo";;
-    3) TZ="Asia/Singapore";;
-    4) TZ="Asia/Seoul";;
-    5) TZ="Europe/Berlin";;
-    6) TZ="Europe/London";;
-    7) TZ="America/New_York";;
-    8) TZ="America/Los_Angeles";;
-    *) TZ="Asia/Shanghai";;
-esac
-sudo timedatectl set-timezone "$TZ" 2>/dev/null || sudo ln -sf "/usr/share/zoneinfo/$TZ" /etc/localtime
-echo "  Timezone set to $TZ"
-
-# --- root password (any non-empty value, entered twice) ---
-while :; do
-    read -sp "Set root password: " R1; echo
-    read -sp "Confirm root password: " R2; echo
-    if [ -n "$R1" ] && [ "$R1" = "$R2" ]; then
-        break
-    fi
-    echo "  Empty or mismatched. Try again."
-done
-echo "root:$R1" | sudo chpasswd
-unset R1 R2
-
-# --- unlock PIN (4-8 digits, entered twice) ---
-while :; do
-    read -sp "Set unlock PIN (4-8 digits): " P1; echo
-    read -sp "Confirm PIN: " P2; echo
-    if [[ "$P1" =~ ^[0-9]{4,8}$ ]] && [ "$P1" = "$P2" ]; then
-        break
-    fi
-    if ! [[ "$P1" =~ ^[0-9]{4,8}$ ]]; then
-        echo "  PIN must be 4-8 digits. Try again."
-    else
-        echo "  Mismatched. Try again."
-    fi
-done
-
-# --- write the PIN into eDEX's settings.json, keeping everything else ---
-SET="$HOME/.config/eDEX-UI/settings.json"
-mkdir -p "$(dirname "$SET")"
-[ -f "$SET" ] || echo '{}' > "$SET"
-python3 - "$SET" "$P1" "$UILANG" <<'PY'
-import json, sys
-p, pin, lang = sys.argv[1], sys.argv[2], sys.argv[3]
-d = json.load(open(p))
-d["lockCode"] = pin
-d["lockOnIdle"] = True
-d["language"] = lang if lang in ("zh", "en") else "en"
-json.dump(d, open(p, "w"), indent=4, ensure_ascii=False)
-PY
-unset P1 P2
-
-sudo touch /etc/edex-setup-done
-
-echo
-echo "  ✓ System initialized. eDEX will start now."
-read -rp "  Press Enter to continue…" _ || true
-exit 0
-WIZARD
-chmod +x /usr/local/sbin/edex-first-setup.sh
+# The one-time first-boot setup (interface language → timezone → unlock PIN)
+# used to be a bash wizard launched in an xterm here. It now runs INSIDE the
+# app: the seeded settings.json has no lockCode, so classes/firstRun.class.js
+# shows a code-lock-style setup screen on the first launch and writes the PIN
+# (lockCode / lockOnIdle / language) into this settings.json itself. Root
+# password no longer exists — Ubuntu's install already set the user password.
 
 echo "[edex] done"

@@ -1,10 +1,16 @@
 <!DOCTYPE html>
-<html>
+<html style="background:#000;">
     <head>
         <meta charset="utf-8" />
         <meta http-equiv="Content-Security-Policy" content="default-src file: 'unsafe-inline'; img-src file: data: http: https:; media-src file:; connect-src ws: file:; child-src http: https: file:; frame-src http: https: file:">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>eDEX-UI</title>
+        <!-- Paint dark + drop the native arrow from the first byte. The window can
+             appear before the theme CSS loads (see the ready-to-show gate in
+             _boot.js), and a white page flashing the default cursor between
+             lightdm and the lock is the ugly handoff seen on real hardware. The
+             theming block later re-installs eDEX's own image cursor on body. -->
+        <style>html, body { cursor: none; }</style>
 
         <!-- Load dependency css -->
         <link rel="stylesheet" href="node_modules/augmented-ui/augmented.css" />
@@ -66,6 +72,7 @@
         <script src="classes/appmonitorPanel.class.js"></script>
         <script src="classes/wifiPanel.class.js"></script>
         <script src="classes/lockScreen.class.js"></script>
+        <script src="classes/firstRun.class.js"></script>
         <!-- Retired: multi-tab browser + standalone webapp panel -->
         <script src="classes/webappPanel.class.js"></script>
         <script src="classes/browser.class.js"></script>

@@ -101,6 +101,14 @@ class LockScreen {
         });
     }
 
+    // Tell the main process whether a lock (or first-run setup) owns the screen,
+    // so its OS-level hotkeys (Ctrl+Shift+Q/W/O — globalShortcut fires outside
+    // DOM keydown) stay inert while locked. The renderer gates its own shortcuts
+    // via uiLocked() in _renderer.js.
+    _pushLockState() {
+        try { require("electron").ipcRenderer.send("edex-lock-state", !!this.active); } catch (e) {}
+    }
+
     show() {
         if (this.active) {
             // Already locked but the cover identity was lost (e.g. a screensaver
@@ -136,6 +144,7 @@ class LockScreen {
         // cursorTrap in _renderer.js).
         if (window.cursorTrap) window.cursorTrap.hide();
         this.active = true;
+        this._pushLockState();
         const style = window.settings.screensaverStyle || "code";
         this._mode = style;
         if (style === "matrix") this._showFullscreen();
@@ -176,6 +185,7 @@ class LockScreen {
     // terminal and streams fresh content anyway (#88).
     _teardownLock(restoreWindows) {
         this.active = false;
+        this._pushLockState();
         this._boxAnimating = false;
         clearInterval(this._timer);
         clearInterval(this._focusRet);
@@ -1031,6 +1041,7 @@ class LockScreen {
         if (this.active) return;
         if (window.cursorTrap) window.cursorTrap.hide();
         this.active = true;
+        this._pushLockState();
         this._buildBootLock();
         if (window.cover) window.cover.set(true);
     }
