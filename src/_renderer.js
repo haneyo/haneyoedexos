@@ -4291,6 +4291,27 @@ window.screensaver = (() => {
                 } catch (e) { this.preSaverTerm0 = null; }
                 codeTimer = setInterval(codeTick, 100);
             }
+            // The code screensaver draws NO covering overlay (the fake code
+            // streams into the real terminal), so a body-level app-monitor
+            // dropdown or a fullscreen webapp (z 9000) would float over it.
+            // Close those. Open MODALS are intentionally left as they are: the
+            // screensaver SHOWS popups — only the lock hides them, via its own
+            // _snapshotWindows which owns modal hiding/restoring (#162).
+            [window.appmonitorA, window.appmonitorB].forEach(p => {
+                if (p && typeof p.closeMenu === "function") { try { p.closeMenu(); } catch (e) {} }
+            });
+            // A fullscreen webapp / browser / app-monitor native app (z 9000)
+            // sits ABOVE the code screensaver — drop it so the screensaver
+            // shows the panels, not the fullscreen app.
+            if (window.webViewFullscreen && window.webViewFullscreen.el) {
+                try { window.webViewFullscreen.exit(); } catch (e) {}
+            }
+            if (window.appmonitorApi && typeof window.appmonitorApi.exitFullscreen === "function") {
+                try { window.appmonitorApi.exitFullscreen(); } catch (e) {}
+            }
+            if (document.fullscreenElement && typeof document.exitFullscreen === "function") {
+                try { document.exitFullscreen(); } catch (e) {}
+            }
             // While the screensaver plays, eDEX wears its cover identity (fake
             // tabs / filesystem / IP / process list).
             if (window.cover) window.cover.set(true);
@@ -4525,6 +4546,12 @@ window.hideScreenOff = () => {
     const el = screenOffEl();
     if (!el) return;
     el.classList.add("screen_off_fade_out");
+    // Disable pointer capture immediately: the overlay is invisible by now and
+    // must never swallow clicks, even if the removal timeout below is delayed
+    // by a throttled/frozen renderer — an opacity-0 click-eater is the "can't
+    // click anything after waking" bug (#163). Inline style beats the CSS
+    // animation's fade-out state.
+    el.style.pointerEvents = "none";
     setTimeout(() => { if (el.isConnected) el.remove(); }, 420);
     // Reveal the cursor unless the screensaver is still running — it manages
     // the cursor itself and is about to take over (or dismiss into a lock).

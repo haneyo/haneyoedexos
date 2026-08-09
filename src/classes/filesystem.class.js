@@ -1394,10 +1394,11 @@ class FilesystemDisplay {
                     e.lastAccessed = "--";
                 }
 
-                // Mark click-to-run files with a small badge so they stand out
-                // from plain documents. Matches the openFile() runnable check:
+                // Mark click-to-run files with a small corner marker so they stand
+                // out from plain documents. Matches the openFile() runnable check:
                 // .sh/.bash always, any other +x file — except .desktop launchers,
-                // which open as text.
+                // which open as text. The marker is a pure-CSS clipped-corner
+                // triangle (no text) so it stays tiny next to the icon (#164).
                 const runnable = e.isScript === true
                     || (e.executable === true && !/\.desktop$/i.test(e.name));
 
@@ -1405,7 +1406,7 @@ class FilesystemDisplay {
                                 <svg viewBox="0 0 ${icon.width} ${icon.height}" fill="${this.iconcolor}">
                                     ${icon.svg}
                                 </svg>
-                                ${runnable ? '<span class="fs_run_badge">▶ RUN</span>' : ""}
+                                ${runnable ? '<span class="fs_run_badge"></span>' : ""}
                                 <h3>${e.name}</h3>
                                 <h4>${type}</h4>
                                 <h4>${e.size}</h4>

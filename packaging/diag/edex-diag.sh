@@ -242,12 +242,28 @@ else
 fi
 
 # ---------- 开机画面 plymouth ----------
+# 普通用户的 PATH 没有 /usr/sbin,所以按绝对路径探测 + dpkg 查包,区分
+# "包没装" 和 "只是不在 PATH"(旧的 "command not found" 是后者,是假象)。
 hdr "PLYMOUTH / BOOT THEME"
-r plymouth-set-default-theme 2>&1
+echo "\$ echo PATH" >>"$OUT"; echo "$PATH" >>"$OUT"; echo >>"$OUT"
+r ls -la /usr/sbin/plymouthd /usr/sbin/plymouth-set-default-theme 2>&1
+rp 'dpkg -s plymouth 2>/dev/null | grep -E "^(Package|Status|Version)" || echo "(plymouth 包未安装)"'
+r /usr/sbin/plymouth-set-default-theme 2>&1
 r ls -la /usr/share/plymouth/themes/
 r ls -la /usr/share/plymouth/themes/edex/ 2>/dev/null
 r grep -E 'CMDLINE_LINUX_DEFAULT|splash' /etc/default/grub
 rp 'sudo -n lsinitramfs /boot/initrd.img-$(uname -r) 2>&1 | grep -iE "plymouth|edex|spinner" | head -20 || true'
+
+# ---------- 输入/触摸板(#163:解锁后光标消失/点不到东西) ----------
+# 区分"应用层面被 overlay 吞了点击" vs "内核/驱动层面触摸板失效"。
+hdr "INPUT / TOUCHPAD"
+r xinput list 2>&1
+r cat /proc/bus/input/devices 2>&1
+r lsmod | grep -iE 'psmouse|synaptics|elantech|alps|trackpoint|i2c' 2>&1 || echo "(无触摸板相关内核模块)"
+rp 'sudo -n dmesg 2>&1 | grep -iE "psmouse|synaptics|elantech|trackpoint|touchpad|serio" | tail -30 || true'
+rp 'libinput list-devices 2>&1 | grep -E "Device:|kernel:|libinput Input Class|Capabilities|Product" || true'
+rp 'timeout 3 libinput debug-events --show-keycodes 2>&1 | head -30 || true'
+echo "(上面 3 秒 libinput 事件捕获:空白 = 触摸板/按键无事件)" | tee -a "$OUT"
 
 # ---------- 报告是否在 U 盘上:不在则尝试拷到可移动盘 ----------
 # 报告已写在脚本同目录(插 U 盘跑 → 已在 U 盘上)。只有从 home 跑时才尝试

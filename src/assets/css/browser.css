@@ -1162,11 +1162,15 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
 #screen_off {
     position: fixed; inset: 0; z-index: 10000;
     background: #000;
+    pointer-events: auto;  /* blocking only while it is visibly black */
     animation: screen_off_fade_in 0.5s ease-out;
 }
 #screen_off.screen_off_fade_out {
     animation: screen_off_fade_out 0.42s ease-in forwards;
     opacity: 0;
+    /* An invisible overlay must never swallow clicks — an opacity-0 element
+       with pointer-events:auto is a click-eater (#163). */
+    pointer-events: none;
 }
 @keyframes screen_off_fade_in {
     from { opacity: 0; }

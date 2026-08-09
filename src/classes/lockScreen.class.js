@@ -979,6 +979,11 @@ class LockScreen {
             if (window.screensaver && typeof window.screensaver.resumeCode === "function") {
                 window.screensaver.resumeCode();
             }
+            // The lock hid every open window (_snapshotWindows), but a timeout
+            // yields the screen back to the SCREENSAVER, not a real unlock —
+            // and the screensaver shows popups. Put the windows back so the
+            // resumed fake code has them floating over it again (#162).
+            frame._restoreWindows();
         });
     }
 
@@ -995,6 +1000,9 @@ class LockScreen {
                 window.screensaver.returnMatrixRain(frame._canvas, frame._drops);
             }
             frame._teardownLock(false);
+            // Same as the code path: the timeout hands the screen back to the
+            // screensaver, which shows popups — restore what the lock hid.
+            frame._restoreWindows();
         }, 430);
     }
 

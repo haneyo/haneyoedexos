@@ -45,10 +45,31 @@ if [ ! -f "$PLYMOUTH_FILE" ] || [ ! -f "$LOGO_FILE" ]; then
     exit 1
 fi
 
-if ! run command -v plymouthd >/dev/null 2>&1; then
-    echo "!! plymouth 未安装 —— 无法设置开机主题。"
-    echo "!! 构建参数里必须有 'plymouth plymouth-theme-spinner'(build-iso.sh APTOPTS)。"
-    exit 1
+# plymouthd lives in /usr/sbin. Do NOT probe it with `command -v` through the
+# `run` helper: `command` is a bash builtin, and sudo only execs external
+# programs, so `sudo command -v plymouthd` ALWAYS fails ("sudo: command: command
+# not found") even when plymouth IS installed — that made this script report
+# "plymouth 未安装" on machines that had it (the diag's own lsinitramfs showed
+# plymouthd baked into the initramfs). Probe the binary by absolute path;
+# fall back to an online install only if it is genuinely absent.
+PLYMOUTHD=""
+if run test -x /usr/sbin/plymouthd; then
+    PLYMOUTHD=/usr/sbin/plymouthd
+elif run bash -c 'command -v plymouthd' >/dev/null 2>&1; then
+    PLYMOUTHD="$(run bash -c 'command -v plymouthd' 2>/dev/null)"
+fi
+
+if [ -z "$PLYMOUTHD" ]; then
+    echo "!! 未找到 plymouthd —— 尝试在线安装 plymouth ..."
+    if run apt-get update >/dev/null 2>&1 \
+        && run apt-get install -y plymouth plymouth-theme-spinner; then
+        PLYMOUTHD=/usr/sbin/plymouthd
+        echo "    plymouth 已安装。"
+    else
+        echo "!! 在线安装失败(机器可能没联网)。"
+        echo "!! 请联网后重跑本脚本;或确认 build-iso.sh APTOPTS 包含 'plymouth plymouth-theme-spinner'。"
+        exit 1
+    fi
 fi
 
 # 1) 建主题目录,复用 stock spinner 的动画帧(排除 bgrt-fallback.png)
@@ -66,10 +87,12 @@ run cp "$PLYMOUTH_FILE" /usr/share/plymouth/themes/edex/edex.plymouth
 run cp "$LOGO_FILE" /usr/share/plymouth/themes/edex/bgrt-fallback.png
 echo "    主题文件就绪。"
 
-# 3) 设为默认主题
+# 3) 设为默认主题(绝对路径 — 脚本以普通用户跑,其 PATH 没有 /usr/sbin)
 echo "[2/4] 设置默认主题为 edex ..."
-run plymouth-set-default-theme edex
-echo "    默认主题: $(run plymouth-set-default-theme 2>/dev/null || echo 'edex')"
+PSDT="$(dirname "$PLYMOUTHD")/plymouth-set-default-theme"
+[ -x "$PSDT" ] || PSDT=/usr/sbin/plymouth-set-default-theme
+run "$PSDT" edex
+echo "    默认主题: $(run "$PSDT" 2>/dev/null || echo 'edex')"
 
 # 4) 重建 initramfs + grub,让开机即生效
 echo "[3/4] 重建 initramfs ..."

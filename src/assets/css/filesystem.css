@@ -740,17 +740,16 @@ div#fs_disp_container > div.fs_disp_run {
     position: relative;
 }
 div#fs_disp_container > div.fs_disp_run > .fs_run_badge {
+    /* Small clipped-corner triangle pinned to the tile's top-right corner —
+       same visual language as the quick-link edit badge, no text so it stays
+       subtle next to the icon (#164). */
     position: absolute;
-    top: 0.15vh;
-    right: 0.15vh;
-    font-family: var(--font_main_light);
-    font-size: 1vh;
-    font-weight: bold;
-    line-height: 1.4;
-    color: var(--color_bg);
-    background: rgb(var(--color_r), var(--color_g), var(--color_b));
-    padding: 0.1vh 0.5vh;
-    clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 0.6vh 100%);
+    top: 0;
+    right: 0;
+    width: 1.3vh;
+    height: 1.3vh;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.75);
+    clip-path: polygon(100% 0, 100% 100%, 0 0);
     pointer-events: none;
     z-index: 2;
 }
