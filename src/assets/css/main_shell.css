@@ -281,6 +281,24 @@ div#main_shell_innercontainer pre.active {
     opacity: 1;
 }
 
+/* A terminal tab that was closed but keeps its last output on screen (the
+   Claude tab after an early exit, so the error is readable instead of being
+   wiped by the auto-switch-away). Text lands directly in the #terminalN <pre>,
+   which inherits the generic `pre` rules above; this restores mono theming and
+   scrolling since the xterm instance is gone. */
+div#main_shell_innercontainer pre.terminal-closed {
+    z-index: inherit;
+    opacity: 1;
+    overflow: auto;
+    white-space: pre-wrap;
+    font-family: var(--font_mono), monospace;
+    font-size: 1.15vh;
+    line-height: 1.5;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    padding: 1vh 1.2vw;
+    box-sizing: border-box;
+}
+
 div#main_shell_innercontainer pre#terminal1 {
     top: -100%;
 }

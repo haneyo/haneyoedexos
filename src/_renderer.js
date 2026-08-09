@@ -1826,7 +1826,51 @@ window.focusShellTab = number => {
 
                 window.term[number].onclose = e => {
                     delete window.term[number].onprocesschange;
-                    document.getElementById("shell_tab"+number).innerHTML = "<p>" + ((number === 2) ? "CLAUDE" : "EMPTY") + "</p>";
+
+                    // The Claude tab is special: an early exit there is almost
+                    // always an error (missing API key / auth failure), and the
+                    // stock "wipe the pane + switch to the previous tab" threw
+                    // that error away before anyone could read it. Stay on this
+                    // tab and show the last thing the process printed, with a
+                    // pointer to the fix. Clicking the tab again relaunches
+                    // (window.term[number] is deleted below).
+                    const isClaude = (number === 2);
+                    let lastScreen = "";
+                    if (isClaude) {
+                        try {
+                            const t = window.term[number].term;
+                            const buf = t && t.buffer && t.buffer.active;
+                            const total = buf ? buf.length : 0;
+                            const from = Math.max(0, total - 60);
+                            const lines = [];
+                            for (let i = from; i < total; i++) {
+                                const line = buf.getLine(i);
+                                if (line) lines.push(line.translateToString(true));
+                            }
+                            lastScreen = lines.join("\r\n");
+                        } catch (err) {
+                            try { console.error("claude exit capture failed:", err); } catch (_) {}
+                        }
+                    }
+
+                    document.getElementById("shell_tab"+number).innerHTML = "<p>" + (isClaude ? "CLAUDE" : "EMPTY") + "</p>";
+
+                    if (isClaude) {
+                        const pane = document.getElementById("terminal"+number);
+                        window.term[number].term.dispose();
+                        delete window.term[number];
+                        const authHint = /api[_ -]?key|authenticat|anthropic|\b401\b|\b403\b|\blogin\b/i.test(lastScreen);
+                        pane.classList.add("terminal-closed");
+                        pane.textContent =
+                            (lastScreen || "(claude exited without output)") +
+                            "\r\n\r\n[ claude process ended ]\r\n" +
+                            (authHint
+                                ? "No API key configured? Open Settings -> Claude and set one,\r\n"
+                                  + "then click this CLAUDE tab to relaunch.\r\n"
+                                : "Click this CLAUDE tab to relaunch.\r\n");
+                        return;
+                    }
+
                     document.getElementById("terminal"+number).innerHTML = "";
                     window.term[number].term.dispose();
                     delete window.term[number];

@@ -130,3 +130,11 @@ fcitx5-diagnose | head -60; pgrep -a fcitx5
    journalctl -b -1 -u systemd-suspend --no-pager | tail -20  # 挂起/恢复日志
    ```
 3. t.setAttribute 报错:把错误弹窗的**完整文本(含文件名/行号)**拍下发回。
+
+## v2.3.6 批(2026-08-09,已提交待装验)
+
+**Claude tab 退出跳走 + 错误被清空**(App 侧,CDP 已验证):
+- 现象:无 API key 进 claude,选完 cd 目录后 claude 认证失败立即退出,应用端把终端清空并自动切到上一个 tab,错误看不到(看起来像"崩溃")。
+- 定位:**不是 claude 崩溃,是认证失败快速退出**;根因在渲染端 `onclose`:原逻辑清空 pane + `PREVIOUS_TAB` 切走,把错误抹掉了。
+- 修复(`src/_renderer.js` + `main_shell.css`):claude tab 退出后**留在原 tab**,保留最后 ~60 行输出 + `[ claude process ended ]` 提示;错误文本含 `API key/auth/401/403/login` 时额外提示去 Settings→Claude 配置;再点该 tab 重新启动。其他 tab 关闭行为不变。
+- 真机验证:无 API key 进 claude → 应留在 claude tab 显示认证错误 + 提示;配好 key 后点 tab 可正常进入。
