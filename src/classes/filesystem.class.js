@@ -1093,6 +1093,11 @@ class FilesystemDisplay {
                             e.category = "file";
                             e.type = "file";
                             e.size = fstat.size;
+                            // Runnable files: any file with the executable bit,
+                            // plus shell scripts (a .sh without +x still runs
+                            // via `bash`). Drives the click-to-run feature.
+                            e.executable = (fstat.mode & 0o111) !== 0;
+                            e.isScript = /\.(sh|bash)$/i.test(file);
                         }
                     } else {
                         e.type = "system";
@@ -1147,21 +1152,67 @@ class FilesystemDisplay {
             let blocks = await window.si.blockDevices();
             let devices = [];
             blocks.forEach(block => {
-                if (fs.existsSync(block.mount)) {
-                    let type = (block.type === "rom") ? "rom" : "disk";
-                    if (block.removable && block.type !== "rom") {
-                        type = "usb";
-                    }
+                // Loop / ram devices are noise in the disk view.
+                if (block.type === "loop" || block.type === "ram") return;
+                // A swap partition isn't a browsable volume.
+                if (block.fstype === "swap") return;
 
-                    devices.push({
-                        name: (block.label !== "") ? `${block.label} (${block.name})` : `${block.mount} (${block.name})`,
-                        type,
-                        path: block.mount
-                    });
+                const mounted = typeof block.mount === "string"
+                    && block.mount.length > 0
+                    && fs.existsSync(block.mount);
+
+                if (!mounted) {
+                    // eDEX-OS has no desktop auto-mount (no udisks2), so a USB
+                    // stick arrives unmounted. Keep removable/optical devices so
+                    // the user can mount them from the UI; drop the bare whole
+                    // disk entry (its partitions are listed separately) and any
+                    // non-removable unmounted volume.
+                    if (!block.removable && block.type !== "rom") return;
+                    if (block.type === "disk" && !block.fstype) return;
                 }
+
+                let type = (block.type === "rom") ? "rom" : "disk";
+                if (block.removable && block.type !== "rom") type = "usb";
+                const label = (block.label && block.label !== "") ? block.label : "";
+                const devName = `/dev/${block.name}`;
+                devices.push({
+                    name: mounted
+                        ? (label !== "" ? `${label} (${block.name})` : `${block.mount} (${block.name})`)
+                        : (label !== "" ? `${label} (${block.name}) — CLICK TO MOUNT` : `${devName} — CLICK TO MOUNT`),
+                    type,
+                    path: mounted ? block.mount : "",
+                    dev: devName,
+                    label,
+                    mounted
+                });
             });
 
             this.render(devices, true);
+        };
+
+        // Mount a removable device clicked from the disk view. There is no
+        // desktop auto-mount on eDEX-OS, so the UI mounts via passwordless sudo
+        // (same privilege the first-run wizard uses for timedatectl).
+        this.mountDevice = (devPath, label) => {
+            const safeDev = String(devPath || "").replace(/["$`;\\\s]/g, "");
+            if (!safeDev) return;
+            const base = String(label || "").replace(/[^A-Za-z0-9._-]/g, "") || safeDev.split("/").pop();
+            const mnt = `/media/edex/${base}`;
+            const exec = require("child_process").exec;
+            // Mount with the current user's uid/gid so the FAT volume is owned by
+            // edex, not root — otherwise the file browser (running as edex) can't
+            // write to the stick (no copy/delete/rename).
+            const os = require("os");
+            const _uid = os.userInfo().uid;
+            const _gid = os.userInfo().gid;
+            exec(`sudo mkdir -p "${mnt}" && sudo mount -o uid=${_uid},gid=${_gid} "${safeDev}" "${mnt}"`, { timeout: 30000 }, (err, stdout, stderr) => {
+                if (err) {
+                    new Modal({ type: "custom", title: "Mount failed", html: `<p>${(stderr || err.message || "Could not mount device").replace(/</g, "&lt;")}</p>` });
+                    this.readDevices();
+                    return;
+                }
+                this.readFS(mnt);
+            });
         };
 
         this.render = async (originBlockList, isDiskView) => {
@@ -1212,7 +1263,13 @@ class FilesystemDisplay {
                 } else if (e.type === "up") {
                     cmd = `window.fsDisp.readFS(path.resolve(window.fsDisp.dirpath, ".."))`;
                 } else if (e.type === "disk" || e.type === "rom" || e.type === "usb") {
-                    cmd = `window.fsDisp.readFS("${e.path.replace(/\\/g, '')}")`;
+                    if (e.mounted) {
+                        cmd = `window.fsDisp.readFS("${e.path.replace(/\\/g, '')}")`;
+                    } else {
+                        const _dev = (e.dev || "").replace(/["\\]/g, "");
+                        const _lbl = (e.label || "").replace(/["\\]/g, "");
+                        cmd = `window.fsDisp.mountDevice("${_dev}", "${_lbl}")`;
+                    }
                 } else {
                     cmd = `window.term[window.currentTerm].write("\\""+fsDisp.cwd[${blockIndex}].path+"\\"")`;
                 }
@@ -1337,10 +1394,18 @@ class FilesystemDisplay {
                     e.lastAccessed = "--";
                 }
 
-                filesDOM += `<div class="fs_disp_${e.type}${hidden} animationWait" data-path="${(e.path || "").replace(/"/g, "&quot;")}" onclick='${cmdPrefix+cmd+cmdSuffix}'>
+                // Mark click-to-run files with a small badge so they stand out
+                // from plain documents. Matches the openFile() runnable check:
+                // .sh/.bash always, any other +x file — except .desktop launchers,
+                // which open as text.
+                const runnable = e.isScript === true
+                    || (e.executable === true && !/\.desktop$/i.test(e.name));
+
+                filesDOM += `<div class="fs_disp_${e.type}${hidden}${runnable ? " fs_disp_run" : ""} animationWait" data-path="${(e.path || "").replace(/"/g, "&quot;")}" onclick='${cmdPrefix+cmd+cmdSuffix}'>
                                 <svg viewBox="0 0 ${icon.width} ${icon.height}" fill="${this.iconcolor}">
                                     ${icon.svg}
                                 </svg>
+                                ${runnable ? '<span class="fs_run_badge">▶ RUN</span>' : ""}
                                 <h3>${e.name}</h3>
                                 <h4>${type}</h4>
                                 <h4>${e.size}</h4>
@@ -1460,6 +1525,116 @@ class FilesystemDisplay {
             }
         };
 
+        // Confirmation dialog before running a script / executable from the
+        // browser. The command is typed into the current terminal and executed
+        // there, so the user sees the output (and can Ctrl+C it). Shell scripts
+        // get a secondary "Open as text" so reading is still one click away.
+        // The path travels via window._pendingRunPath (not inline in onclick)
+        // so quotes/spaces in filenames can't break the button markup.
+        this._confirmRun = (block, isScript) => {
+            const name = block.name || String(block.path).split("/").pop() || "file";
+            const qpath = String(block.path).replace(/"/g, '\\"');
+            const cmd = isScript ? `bash "${qpath}"` : `"${qpath}"`;
+            const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            const closeTop = "window.modals[Object.keys(window.modals).pop()].close();";
+            window._pendingRunPath = block.path;
+            const buttons = [
+                { label: "RUN", action: `window.fsDisp.runInTerminal(window._pendingRunPath, ${isScript}); ${closeTop}` }
+            ];
+            if (isScript) {
+                // Scripts are text too — allow reading/editing instead of running.
+                buttons.push({ label: "Open as text", action: `window.fsDisp.openFileAsText(window._pendingRunPath); ${closeTop}` });
+            }
+            new Modal({
+                type: "custom",
+                title: `RUN — ${name}`,
+                html: `<p style="margin:0 0 1.2vh;">Run this file in the current terminal?</p>
+                       <pre class="file_run_path">${esc(block.path)}</pre>
+                       <p style="margin:1.2vh 0 0;opacity:0.9;">Command: <code>${esc(cmd)}</code></p>`,
+                buttons,
+                closeLabel: "Cancel"
+            });
+        };
+
+        // Send a command to the focused terminal and press Enter so it executes
+        // in the shell the user sees. writelr appends the trailing \r.
+        this.runInTerminal = (path, isScript) => {
+            const q = String(path || "").replace(/"/g, '\\"');
+            const cmd = isScript ? `bash "${q}"` : `"${q}"`;
+            const t = window.term && window.term[window.currentTerm];
+            if (!t) return;
+            try {
+                if (typeof t.writelr === "function") t.writelr(cmd);
+                else t.write(cmd + "\r");
+            } catch (e) {}
+            try { t.term.focus(); } catch (e) {}
+        };
+
+        // Open a text file in the editable doc viewer. Runnable files reach
+        // here via the confirm dialog's "Open as text" button.
+        this.openFileAsText = (path, name) => {
+            fs.readFile(path, 'utf-8', (err, data) => {
+                if (err) {
+                    new Modal({type: "info", title: "Failed to load file: " + path, html: String(err && err.message || err)});
+                    return;
+                }
+                this._showTextViewer(name || String(path).split("/").pop() || "file", path, data);
+            });
+        };
+
+        // Editable doc viewer with copy-out: select text and Ctrl+C, hit COPY
+        // ALL for the whole file, paste the terminal's clipboard in with Ctrl+V
+        // (or Ctrl+Shift+V, which the app redirects into focused modal fields),
+        // then Save to Disk.
+        this._showTextViewer = (name, path, data) => {
+            // Same pending-path trick as the run dialog: keeps quotes/spaces in
+            // the filename out of the inline onclick markup.
+            window._pendingEditPath = path;
+            // One editable document at a time: dismiss any earlier text viewer
+            // first. The shared #fileEdit id and the singleton _pendingEditPath
+            // mean a second viewer on top would hijack the new file's content
+            // (getElementById returns the first match) and "Save to Disk" would
+            // target the wrong path (#147).
+            Object.keys(window.modals).forEach(id => {
+                const el = document.getElementById("modal_" + id);
+                if (el && el.querySelector("#fileEdit")) {
+                    try { window.modals[id].close(); } catch (e) {}
+                }
+            });
+            new Modal({
+                type: "custom",
+                title: name,
+                html: `<div class="file_view_bar">
+                         <button id="fileCopyAll" title="Copy the whole file to the clipboard">COPY ALL</button>
+                         <span class="file_view_hint">Select to copy · Ctrl+V to paste here · Ctrl+Shift+V pastes in the terminal</span>
+                       </div>
+                       <textarea id="fileEdit" rows="40" cols="150" spellcheck="false" placeholder="(empty file)"></textarea>
+                       <p id="fedit-status"></p>`,
+                buttons: [
+                    {label: "Save to Disk", action: "window.writeFile(window._pendingEditPath);"}
+                ]
+            }, () => {
+                try { window.term[window.currentTerm].term.focus(); } catch (e) {}
+            });
+            // Fill the editor programmatically so file content can never break
+            // the modal HTML (a literal `</textarea>` inside the data used to
+            // corrupt the document). Scope every lookup to the just-opened modal
+            // (the last .modal_popup in the DOM) — while an earlier viewer's DOM
+            // is still fading out over 100ms, a bare getElementById would land
+            // on the closing textarea instead of this one.
+            const viewers = document.querySelectorAll(".modal_popup");
+            const root = viewers[viewers.length - 1];
+            const ta = root ? root.querySelector("#fileEdit") : null;
+            if (ta) ta.value = data;
+            const btn = root ? root.querySelector("#fileCopyAll") : null;
+            if (btn) btn.addEventListener("click", () => {
+                try { remote.clipboard.writeText(data); } catch (e) { try { document.execCommand("copy"); } catch (e2) {} }
+                const st = root.querySelector("#fedit-status");
+                if (st) st.innerHTML = "<i>Copied to clipboard — paste anywhere with Ctrl+V.</i>";
+            });
+            try { ta && ta.focus(); } catch (e) {}
+        };
+
         this.openFile = (name, path, type) => { //Might add text formatting at some point, not now though - Surge
             let block;
 
@@ -1471,6 +1646,19 @@ class FilesystemDisplay {
             let mime = require("mime-types");
 
             block.path = block.path.replace(/\\/g, "/");
+
+            // Runnable files (.sh/.bash, or any file with the executable bit)
+            // get a "Run?" confirmation instead of a text dump — eDEX-OS has no
+            // desktop to double-click launchers, so the browser is how scripts /
+            // AppImages get started. .desktop launchers are config, not
+            // binaries, so they stay readable text.
+            const _ext = String(name || "").toLowerCase().split(".").pop() || "";
+            const _isScript = block.isScript === true || _ext === "sh" || _ext === "bash";
+            const _isExec = block.executable === true || _isScript;
+            if (_isExec && _ext !== "desktop") {
+                this._confirmRun(block, _isScript);
+                return;
+            }
 
             let filetype = mime.lookup(name.split(".")[name.split(".").length - 1]);
 
@@ -1531,28 +1719,7 @@ class FilesystemDisplay {
                     break;
                 default:
                     if (mime.charset(filetype) === "UTF-8") {
-                        fs.readFile(block.path, 'utf-8', (err, data) => {
-                            if (err) {
-                                new Modal({
-                                    type: "info",
-                                    title: "Failed to load file: " + block.path,
-                                    html: err
-                                });
-                                console.log(err);
-                            };
-                            new Modal(
-                                {
-                                    type: "custom",
-                                    title: _escapeHtml(name),
-                                    html: `<textarea id="fileEdit" rows="40" cols="150" spellcheck="false">${data}</textarea><p id="fedit-status"></p>`,
-                                    buttons: [
-                                        {label:"Save to Disk",action:`window.writeFile('${block.path}')`}
-                                    ]
-                                }, () => {
-                                    window.term[window.currentTerm].term.focus();
-                                }
-                            );
-                        });
+                        this.openFileAsText(block.path, name);
                     } else {
                         // Not a text file and not handled above - offer to open
                         // it with the operating system's default application.

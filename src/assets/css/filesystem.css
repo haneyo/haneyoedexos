@@ -733,3 +733,27 @@ div#fs_failed_actions button:hover {
     background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.25);
     box-shadow: 0 0 0.6vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.4);
 }
+/* Click-to-run files (.sh/.bash or any +x file): a small corner badge makes
+   them stand out from plain documents. The item itself needs relative
+   positioning so the badge anchors to the tile corner. */
+div#fs_disp_container > div.fs_disp_run {
+    position: relative;
+}
+div#fs_disp_container > div.fs_disp_run > .fs_run_badge {
+    position: absolute;
+    top: 0.15vh;
+    right: 0.15vh;
+    font-family: var(--font_main_light);
+    font-size: 1vh;
+    font-weight: bold;
+    line-height: 1.4;
+    color: var(--color_bg);
+    background: rgb(var(--color_r), var(--color_g), var(--color_b));
+    padding: 0.1vh 0.5vh;
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 0.6vh 100%);
+    pointer-events: none;
+    z-index: 2;
+}
+section#filesystem.list-view div#fs_disp_container > div.fs_disp_run > .fs_run_badge {
+    display: none;
+}
