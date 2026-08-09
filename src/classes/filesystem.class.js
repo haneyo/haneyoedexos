@@ -434,7 +434,9 @@ class FilesystemDisplay {
             <button class="fs_ctx_item" data-action="paste">Paste</button>
             <button class="fs_ctx_item" data-action="trash">Move to Trash</button>
             <button class="fs_ctx_item" data-action="delete">Delete Permanently</button>
-            <button class="fs_ctx_item" data-action="newfolder">New Folder</button>`;
+            <button class="fs_ctx_item" data-action="newfolder">New Folder</button>
+            <button class="fs_ctx_item" data-action="compress">Compress to .7z</button>
+            <button class="fs_ctx_item" data-action="extract">Extract Archive</button>`;
         document.body.appendChild(this._ctxMenu);
         this._ctxMenu.addEventListener("click", e => {
             let btn = e.target.closest ? e.target.closest(".fs_ctx_item") : null;
@@ -445,6 +447,11 @@ class FilesystemDisplay {
         document.addEventListener("click", e => {
             if (this._ctxMenu && !(e.target.closest && e.target.closest("#fs_ctx_menu"))) this._hideContextMenu();
         });
+
+        // True when the path looks like an archive 7-Zip can extract.
+        this._isArchive = p => /\.(?:tar\.(?:gz|xz|bz2|zst)|tgz|7z|zip|tar|gz|xz|bz2|rar|cab|zst|lzma)$/i.test(p);
+        // Strip a known archive suffix so extracting `foo.tar.gz` lands in `foo/`.
+        this._archiveBase = p => p.replace(/\.(?:tar\.(?:gz|xz|bz2|zst)|tgz|7z|zip|tar|gz|xz|bz2|rar|cab|zst|lzma)$/i, "");
 
         this._showContextMenu = (x, y, hasSelection) => {
             let m = this._ctxMenu;
@@ -458,6 +465,8 @@ class FilesystemDisplay {
             m.querySelector('[data-action="paste"]').classList.toggle("disabled", !pasteOk);
             m.querySelector('[data-action="trash"]').classList.toggle("disabled", !hasSelection);
             m.querySelector('[data-action="delete"]').classList.toggle("disabled", !hasSelection);
+            m.querySelector('[data-action="compress"]').classList.toggle("disabled", !hasSelection);
+            m.querySelector('[data-action="extract"]').classList.toggle("disabled", !(this.selected.length === 1 && this._isArchive(this.selected[0])));
             m.style.display = "block";
             let mw = m.offsetWidth, mh = m.offsetHeight;
             m.style.left = Math.min(x, window.innerWidth - mw - 8) + "px";
@@ -477,7 +486,33 @@ class FilesystemDisplay {
                 case "trash": this._deleteSelected(); break;                  // Move to Trash
                 case "delete": this._deleteSelectedPermanent(); break;        // Delete Permanently
                 case "newfolder": this._newFolder(); break;
+                case "compress": this._compressSelected(); break;
+                case "extract": this._extractSelected(); break;
             }
+        };
+
+        // Compress the selection into a .7z archive in the current directory.
+        // Single selection → <name>.7z; multiple → <current-folder>.7z.
+        // `cd` into the target dir so 7z stores relative names — feeding it
+        // absolute paths would bake the whole tree into the archive.
+        this._compressSelected = () => {
+            if (!this.selected.length || !this.dirpath) return;
+            let name = this.selected.length === 1
+                ? (this.selected[0].split("/").pop() || "archive")
+                : (this.dirpath.split("/").pop() || "archive");
+            let names = this.selected
+                .map(p => `"${(p.split("/").pop() || "").replace(/"/g, '\\"')}"`)
+                .join(" ");
+            this._exec(`cd "${this.dirpath.replace(/"/g, '\\"')}" && 7z a -y "${name}.7z" ${names}`);
+        };
+
+        // Extract the selected archive into a folder named after it (sans
+        // extension), e.g. `foo.tar.gz` → `foo/`. `-o` creates the folder.
+        this._extractSelected = () => {
+            let p = this.selected[0];
+            if (!p || !this.dirpath) return;
+            let out = this._archiveBase(p.split("/").pop()) || "extracted";
+            this._exec(`7z x -y "${p.replace(/"/g, '\\"')}" -o"${this.dirpath.replace(/"/g, '\\"')}/${out}"`);
         };
 
         // Rename the single selected item via `mv` in the shell.

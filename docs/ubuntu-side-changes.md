@@ -147,13 +147,40 @@ timedatectl
 cat /etc/systemd/logind.conf.d/edex.conf
 # 挂载/网络栈
 ls /etc/netplan/
+# 7z
+which 7z
 ```
 
 每项结果发回,用于更新 `docs/first-boot-issues.md` 的状态。
 
 ---
 
-## 7. 安装器崩溃 subiquity load_autoinstall_data(#128)— 需真机 traceback
+## 7. 内置 7z:文件浏览器解压/压缩(#48)— 已自动化,需真机验证
+
+**App 侧**(文件浏览器右键菜单,来源 `classes/filesystem.class.js`):
+- **Compress to .7z**(压缩):选中 1 个文件/目录 → 当前目录生成 `<名字>.7z`;
+  选中多个 → 当前目录生成 `<当前目录名>.7z`。
+- **Extract Archive**(解压):**恰好选中 1 个**压缩包时可用 →
+  解压到当前目录下同名文件夹(去扩展名,如 `foo.tar.gz` → `foo/`),内容原样。
+- 识别为压缩包的扩展名:.7z / .zip / .tar / .tar.gz / .tgz / .gz / .xz / .bz2 / .rar / .cab / .zst / .lzma。
+- 实现走系统 `7z` 命令(`cd` 进目标目录再打包,保证归档内是相对路径),完成后自动刷新列表。
+
+**OS 侧**:`p7zip-full` 已加入 `packaging/build-iso.sh` 的 APTOPTS,装机离线即带 `7z`。
+
+**真机验证:**
+```bash
+which 7z                     # 应输出 /usr/bin/7z(p7zip-full 已内置)
+# 文件浏览器里:右键任意文件 → Compress to .7z;右键一个 .7z/.zip → Extract Archive
+# 压缩后当前目录出现 <名字>.7z;解压后出现 <名字>/ 目录且内容一致
+# 命令行兜底(与 App 内部同款操作):
+mkdir -p ~/7ztest && cd ~/7ztest && echo hi > a.txt
+7z a t.7z a.txt && 7z t t.7z
+7z x -o~/7ztest/t t.7z && cat ~/7ztest/t/a.txt    # 应输出 hi
+```
+
+---
+
+## 8. 安装器崩溃 subiquity load_autoinstall_data(#128)— 需真机 traceback
 
 现状:ISO 装到一半,安装器(Subiquity)在解析 autoinstall 时崩溃,
 错误标志为 `subiquity/Error/load_autoinstall_data`。macOS 侧无法运行 Subiquity,
