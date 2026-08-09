@@ -1100,6 +1100,14 @@ class LockScreen {
                     this._deferRestore = true;
                     window.welcomeBack(() => {
                         this.hide();
+                        // Matrix lock is a fullscreen overlay — there is no
+                        // fake-UI lock underneath to stay continuous with, so
+                        // release the cover right away: the "loading" entrance
+                        // below then animates the REAL panels (tabs / files /
+                        // procs) instead of the fake ones. The code lock keeps
+                        // its cover until the restore — its dim overlay IS the
+                        // fake-UI look the user asked to preserve.
+                        if (window.cover) window.cover.set(false);
                         if (typeof window.reRevealUI === "function") {
                             window.reRevealUI(() => this._flushDeferredRestore());
                         } else {
