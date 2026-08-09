@@ -1616,11 +1616,19 @@ app.on('ready', async () => {
     // self-update, so it is flagged manual (snap/deb do, but eDEX-OS ships the
     // tarball). Claude ships via npm → auto. mihomo ships via our own updater.
     const bundledClaudeVersion = () => new Promise(resolve => {
+        // claude may be a script/alias on some systems → execFile can raise
+        // ENOEXEC/ENOENT on the child; that error must not reject the promise
+        // or `bundled:status` dies with an unhandled rejection.
         const { execFile } = require("child_process");
-        execFile("claude", ["--version"], { timeout: 5000 }, (err, stdout) => {
-            const m = String(stdout || "").match(/[\d]+\.[\d]+\.[\d]+/);
-            resolve({ installed: !!m, version: m ? m[0] : "" });
-        });
+        let done = false;
+        const finish = v => { if (!done) { done = true; resolve(v); } };
+        try {
+            const child = execFile("claude", ["--version"], { timeout: 5000 }, (err, stdout) => {
+                const m = String(stdout || "").match(/[\d]+\.[\d]+\.[\d]+/);
+                finish({ installed: !err && !!m, version: m ? m[0] : "" });
+            });
+            child.on("error", () => finish({ installed: false, version: "" }));
+        } catch (e) { finish({ installed: false, version: "" }); }
     });
     const bundledFirefoxVersion = () => {
         try {
@@ -1668,7 +1676,8 @@ app.on('ready', async () => {
               .setTimeout(8000, () => resolve({ ok: false, available: true, current, error: "FETCH_FAILED" }));
         });
     }));
-    ipc.handle("clash:update", (e, { url }) => new Promise(resolve => {
+    ipc.handle("clash:update", (e, args) => new Promise(resolve => {
+        const url = (args && args.url) || "";
         if (!CLASH_BIN) return resolve({ ok: false, error: "NO_BINARY" });
         if (!url) return resolve({ ok: false, error: "NO_URL" });
         const { spawn } = require("child_process");
