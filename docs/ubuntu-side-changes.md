@@ -141,15 +141,21 @@ fcitx5-diagnose | head -40          # 确认 fcitx5-rime 引擎在
 cat ~/.config/fcitx5/profile        # 应含 keyboard-us + rime 两个输入法
 # plymouth
 cat /etc/default/grub | grep splash
-# 时间
-timedatectl
+# 时间(#14 OS 侧:时区 + NTP)
+timedatectl                                   # Timezone 应 Asia/Shanghai;联网后 synchronized: yes
+# 文件浏览器默认标签(#17:XDG 目录已建)
+ls -d ~/Desktop ~/Documents ~/Downloads ~/Music ~/Pictures ~/Public ~/Templates ~/Videos 2>&1
 # 电源管理
 cat /etc/systemd/logind.conf.d/edex.conf
 # 挂载/网络栈
 ls /etc/netplan/
-# 7z
+# 7z(#48)
 which 7z
 ```
+
+**App 侧目测项**(首次启动 eDEX UI 后):
+- 锁屏(电源菜单 Lock Screen / Win+L)→ 解锁后,**文件浏览器应显示真实文件列表**,与锁前一致(#79,cover 会在解锁时重读真实目录)。
+- 文件浏览器右侧标签(DESKTOP / DOCUMENTS / DOWNLOADS 等)应能进入对应 XDG 目录(#17)。
 
 每项结果发回,用于更新 `docs/first-boot-issues.md` 的状态。
 
