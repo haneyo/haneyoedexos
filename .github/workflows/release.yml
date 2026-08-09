@@ -177,13 +177,20 @@ jobs:
           # retries + multiparts automatically via the SDK. Keep AUTH only.
           AUTH=(-e "$OSS_ENDPOINT" --region "$OSS_REGION" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET")
 
+          # `-f`: ossutil v2's cp prompts "overwrite ... (y or N)?" when the
+          # target already exists. In CI there is no TTY, so the prompt reads
+          # EOF = "no" and the copy is silently SKIPPED while still exiting 0
+          # ("Upload done: 0 objects") — `set -euo pipefail` cannot catch it.
+          # That is how `latest/` stopped updating after its first upload
+          # (v2.2.9) while per-version paths (always new keys) kept working.
+          # -f forces the overwrite without asking.
           echo "Uploading $ISO (per-version path) ..."
-          "$OSSUTIL" cp "$ISO" "oss://$OSS_BUCKET/edex-os/$TAG/" "${AUTH[@]}"
-          "$OSSUTIL" cp "$ISO.sha256" "oss://$OSS_BUCKET/edex-os/$TAG/" "${AUTH[@]}"
+          "$OSSUTIL" cp -f "$ISO" "oss://$OSS_BUCKET/edex-os/$TAG/" "${AUTH[@]}"
+          "$OSSUTIL" cp -f "$ISO.sha256" "oss://$OSS_BUCKET/edex-os/$TAG/" "${AUTH[@]}"
 
           echo "Copying to stable 'latest' path ..."
-          "$OSSUTIL" cp "$ISO" "oss://$OSS_BUCKET/edex-os/latest/eDEX-OS-latest.iso" "${AUTH[@]}"
-          "$OSSUTIL" cp "$ISO.sha256" "oss://$OSS_BUCKET/edex-os/latest/eDEX-OS-latest.iso.sha256" "${AUTH[@]}"
+          "$OSSUTIL" cp -f "$ISO" "oss://$OSS_BUCKET/edex-os/latest/eDEX-OS-latest.iso" "${AUTH[@]}"
+          "$OSSUTIL" cp -f "$ISO.sha256" "oss://$OSS_BUCKET/edex-os/latest/eDEX-OS-latest.iso.sha256" "${AUTH[@]}"
 
           # Log only the object paths — never the full public URL (bucket +
           # endpoint would let anyone reconstruct the download link).
