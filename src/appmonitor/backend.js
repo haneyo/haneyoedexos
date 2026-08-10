@@ -87,17 +87,50 @@ function mockBackend(deps) {
 /* ---- real (Linux only) ---------------------------------------------------- */
 function realBackend(deps) {
     const { spawn } = require("child_process");
+    const fs = require("fs");
+    const os = require("os");
+    const path = require("path");
     const monitors = deps.monitors;       // [{id, display, rfbPort, wsPath}]
     const opts = deps.opts;               // { userData, appImageDirs }
     const running = {};                   // id -> {appPid, appId, children:[]}
     let fullscreenPid = null;             // app running natively on DISPLAY=:0
 
+    // Virtual-monitor geometry: the shell slot is ~2:1 (measured in the running
+    // UI — 832×416 at a 1280×720 window; the aspect holds at any resolution since
+    // the shell is vw/vh-sized). Match the framebuffer to that aspect so noVNC's
+    // scaleViewport fills the tab edge-to-edge with no letterbox, and auto-maximise
+    // every window (undecorated) so the app itself fills the desktop — no black
+    // desktop, just the app at terminal size. See docs/ubuntu-side-changes.md.
+    const SCREEN = "1600x800x24";          // 2:1, matches the monitor-slot aspect
+    const MONITOR_RC = path.join(os.tmpdir(), "edex-monitor-openbox.xml");
+    function ensureMonitorConfig() {
+        if (fs.existsSync(MONITOR_RC)) return;
+        const rc = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<openbox_config xmlns="http://openbox.org/3.4/rc" xmlns:xi="http://www.w3.org/2001/XInclude">',
+            '  <resistance><strength>10</strength></resistance>',
+            '  <focus><focusNew>yes</focusNew></focus>',
+            '  <placement><policy>Smart</policy></placement>',
+            '  <applications>',
+            '    <application class="*">',
+            '      <maximized>yes</maximized>',
+            '      <decor>no</decor>',
+            '    </application>',
+            '  </applications>',
+            '</openbox_config>',
+            ''
+        ].join("\n");
+        try { fs.writeFileSync(MONITOR_RC, rc); } catch (e) { console.error("[appmonitor] write rc:", e.message); }
+    }
+
     function startMonitor(m) {
         if (running[m.id]) return;
         const children = [];
-        const xvfb = spawn("Xvfb", [m.display, "-screen", "0", "800x600x24", "-nolisten", "tcp", "-ac"],
+        ensureMonitorConfig();
+        const xvfb = spawn("Xvfb", [m.display, "-screen", "0", SCREEN, "-nolisten", "tcp", "-ac"],
             { stdio: "ignore" });
-        const wm = spawn("openbox", ["--sm-disable"], { stdio: "ignore", env: Object.assign({}, process.env, { DISPLAY: m.display }) });
+        const wm = spawn("openbox", ["--config", MONITOR_RC, "--sm-disable"],
+            { stdio: "ignore", env: Object.assign({}, process.env, { DISPLAY: m.display }) });
         const vnc = spawn("x11vnc",
             ["-display", m.display, "-rfbport", String(m.rfbPort), "-shared", "-forever", "-nopw",
              "-listen", "127.0.0.1"],

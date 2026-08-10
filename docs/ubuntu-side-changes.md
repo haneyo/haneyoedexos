@@ -347,7 +347,110 @@ nmcli -t -f proxy.method,proxy.http,proxy.https,proxy.ignore-servers connection 
 
 ---
 
-## 14. 其他遗留项状态(不阻塞本轮)
+## 14. 应用监视器虚拟显示器:macOS 预览 vs Ubuntu 真机差距(重点)
+
+> **背景:为什么 macOS 预览"堪称完美",而 Ubuntu 真机是"黑框 + 应用不出现"。**
+> 应用监视器的 tab 有两种内容,**别混为一谈**:
+>
+> **A. Web 应用(网页 / 内置面板)** —— 直接在 `<webview>` 里加载 URL
+> (appmonitorPanel.class.js `_showWebWebview`),**完全不经过 Xvfb / noVNC**。
+> 这条路径 macOS 和 Ubuntu 一样,都是真内容真渲染,所以两边都完美。
+> "mac 上浏览器和 webapp 完美显示"指的就是这一半 —— 它没有虚拟显示器参与,
+> **不会有黑框问题**。
+>
+> **B. 原生应用(真二进制,如 Firefox)** —— 走 noVNC 流式渲染嵌套显示器:
+
+| | macOS 预览(B 类) | Ubuntu 真机(B 类) |
+|---|---|---|
+| 后端 | `mock`(假屏) | `real`(真应用) |
+| 渲染来源 | `mock-rfb.js` 合成帧缓冲 | `Xvfb :101/:102` + `openbox` + `x11vnc` + 真应用 |
+| 帧缓冲 | 800×600,**全铺满主题内容**(终端/矩阵/雷达演示屏) | 800×600,**黑色桌面 + 一个未最大化的小窗口** |
+| 观感 | 完美 —— 但是**假的**(Firefox 本体没启动,只放演示动画) | 黑框 + 应用可能根本不出现 |
+
+- **macOS 的 B 类从不跑真应用。** mock 后端(`backend.js` DEMO_APPS)的列表只有
+  `DEMO TERMINAL / DEMO MATRIX / DEMO RADAR` 三个假应用;在 mock 下选 Firefox,
+  也只是放一段假"终端"动画(`setDemo(scene,"terminal")`),Firefox 本体不会启动。
+- 因此 **"原生应用画面不出现"和"黑框没填满"只存在于 real 后端(B 类)**,
+  macOS 侧**既复现不了、也修不了** —— 必须在 Ubuntu(ISO/真机)侧解决。
+- **mock 与 real 共享完全相同的 800×600 → noVNC → webview 管线**(仅 B 类)。
+  所以容器/缩放类渲染问题(webview 是否填满插槽、黑边)可以在 macOS 预览上调试;
+  而"应用窗口填满 Xvfb 桌面、Firefox 能否启动"纯属 Linux 侧,预览无法验证。
+- 症状 B 的"黑框"只来自 B 类。**A 类(web 应用)不受影响,无需处理。**
+
+### 症状 A:选中 Firefox 后 app 画面不出现(真机)
+
+real 后端(`appmonitor/backend.js`)每个 monitor 起 `Xvfb :101/:102 -screen 0 800x600x24`
++ `openbox --sm-disable` + `x11vnc`,再把 `.desktop` 里的应用 `spawn` 进 `DISPLAY=:N`。
+Firefox 在 ISO 里是官方 tarball(`/opt/firefox/firefox`,build-iso.sh 已确认,**不是 snap**),
+会话是非 root 的 autologin 用户(install-edex.sh 已确认,**不是 root 拒绝问题**)。
+
+Phase C 真机排查顺序(在 tab 4/5 选中 Firefox 后):
+
+```bash
+# 1) 应用进程到底起没起
+ps aux | grep -i firefox | grep -v grep
+#    没有 → spawn 失败(看下方 appmonitor 日志);有 → 进下一步
+
+# 2) 嵌套 display 里有没有窗口映射出来(以 :101 为例)
+DISPLAY=:101 wmctrl -l            # 没有 wmctrl 先: sudo apt install -y wmctrl
+DISPLAY=:101 xdotool search --onlyvisible "" getwindowname %@ 2>/dev/null
+
+# 3) 帧缓冲内容到底什么样(Xvfb 桌面截图,黑=没窗口 / 有窗口=看是否只占一角)
+xwd -display :101 -root | xwdtopnm 2>/dev/null | pnmtopng > /tmp/mon101.png
+
+# 4) appmonitor 后端日志(渲染进程 → 主进程日志,标着 [appmonitor])
+#    在 eDEX 里 Ctrl+Shift+I 打开 DevTools → Console,或看主进程 stdout
+#    spawn error / exit 码就是线索
+
+# 5) 手动在嵌套 display 里试跑一次,排除 webview/时序因素
+DISPLAY=:101 /opt/firefox/firefox --no-remote about:blank &
+sleep 5; DISPLAY=:101 wmctrl -l
+```
+
+已知注意点:
+- Firefox 首次启动要建 profile + 无 GPU 软渲染,**启动慢**(5~15s),期间黑屏是正常的,
+  要等状态点变绿(running)再看画面。
+- `backend.js` 对 Firefox 只设了 `MOZ_DISABLE_CONTENT_SANDBOX/GMP_SANDBOX` 两个 env,
+  **没有**像 Chromium 那样追加 `--no-sandbox`。若真机 Firefox 起不来,试手动
+  `DISPLAY=:101 /opt/firefox/firefox --no-sandbox` 对比。
+
+### 症状 B:黑框没有填满终端窗口(tab 槽位)
+
+两层原因叠加:
+1. **Xvfb 桌面本身是黑的** —— 800×600 里只有应用窗口一小块(openbox 默认不最大化新窗口),
+   其余都是黑。这是"黑框"的主要来源。
+2. **比例留边** —— 帧缓冲 800×600(4:3),tab 槽位接近 16:9,noVNC `scaleViewport`
+   保持比例缩放 → 左右出现黑边(macOS mock 也有同样的边,但内容铺满所以看不出)。
+
+**修法(已实现到 `appmonitor/backend.js`,real 后端)**,Phase C 验证。
+思路:tab 4/5 全是带 UI 的 app、大多支持调整窗口大小 → **把 app 窗口最大化到和终端槽位
+一样大**即可,缺角由 shell 的 clip-path 切掉(和 webapp 一样)。app 就两种尺寸:
+终端窗口大小(监视器 tab)+ 全屏(native fullscreen),反而更简洁。**不做留边美化**。
+
+实现(数据驱动):
+1. **嵌套 Xvfb 分辨率改成 2:1**:`SCREEN = "1600x800x24"`。槽位实测约 **832×416 ≈ 2:1**
+   (#main_shell 是 65%×60.3% 视口,任何分辨率下比例都 ~2:1)→ noVNC `scaleViewport`
+   正好铺满,无黑边。
+2. **app 窗口自动最大化 + 去装饰**:给嵌套 openbox 专用配置
+   `edex-monitor-openbox.xml`(写入 `/tmp`,由 backend.js 生成),
+   `<application class="*"><maximized>yes</maximized><decor>no</decor></application>`,
+   启动 openbox 时 `--config` 传入 —— **不动 :0 的 openbox、零新依赖**(无需 wmctrl)。
+3. Phase C 真机验证:tab 4/5 选 Firefox → 应用铺满整个槽位、无黑场;若仍有细黑边
+   (槽位比例实际略偏离 2:1),微调 `backend.js` 的 `SCREEN` 宽高即可。
+
+### 兜底:Ubuntu 能不能走 mock?
+
+**能,但那只影响 B 类(原生应用)。** `settings.appMonitor.mock` 手动设 `true`
+(设置 → 应用监视器 → mock)真机的原生应用也会跑起来,长得和 macOS 预览一模一样"完美"。
+但它只显示三个演示屏(假终端/矩阵/雷达),**Firefox 不会真的启动**;A 类(web 应用)
+**不受 mock 影响**,仍是真 webview 加载真页面。
+用途是**隔离问题**:如果 mock 下原生应用画面完美、real 下黑框,就证明 noVNC 渲染管线没问题,
+锅全在 real 后端的应用启动/窗口布局上。
+**不是**用户想要的"真机显示真 Firefox"方案。
+
+---
+
+## 15. 其他遗留项状态(不阻塞本轮)
 
 - **#143「Welcome back 显示真实用户名」** = 已完成的 #133,重复项,可关。
 - **#11 GRUB `file '/boot/' not found`** = 见第 4 节,装饰性报错,不进本轮。
