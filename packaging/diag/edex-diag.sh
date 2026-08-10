@@ -93,6 +93,15 @@ r rfkill list
 r nmcli dev status
 r ip link
 r nmcli dev wifi list
+# wpa_supplicant 是 WiFi 的命门:缺包/起不来 → 设备停 "unavailable"、扫描为空。
+# 真机日志每 13s 一条 "Failed to D-Bus activate wpa_supplicant service" 就是它
+# (之前只 dump 网卡/驱动,从没查过 wpa_supplicant,导致连不上 WiFi 一直没定位)。
+echo "(wpa_supplicant 状态 —— WiFi 起不来的常见命门:)" >>"$OUT"
+rp 'echo "二进制: $(command -v wpa_supplicant 2>/dev/null || echo 缺失)"; ls -la /usr/sbin/wpa_supplicant 2>&1 | tail -1 || true'
+rp 'dpkg -l wpasupplicant 2>&1 | tail -2 || echo "(未安装 wpasupplicant 包)"'
+rp 'ls -la /usr/share/dbus-1/system-services/fi.w1.wpa_supplicant1.service 2>&1 || echo "(缺少 D-Bus 激活文件 fi.w1.wpa_supplicant1.service)"'
+rp 'pgrep -a wpa_supplicant 2>&1 || echo "(wpa_supplicant 未在运行)"'
+rp 'sudo -n journalctl -u NetworkManager -b --no-pager 2>&1 | grep -iE "supplicant|Failed to D-Bus activate" | tail -6 || true'
 echo "(无线接口是否存在于 /sys/class/net:)" >>"$OUT"
 ls -la /sys/class/net/ >>"$OUT" 2>&1
 echo >>"$OUT"
