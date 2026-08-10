@@ -19,8 +19,8 @@ class Sysinfo {
         this.parent = document.getElementById(parentId);
         this.parent.innerHTML += `<div id="mod_sysinfo">
             <div>
-                <h1>1970</h1>
-                <h2>JAN 1</h2>
+                <h1>LOAD</h1>
+                <h2>0.00</h2>
             </div>
             <div>
                 <h1>UPTIME</h1>
@@ -36,7 +36,7 @@ class Sysinfo {
             </div>
         </div>`;
 
-        this.updateDate();
+        this.updateLoad();
         this.updateUptime();
         this.uptimeUpdater = setInterval(() => {
             this.updateUptime();
@@ -46,56 +46,15 @@ class Sysinfo {
             this.updateBattery();
         }, 3000);
     }
-    updateDate() {
-        let time = new Date();
-
-        document.querySelector("#mod_sysinfo > div:first-child > h1").innerHTML = time.getFullYear();
-
-        let month = time.getMonth();
-        switch(month) {
-            case 0:
-                month = "JAN";
-                break;
-            case 1:
-                month = "FEB";
-                break;
-            case 2:
-                month = "MAR";
-                break;
-            case 3:
-                month = "APR";
-                break;
-            case 4:
-                month = "MAY";
-                break;
-            case 5:
-                month = "JUN";
-                break;
-            case 6:
-                month = "JUL";
-                break;
-            case 7:
-                month = "AUG";
-                break;
-            case 8:
-                month = "SEP";
-                break;
-            case 9:
-                month = "OCT";
-                break;
-            case 10:
-                month = "NOV";
-                break;
-            case 11:
-                month = "DEC";
-                break;
-        }
-        document.querySelector("#mod_sysinfo > div:first-child > h2").innerHTML = month+" "+time.getDate();
-
-        let timeToNewDay = ((23 - time.getHours()) * 3600000) + ((59 - time.getMinutes()) * 60000);
-        setTimeout(() => {
-            this.updateDate();
-        }, timeToNewDay);
+    // 1-min CPU load average. Replaces the old DATE column (the clock already
+    // shows the date, so a second date here was redundant).
+    updateLoad() {
+        const load = require("os").loadavg();
+        document.querySelector("#mod_sysinfo > div:first-child > h2").innerHTML = load[0].toFixed(2);
+        if (this.loadUpdater) return;
+        this.loadUpdater = setInterval(() => {
+            this.updateLoad();
+        }, 5000);
     }
     updateUptime() {
         let uptime = {

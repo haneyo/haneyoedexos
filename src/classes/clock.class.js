@@ -49,13 +49,11 @@ class Clock {
 
         // Current date, rendered under the time (absolute-positioned, so the
         // centered clock text never shifts — same pattern as the battery).
-        // Two lines: full date on the first, weekday on the second (nowrap in
-        // CSS keeps each line from re-wrapping into three).
         const dateEl = document.getElementById("mod_clock_date");
         if (dateEl) {
             const DAYS = ["SUN","MON","TUE","WED","THU","FRI","SAT"];
             const pad = n => String(n).padStart(2, "0");
-            dateEl.innerHTML = `${time.getFullYear()}.${pad(time.getMonth() + 1)}.${pad(time.getDate())}<br>${DAYS[time.getDay()]}`;
+            dateEl.textContent = `${time.getFullYear()}.${pad(time.getMonth() + 1)}.${pad(time.getDate())} ${DAYS[time.getDay()]}`;
         }
 
         this.lastTime = time;
