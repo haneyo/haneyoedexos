@@ -281,11 +281,13 @@ mkdir -p "$EXTRACT/nocloud"
 cp "$REPO_DIR/packaging/autoinstall/user-data"     "$EXTRACT/nocloud/user-data"
 cp "$REPO_DIR/packaging/autoinstall/meta-data"     "$EXTRACT/nocloud/meta-data"
 cp "$REPO_DIR/packaging/install/install-edex.sh"   "$EXTRACT/nocloud/install-edex.sh"
-# eDEX boot-splash theme: install-edex.sh copies these into the target's
-# /usr/share/plymouth/themes/edex (the logo replaces the stock Ubuntu
-# "bgrt-fallback" image that plymouth otherwise draws on boot).
+# eDEX boot-splash theme: install-edex.sh copies edex.plymouth into the
+# target's /usr/share/plymouth/themes/edex. No logo image ships in the payload —
+# the theme builds its own dir from the spinner theme's generic frames with
+# watermark.png/bgrt-fallback.png explicitly EXCLUDED, so boot shows only the
+# black background + throbber spinner, never a logo (0.9.3 two-step draws
+# watermark.png over the background — that was the persistent Ubuntu circle).
 cp "$REPO_DIR/packaging/boot/edex.plymouth"        "$EXTRACT/nocloud/edex.plymouth"
-cp "$REPO_DIR/packaging/boot/edex-boot-logo.png"   "$EXTRACT/nocloud/edex-boot-logo.png"
 
 echo "[edex] enabling autoinstall on the kernel command line"
 # Append  autoinstall ds=nocloud\;s=/cdrom/nocloud/  just before the '---'

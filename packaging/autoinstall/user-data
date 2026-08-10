@@ -43,10 +43,10 @@ autoinstall:
     fallback: offline-install
   late-commands:
     - cp /cdrom/nocloud/install-edex.sh /target/root/install-edex.sh
-    # Plymoouth theme payload: install-edex.sh runs inside the chroot (curtin
-    # in-target), where /cdrom does NOT exist — copy the theme files into the
+    # Plymouth theme payload: install-edex.sh runs inside the chroot (curtin
+    # in-target), where /cdrom does NOT exist — copy the theme config into the
     # chroot too, or the plymouth block silently falls back to the stock
-    # spinner theme whose bgrt-fallback.png is the Ubuntu circle.
+    # spinner theme whose watermark.png is the Ubuntu circle. No logo image
+    # ships here: the theme is intentionally logo-free.
     - cp /cdrom/nocloud/edex.plymouth /target/root/edex.plymouth
-    - cp /cdrom/nocloud/edex-boot-logo.png /target/root/edex-boot-logo.png
     - curtin in-target --target=/target -- bash /root/install-edex.sh

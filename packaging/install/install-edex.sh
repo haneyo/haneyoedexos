@@ -350,16 +350,19 @@ GRUB_COLOR_HIGHLIGHT="cyan/black"
 GRUB_DISABLE_OS_PROBER=true
 GRUB
 # eDEX boot theme. The stock spinner theme is kept as a fallback; we build an
-# "edex" theme on top of its assets: the animation/dialog PNGs are generic
-# (no Ubuntu branding), and the two branded bits come from the ISO payload —
-# edex.plymouth (config) and edex-boot-logo.png, installed as bgrt-fallback.png
-# because the two-step plugin draws that image centered when the firmware has no
-# BGRT logo (that is precisely where the stock Ubuntu circle came from).
+# "edex" theme on top of its generic (unbranded) throbber/dialog assets. The
+# ONLY payload from the ISO is edex.plymouth (the config). The theme ships NO
+# watermark.png or bgrt-fallback.png: on plymouth 0.9.3 (Ubuntu 24.04) the
+# two-step plugin draws watermark.png over the background — the stock spinner
+# theme's watermark.png IS the Ubuntu circle, and copying it in was the bug that
+# put the Ubuntu logo on every boot (#142). No logo files = black + spinner only.
 if command -v plymouthd >/dev/null 2>&1; then
     mkdir -p /usr/share/plymouth/themes/edex
     if [ -d /usr/share/plymouth/themes/spinner ]; then
         for f in /usr/share/plymouth/themes/spinner/*.png; do
-            [ "$(basename "$f")" = "bgrt-fallback.png" ] && continue
+            case "$(basename "$f")" in
+                bgrt-fallback.png|watermark.png) continue ;;  # 永不拷贝 logo
+            esac
             cp -n "$f" /usr/share/plymouth/themes/edex/ 2>/dev/null || true
         done
     fi
@@ -367,18 +370,19 @@ if command -v plymouthd >/dev/null 2>&1; then
     # /cdrom is NOT mounted — the payload is copied to /root by user-data
     # late-commands. Check /root first, then /cdrom/nocloud as a fallback for
     # older ISOs / manual runs. Falling back to the stock spinner theme is the
-    # "keep something working" path, but its bgrt-fallback.png is the Ubuntu
-    # circle — so a silent fallback is exactly the bug the user sees as "still
-    # the Ubuntu logo" (#142). The payload must land.
+    # "keep something working" path, but it would bring back the Ubuntu circle —
+    # so a silent fallback is exactly the bug the user sees as "still the Ubuntu
+    # logo" (#142). The payload must land.
     PLYMOUTH_SRC=""
-    if [ -f /root/edex.plymouth ] && [ -f /root/edex-boot-logo.png ]; then
+    if [ -f /root/edex.plymouth ]; then
         PLYMOUTH_SRC=/root
-    elif [ -f /cdrom/nocloud/edex.plymouth ] && [ -f /cdrom/nocloud/edex-boot-logo.png ]; then
+    elif [ -f /cdrom/nocloud/edex.plymouth ]; then
         PLYMOUTH_SRC=/cdrom/nocloud
     fi
     if [ -n "$PLYMOUTH_SRC" ]; then
         cp "$PLYMOUTH_SRC/edex.plymouth" /usr/share/plymouth/themes/edex/edex.plymouth
-        cp "$PLYMOUTH_SRC/edex-boot-logo.png" /usr/share/plymouth/themes/edex/bgrt-fallback.png
+        # Clear any logo file an older install / old fix script left behind.
+        rm -f /usr/share/plymouth/themes/edex/watermark.png /usr/share/plymouth/themes/edex/bgrt-fallback.png
         plymouth-set-default-theme edex 2>/dev/null || true
         echo "[edex] plymouth theme: edex"
     else

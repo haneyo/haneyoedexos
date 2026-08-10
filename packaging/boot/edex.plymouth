@@ -1,12 +1,14 @@
-# eDEX-OS boot splash — a custom "two-step" theme that keeps the stock spinner
-# theme's (unbranded) animation frames but replaces the Ubuntu logo with the
-# eDEX-OS terminal wordmark.
+# eDEX-OS boot splash — a custom "two-step" theme that keeps only the stock
+# spinner theme's unbranded throbber animation frames and shows NO logo.
 #
-# Why the Ubuntu logo appears on boot at all: the two-step plugin, when the
-# firmware provides no BGRT logo (no /sys/firmware/acpi/bgrt/image), draws
-# "bgrt-fallback.png" centered at 38% of the screen height on a black screen.
-# The stock spinner theme ships the Ubuntu circle as that fallback — so we
-# install our own theme whose bgrt-fallback.png is the eDEX-OS logo.
+# Why no logo files at all: on Ubuntu 24.04 (plymouth 0.9.3) the two-step
+# plugin draws "watermark.png" (from ImageDir) over the background — the stock
+# spinner theme ships the Ubuntu circle there, which is exactly the persistent
+# Ubuntu logo seen at boot (#142). The theme deliberately ships NO watermark.png
+# (and no bgrt-fallback.png), so only the black background + the throbber
+# spinner draw. UseFirmwareBackground=false is for plymouth >= 1.0, which can
+# otherwise show a firmware BGRT logo; 0.9.3 ignores the key (it has no BGRT
+# code at all), and we ship no bgrt-fallback.png for that path either.
 #
 # Same black background as the stock spinner theme; progress bar recolored to
 # the eDEX green.
@@ -34,6 +36,10 @@ BackgroundEndColor=0x000000
 ProgressBarBackgroundColor=0x1a4d3c
 ProgressBarForegroundColor=0x00ff9f
 MessageBelowAnimation=true
+# plymouth >= 1.0 honors this (never show a firmware BGRT logo); 0.9.3 ignores
+# it but has no BGRT path to hide anyway. Kept so a plymouth upgrade on the
+# installed machine stays logo-free.
+UseFirmwareBackground=false
 
 [boot-up]
 UseEndAnimation=false
