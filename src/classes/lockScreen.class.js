@@ -1057,8 +1057,10 @@ class LockScreen {
         document.body.appendChild(el);
         // When the lock is raised straight from the running Matrix screensaver,
         // adopt its canvas + drop state so the waterfall keeps falling where it
-        // was instead of restarting fresh (#86). The screensaver's draw timer
-        // keeps running; this._matrixTimer holds it so hide() can stop it.
+        // was instead of restarting fresh (#86). Adoption stops the screensaver's
+        // own draw timer (see adoptMatrixRain — it is closure-bound to the module
+        // canvas/ctx that get reset on adoption), so the lock drives the adopted
+        // canvas with its own _startMatrix()/this._matrixTimer; hide() stops it.
         const adopted = window.screensaver && typeof window.screensaver.adoptMatrixRain === "function"
             ? window.screensaver.adoptMatrixRain() : null;
         if (adopted) {
@@ -1067,7 +1069,12 @@ class LockScreen {
             this._drops = adopted.drops;
             this._cols = adopted.cols;
             this._grid = adopted.GRID;
+            // adoptMatrixRain clears the module's draw interval and hands over
+            // no timer (#177): _drawMatrix uses this._ctx (null-guarded), so the
+            // lock resumes drawing the same waterfall at its own 40ms cadence.
+            // this._matrixTimer = adopted.mTimer is always null here.
             this._matrixTimer = adopted.mTimer;
+            if (!this._matrixTimer) this._startMatrix();
             // The canvas was appended to <body> by the screensaver (position:
             // fixed, z 9999). Move it inside the lock so it sits above the
             // lock's own dot-grid background but under the passcode panel.

@@ -1444,6 +1444,122 @@ async function initUI() {
         }
     };
 
+    // ---- Click-to-expand SYSTEM / UPTIME detail (the LOAD/UPTIME/TYPE/POWER
+    // grid). CPU load + uptime come from Node's os module; the battery's
+    // instantaneous charge/discharge rate is read straight from sysfs — Linux
+    // only, so on the macOS preview the POWER row reports AC / no battery.
+    const _pad2 = n => String(n).padStart(2, "0");
+    const _readSysBattery = () => {
+        try {
+            const fs = require("fs");
+            const dirs = fs.readdirSync("/sys/class/power_supply").filter(d => d.startsWith("BAT"));
+            if (!dirs.length) return null;
+            const rd = (d, f) => { try { return fs.readFileSync(`/sys/class/power_supply/${d}/${f}`, "utf8").trim(); } catch (e) { return null; } };
+            for (const d of dirs) {
+                const status = rd(d, "status");
+                const cap = parseInt(rd(d, "capacity"), 10);
+                let watts = null;
+                const pw = parseInt(rd(d, "power_now"), 10);
+                if (!isNaN(pw) && pw > 0) watts = pw / 1e6;                    // µW → W
+                else {
+                    const v = parseInt(rd(d, "voltage_now"), 10);
+                    const i = parseInt(rd(d, "current_now"), 10);
+                    if (!isNaN(v) && !isNaN(i) && v > 0 && i > 0) watts = (v * i) / 1e12; // µV·µA → W
+                }
+                return { path: d, status: status || "", capacity: isNaN(cap) ? null : cap, watts };
+            }
+        } catch (e) {}
+        return null;
+    };
+    const _sysinfoLive = () => {
+        let out = "";
+        try {
+            const os = require("os");
+            const l = os.loadavg();
+            out += "LOAD        " + l.map(x => x.toFixed(2)).join("   ") + "    (1 / 5 / 15 MIN)\n";
+            const s = Math.floor(os.uptime());
+            out += "UPTIME      " + Math.floor(s / 86400) + "D " + _pad2(Math.floor(s % 86400 / 3600)) + ":" + _pad2(Math.floor(s % 3600 / 60)) + ":" + _pad2(s % 60) + "\n";
+        } catch (e) { out += "UPTIME      N/A\n"; }
+        const bat = _readSysBattery();
+        if (bat && (bat.capacity !== null || bat.status)) {
+            out += "BATTERY     " + (bat.capacity !== null ? bat.capacity + "%" : "—") + (bat.status ? "  " + bat.status.toUpperCase() : "") + "\n";
+            if (bat.watts) {
+                out += "POWER       " + (bat.status === "Charging" ? "CHARGING  " : "DRAW      ") + bat.watts.toFixed(1) + " W    (" + bat.path + ")\n";
+            } else {
+                out += "POWER       " + (bat.status === "Charging" ? "CHARGING (RATE N/A)" : "AC") + "\n";
+            }
+        } else {
+            out += "BATTERY     NONE — AC POWER\n";
+        }
+        return out;
+    };
+    window.openSysinfoModal = () => {
+        const id = require("nanoid").nanoid().slice(0, 6);
+        const upd = () => { const el = document.getElementById("sysinfo_live_" + id); if (el) el.textContent = _sysinfoLive(); };
+        upd();
+        const timer = setInterval(upd, 1000);
+        new Modal({
+            type: "custom", title: "SYSTEM / UPTIME",
+            html: `<pre class="mod_cmd_out" id="sysinfo_live_${id}"></pre>`,
+            closeLabel: "Close"
+        }, () => clearInterval(timer));
+    };
+
+    // ---- Click-to-expand WEATHER detail. The netstat module keeps the latest
+    // enriched Open-Meteo payload on window.mods.netstat._wx; render it as a
+    // current-conditions grid plus the 7-day forecast with sun times.
+    const _wxTime = iso => (typeof iso === "string" && iso.indexOf("T") > 0) ? iso.slice(11, 16) : (iso || "—");
+    window.openWeatherModal = () => {
+        const wx = window.mods && window.mods.netstat && window.mods.netstat._wx;
+        if (!wx || !wx.current) {
+            new Modal({ type: "warning", message: "Weather data is still loading — check back in a moment." });
+            return;
+        }
+        const c = wx.current;
+        const cond = Weather.condition(c.weather_code);
+        const loc = wx.loc || "WEATHER";
+        const kv = (k, v) => `<div class="mod_wx_kv"><span>${k}</span><b>${v}</b></div>`;
+        const gust = (typeof c.wind_gusts_10m === "number") ? " · G " + Math.round(c.wind_gusts_10m) + " KM/H" : "";
+        const vis = (typeof c.visibility === "number")
+            ? (c.visibility >= 1000 ? (c.visibility / 1000).toFixed(1) + " KM" : c.visibility + " M")
+            : "—";
+        const grid = kv("FEELS LIKE", Math.round(c.apparent_temperature) + "°") +
+            kv("HUMIDITY", c.relative_humidity_2m + "%") +
+            kv("WIND", Math.round(c.wind_speed_10m) + " KM/H" + gust) +
+            kv("PRESSURE", (typeof c.pressure_msl === "number") ? Math.round(c.pressure_msl) + " HPA" : "—") +
+            kv("VISIBILITY", vis) +
+            kv("DEW POINT", (typeof c.dew_point_2m === "number") ? Math.round(c.dew_point_2m) + "°" : "—") +
+            kv("UV INDEX", (typeof c.uv_index === "number") ? c.uv_index.toFixed(1) : "—") +
+            kv("PRECIP", (typeof c.precipitation === "number") ? c.precipitation + " MM" : "—");
+        const week = (wx.weekly || []).slice(0, 7).map(d => {
+            const wc = Weather.condition(d.code);
+            const [y, m, dd] = d.time.split("-").map(Number);
+            const dn = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"][new Date(Date.UTC(y, m - 1, dd)).getUTCDay()];
+            return `<div class="mod_wx_day">
+                <span class="mod_wx_dayname">${dn}</span>
+                <span class="mod_weather_icon">${wc[2]}</span>
+                <b>${Math.round(d.temp_max)}°</b>
+                <em>${Math.round(d.temp_min)}°</em>
+                <span class="mod_wx_rain">${(typeof d.precip === "number" && d.precip > 0) ? d.precip + "%" : ""}</span>
+                <span class="mod_wx_sun">${_wxTime(d.sunrise)} – ${_wxTime(d.sunset)}</span>
+            </div>`;
+        }).join("");
+        new Modal({
+            type: "custom", title: "WEATHER",
+            html: `<div class="mod_wx">
+                <div class="mod_wx_now">
+                    <span class="mod_weather_icon">${cond[2]}</span>
+                    <b>${Math.round(c.temperature_2m)}°</b>
+                    <span class="mod_wx_cond">${cond[0].toUpperCase()}</span>
+                    <span class="mod_wx_loc">${loc}</span>
+                </div>
+                <div class="mod_wx_grid">${grid}</div>
+                <div class="mod_wx_week">${week}</div>
+            </div>`,
+            closeLabel: "Close"
+        });
+    };
+
     // Open the POWER menu — shared by the clock click and the OS power button
     // (the main process listens on 127.0.0.1:17322 and sends "show-power-menu").
     window.openPowerMenu = () => {
@@ -1503,6 +1619,12 @@ async function initUI() {
         } else if (t.closest("#mod_hardwareInspector_inner")) {
             // The MODEL panel → full machine info
             window.sysCmd.open("MACHINE INFO", "hostnamectl 2>/dev/null; echo; lscpu 2>/dev/null | head -15; echo; free -h 2>/dev/null | head -2");
+        } else if (t.closest("#mod_sysinfo")) {
+            // LOAD / UPTIME / TYPE / POWER grid → live CPU load + uptime + power
+            window.openSysinfoModal();
+        } else if (t.closest("#mod_netstat_weather_main") || t.closest("#mod_netstat_forecast") || t.closest("#mod_netstat_forecast_label")) {
+            // Weather display → detailed conditions + 7-day forecast
+            window.openWeatherModal();
         }
     });
 
@@ -4249,6 +4371,7 @@ window.screensaver = (() => {
     const GRID = 22;
     const CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#$%&@アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホ";
     const mResize = () => {
+        if (!canvas) return;   // adopted by the lock (canvas/ctx reset) — nothing to size here
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
         cols = Math.floor(canvas.width / GRID);
@@ -4464,9 +4587,16 @@ window.screensaver = (() => {
         // restarting fresh (#86). The caller owns the timer from here on.
         adoptMatrixRain() {
             if (!canvas || mTimer === null) return null;
-            const timer = mTimer;
-            mTimer = null;               // the lock now owns this interval
-            const adopted = { canvas, ctx, drops, cols, GRID, mTimer: timer };
+            // Stop the module's own draw loop here: mDraw is closure-bound to
+            // this canvas/ctx, and the lock is about to move both into its own
+            // overlay and tear that overlay down on unlock. Handing the running
+            // interval to the lock would keep firing mDraw against the nulled
+            // ctx below — a crash per frame. The lock drives the adopted canvas
+            // with its OWN timer (lockScreen._showFullscreen), so no interval
+            // is transferred.
+            clearInterval(mTimer);
+            mTimer = null;
+            const adopted = { canvas, ctx, drops, cols, GRID, mTimer: null };
             // The lock now owns this canvas (it moves it inside #lock_screen and
             // tears that element down on unlock, detaching the canvas). Forget
             // the reference so the NEXT screensaver start builds a fresh,

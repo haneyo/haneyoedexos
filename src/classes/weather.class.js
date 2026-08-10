@@ -18,8 +18,8 @@ class Weather {
 
     fetch() {
         let url = `https://api.open-meteo.com/v1/forecast?latitude=${this.latitude}&longitude=${this.longitude}` +
-            `&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m` +
-            `&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max` +
+            `&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,apparent_temperature,pressure_msl,wind_gusts_10m,visibility,dew_point_2m,uv_index,precipitation` +
+            `&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,sunrise,sunset,uv_index_max` +
             `&forecast_days=7&timezone=${encodeURIComponent(this.timezone)}`;
 
         let req = require("https").get(url, {
@@ -43,7 +43,10 @@ class Weather {
                         code: d.daily.weather_code[i],
                         temp_max: d.daily.temperature_2m_max[i],
                         temp_min: d.daily.temperature_2m_min[i],
-                        precip: d.daily.precipitation_probability_max[i]
+                        precip: d.daily.precipitation_probability_max[i],
+                        sunrise: d.daily.sunrise && d.daily.sunrise[i],  // local ISO (already in requested tz)
+                        sunset: d.daily.sunset && d.daily.sunset[i],
+                        uv_max: d.daily.uv_index_max && d.daily.uv_index_max[i]
                     }));
 
                     this.onUpdate(d.current, weekly);

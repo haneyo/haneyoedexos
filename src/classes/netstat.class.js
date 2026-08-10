@@ -208,6 +208,14 @@ class Netstat {
                     </div>`;
                 }).join("");
 
+                // Keep the latest payload for the click-to-expand detail modal
+                // (window.openWeatherModal reads window.mods.netstat._wx).
+                this._wx = {
+                    loc: (this._auto ? "AUTO · " : "") + ((this._weatherSaved && this._weatherSaved.name) || "Unknown"),
+                    current,
+                    weekly
+                };
+
                 if (firstUpdate) {
                     firstUpdate = false;
                     require("electron").ipcRenderer.send("log", "debug", `Weather loaded: ${Math.round(current.temperature_2m)}°C ${cond} (${weekly.length}-day forecast) - visible ${(document.querySelectorAll("#mod_netstat").length)} module(s)`);

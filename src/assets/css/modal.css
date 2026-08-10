@@ -1026,3 +1026,98 @@ div.modal_popup button.fs_media_link {
     transition: opacity .2s;
 }
 div.modal_popup button.fs_media_link:hover { background: none; opacity: 1; }
+
+/* Click-to-expand WEATHER detail modal (#178). Grid of current conditions
+   plus the 7-day forecast; reuses the module's stroke icons (scoped here
+   because the module styles live under #mod_netstat). */
+div.modal_popup .mod_wx { width: 54vh; max-width: 64vw; }
+div.modal_popup .mod_wx_now {
+    display: flex;
+    align-items: center;
+    gap: 1.2vh;
+    padding: 0.8vh 1vh 1vh;
+    border-bottom: 0.15vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.4);
+    margin-bottom: 0.8vh;
+}
+div.modal_popup .mod_wx_now .mod_weather_icon {
+    display: flex; align-items: center; justify-content: center;
+    width: 6vh; height: 6vh; line-height: 1;
+}
+div.modal_popup .mod_wx_now .mod_weather_icon svg { display: block; width: 6vh; height: 6vh; }
+div.modal_popup .mod_wx_now b {
+    font-family: var(--font_mono), monospace;
+    font-size: 6vh; line-height: 1;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    text-shadow: 0 0 1.2vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.6);
+}
+div.modal_popup .mod_wx_cond {
+    font-family: var(--font_mono), monospace;
+    font-size: 1.9vh; letter-spacing: 0.2vh;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+}
+div.modal_popup .mod_wx_loc {
+    font-family: var(--font_main_light);
+    font-size: 1.6vh; opacity: 0.75;
+    margin-left: auto; max-width: 30vh; text-align: right;
+}
+div.modal_popup .mod_wx_grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(20vh, 1fr));
+    gap: 0.6vh;
+    margin-bottom: 0.8vh;
+}
+div.modal_popup .mod_wx_kv {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 1vh; padding: 0.55vh 0.9vh;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.06);
+    border-left: 0.2vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.45);
+}
+div.modal_popup .mod_wx_kv span {
+    font-family: var(--font_mono), monospace;
+    font-size: 1.35vh; letter-spacing: 0.12vh; opacity: 0.8;
+}
+div.modal_popup .mod_wx_kv b {
+    font-family: var(--font_mono), monospace;
+    font-size: 1.5vh; color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    text-align: right;
+}
+div.modal_popup .mod_wx_week {
+    max-height: 30vh; overflow-y: auto;
+    border-top: 0.15vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
+    padding-top: 0.6vh;
+}
+div.modal_popup .mod_wx_day {
+    display: grid;
+    grid-template-columns: 6vh 4.4vh 4.6vh 4.6vh 5vh 1fr;
+    align-items: center;
+    gap: 0.8vh;
+    padding: 0.4vh 0.6vh;
+    border-bottom: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.12);
+}
+div.modal_popup .mod_wx_day:first-child { background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.08); }
+div.modal_popup .mod_wx_day .mod_wx_dayname {
+    font-family: var(--font_mono), monospace;
+    font-size: 1.4vh; letter-spacing: 0.1vh;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+}
+div.modal_popup .mod_wx_day .mod_weather_icon {
+    display: flex; align-items: center; justify-content: center;
+    width: 4.2vh; height: 3.6vh;
+}
+div.modal_popup .mod_wx_day .mod_weather_icon svg { display: block; width: 3.6vh; height: 3.6vh; }
+div.modal_popup .mod_wx_day b {
+    font-family: var(--font_mono), monospace;
+    font-size: 1.6vh; color: rgb(var(--color_r), var(--color_g), var(--color_b)); text-align: right;
+}
+div.modal_popup .mod_wx_day em {
+    font-style: normal;
+    font-family: var(--font_mono), monospace;
+    font-size: 1.4vh; opacity: 0.6; text-align: right;
+}
+div.modal_popup .mod_wx_rain {
+    font-family: var(--font_mono), monospace; font-size: 1.3vh;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+}
+div.modal_popup .mod_wx_sun {
+    font-family: var(--font_mono), monospace; font-size: 1.3vh; opacity: 0.7; text-align: right;
+}
