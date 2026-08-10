@@ -1100,6 +1100,27 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
     background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.25);
     border-left-color: rgb(var(--color_r), var(--color_g), var(--color_b));
 }
+/* Currently-connected network: green edge + name + CONNECTED tag, distinct
+   from a user-selected row so the current connection is always visible. */
+.wifi_net.connected {
+    border-left-color: #00ff9f;
+    color: #00ff9f;
+}
+.wifi_net.connected .wifi_name { color: #00ff9f; }
+.wifi_net.connected .wifi_lock { opacity: 0.8; }
+.wifi_tag {
+    flex-shrink: 0;
+    font-size: 0.9vh; letter-spacing: 0.15em;
+    color: #00ff9f; border: 0.1vh solid #00ff9f;
+    padding: 0.1vh 0.5vh; margin-left: auto; opacity: 0.9;
+}
+/* Keyboard focus ring on the network rows (↑/↓ + Enter). */
+.wifi_net:focus {
+    outline: 0.1vh dashed rgba(var(--color_r), var(--color_g), var(--color_b), 0.7);
+    outline-offset: 0.1vh;
+}
+.wifi_status.ok { color: #00ff9f; opacity: 1; }
+.wifi_status.err { color: #ff4d4d; opacity: 1; }
 .wifi_sig { width: 4vh; opacity: 0.9; }
 .wifi_name { flex: 1; }
 .wifi_lock { opacity: 0.6; }
