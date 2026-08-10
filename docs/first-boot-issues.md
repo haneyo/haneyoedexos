@@ -179,3 +179,27 @@ fcitx5-diagnose | head -60; pgrep -a fcitx5
 - 定位:code 锁屏直接把**主 shell 终端**当锁屏画面 —— `_drawLockBox()` 先 `term.reset()` 清屏画框,解锁 `_teardownLock()` 又 `term.reset()` 一次再向 pty 要新提示符 → 整个 scrollback(1500 行)被两次清掉。矩阵锁屏是全屏覆盖层、不碰终端,不受影响。
 - 修复:锁屏画框前用 `xterm-addon-serialize` 把当前 buffer(含 scrollback)序列化存 `_savedTerm`,解锁 `term.reset()` 后**重放**回终端;已恢复快照就不再发 `\r`(避免误执行输入到一半的命令)。新增依赖 `xterm-addon-serialize@0.7.0`(兼容 xterm 4.14,CI `npm install` 自动带上)。
 - CDP 已验证:写入 60+ 行(含深 scrollback 标记)→ code 锁屏(标记从可视区消失)→ 解锁后两个标记原样回到 buffer,行号/scrollback 深度一致。
+
+## 批(2026-08-10,已提交待装验)
+
+**电池图标里的奇怪符号 → 去掉,改呼吸荧光**(App,CDP 已验证,真机反馈):
+- 现象:时钟左上角电池图标内有个奇怪符号(#169)。
+- 定位:原代码**无条件**渲染 bolt:充电画闪电 `M11 8l2-3 2 3`,非充电画锯齿 `M9 8l2 1 1-4 2 3` —— 两个 path 叠出一个"怪字";且分级逻辑里 `charging` 直接当 grade,低电量充电时图标不红。
+- 修复:`_renderer.js` 电池 SVG **完全去掉 bolt**(充电不再画闪电,避免绘图错误);grade 永远跟电量走(≤5% 红闪 / ≤20% 红 / ≤50% 琥珀 / ≤80% 主题 / 满电辉光),充电是**附加类**:填充呼吸脉冲 + 边缘荧光提亮。CSS(`mod_clock.css`)per-grade `@keyframes` 用 `filter: drop-shadow` 呼吸,颜色跟随 grade(低电红边 / 中电琥珀 / 高电主题色)。
+- CDP 已验证:87% 满电充电 → `battery_full battery_charging`,动画 `battery_glow_theme` 呼吸(focus emulation 下采样 computed filter 振荡);低电充电 → 红 + 红边呼吸;低电不充电 → 红。已同步 src,待装验。
+
+**WiFi 连不上:真实根因是缺 netdev 系统组**(OS,脚本已修,真机待重跑):
+- 现象:真机 wlp5s0 一直 unavailable、扫描为空,`journalctl` 每 13s 刷 "Couldn't initialize supplicant interface: Failed to D-Bus activate wpa_supplicant service"。
+- 定位(fix-wifi-result.txt):`wpa_supplicant.service` 声明 `Group=netdev`,但系统缺 netdev 组 → systemd 解析组凭据失败(status=216/GROUP)→ D-Bus 激活失败。wpasupplicant 包缺失只是次因(NetworkManager 对它仅是 Recommends)。
+- 修复:`packaging/diag/fix-wifi.sh` 重写——先补 `netdev` 组(`groupadd --system netdev`),再 daemon-reload + 重启 wpa_supplicant/NetworkManager;自带诊断全部写 `fix-wifi-result.txt`。`build-iso.sh` 安装命令已追加 `addgroup --system netdev`,下一版 ISO 开箱即有。U 盘(EDIAG)上的脚本已同步(md5 校验)。**真机重跑 fix-wifi.sh 一次即可,看 result.txt。**
+
+**设置-网络分类补有线网(以太网)设定**(App,CDP 已验证,真机反馈):
+- 现象:设置里只有 WiFi/蓝牙,插着网线却没有有线网设定(#170)。
+- 修复:网络分类加 **Wired** 段(状态 / 设备·IP·路由器·DNS 详情 / 连接-断开切换按钮);`_boot.js` 加 `eth:status`(`nmcli` 列 ethernet 设备,已连接时再取 IP4.ADDRESS/GATEWAY/DNS)、`eth:connect`/`eth:disconnect`(`nmcli device connect|disconnect`)。macOS 预览返回 mock(enp0s0 已连接)。
+- CDP 已验证:分类渲染出三行;mock 已连接 → "enp0s0 — 已连接" + "IP 192.168.1.50 · 路由器 192.168.1.1 · DNS 192.168.1.1" + 按钮"断开";stub 未连接态 → 按钮"连接",点击走 `eth:connect`;双分支切换正常。已同步 src,待装验。
+
+**plymouth:转圈下方仍是 Ubuntu 徽标**(OS,待再重启确认):
+- 现象:开机动画(黑底 spinner)有了,但转圈图标下方还是 Ubuntu logo。
+- 状态:fix-plymouth-result.txt 已证明 `edex` 主题(76)烘焙进了 initramfs、spinner=0、默认主题链全部指向 edex —— 说明上一次观察是**修复前**的启动。**再重启一次**应显示纯 eDEX 品牌动画(联想 logo 消失属正常:MBR 级 logo 由固件画,黑底 plymouth 直接盖住);若重启后仍是 Ubuntu 徽标,把照片发回,查 real-root 阶段/BGRT(需要关闭 plymouth 的 bgrt 插件或换 background 主题)。
+
+

@@ -2320,6 +2320,10 @@ window.openSettings = async () => {
                 <option value="0" ${!on ? "selected" : ""}>${t("settings.network.off")}</option>
             </select>`;
             return [
+                section("settings.network.eth"),
+                settingsRow("settings.network.ethStatus", `<span id="settingsNetEthStatus" class="settings_net_status">–</span>`),
+                settingsRow("settings.network.ethInfo", `<div id="settingsNetEthInfo" class="settings_net_info"></div>`, "settings.network.ethInfo.help"),
+                settingsRow("settings.network.ethConnect", `<button type="button" id="settingsNetEthConnect" class="settings_net_btn">${t("settings.network.ethConnect")}</button>`),
                 section("settings.network.wifi"),
                 settingsRow("settings.network.wifiPower", netOnOff("settingsNetWifiPower", true), "settings.network.wifiPower.help"),
                 settingsRow("settings.network.wifiStatus", `<span id="settingsNetWifiStatus" class="settings_net_status">–</span>`),
@@ -3045,6 +3049,54 @@ window.populatePowerControls = () => {
             refreshWifi();
         }).catch(() => {});
     });
+    // Wired / ethernet: device state + IP/router/DNS info + connect/disconnect
+    // toggle. eth:status is a single call (macOS preview returns mock data).
+    const netEthStatus = document.getElementById("settingsNetEthStatus");
+    const netEthInfo = document.getElementById("settingsNetEthInfo");
+    const netEthConnect = document.getElementById("settingsNetEthConnect");
+    let netEthDevice = null, netEthConnected = false;
+    const refreshEth = () => {
+        if (!netEthStatus) return;
+        ipc.invoke("eth:status").then(r => {
+            if (!r || !r.ok || !r.device) {
+                netEthDevice = null; netEthConnected = false;
+                netEthStatus.textContent = t("settings.network.ethUnavail");
+                if (netEthInfo) netEthInfo.textContent = "";
+                return;
+            }
+            netEthDevice = r.device;
+            netEthConnected = r.state === "connected";
+            netEthStatus.textContent = r.device + " — " + (netEthConnected
+                ? t("settings.network.ethConnected")
+                : r.state === "disconnected" ? t("settings.network.ethOffline") : r.state);
+            if (netEthInfo) {
+                if (netEthConnected) {
+                    const parts = [];
+                    if (r.ip) parts.push("IP " + r.ip);
+                    if (r.gateway) parts.push(t("settings.network.router") + " " + r.gateway);
+                    if (r.dns && r.dns.length) parts.push("DNS " + r.dns.join(", "));
+                    netEthInfo.textContent = parts.join(" · ");
+                } else {
+                    netEthInfo.textContent = "";
+                }
+            }
+            if (netEthConnect) {
+                netEthConnect.textContent = netEthConnected ? t("settings.network.ethDisc") : t("settings.network.ethConnect");
+                netEthConnect.disabled = false;
+            }
+        }).catch(() => {});
+    };
+    if (netEthConnect) netEthConnect.addEventListener("click", () => {
+        if (!netEthDevice) { refreshEth(); return; }
+        netEthConnect.disabled = true;
+        ipc.invoke(netEthConnected ? "eth:disconnect" : "eth:connect", { device: netEthDevice }).then(r => {
+            netEthConnect.disabled = false;
+            notify(r && r.ok ? t("settings.network.btDone")
+                             : t("settings.network.failed") + (r && r.error ? " — " + r.error : ""));
+            refreshEth();
+        }).catch(() => { netEthConnect.disabled = false; });
+    });
+    if (netEthStatus) refreshEth();
     // Proxy of the active connection (auto / none / manual + HTTP/HTTPS).
     const netProxyMethod = document.getElementById("settingsNetWifiProxyMethod");
     const netProxyHttp = document.getElementById("settingsNetWifiProxyHttp");

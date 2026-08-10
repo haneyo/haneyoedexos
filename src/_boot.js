@@ -812,6 +812,49 @@ app.on('ready', async () => {
                 });
         });
     }));
+    // ---- Wired / ethernet (NetworkManager via nmcli). The settings Network
+    // ---- category shows one row per ethernet device (usually just en* / eth0).
+    const ethDevices = () => new Promise(resolve => {
+        execFile("nmcli", ["-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "dev"], { timeout: 8000 }, (err, stdout) => {
+            if (err) return resolve({ ok: false, error: (err.stderr || err.message).trim(), devices: [] });
+            const devices = (stdout || "").split("\n").filter(Boolean).map(l => l.split(":"))
+                .filter(p => p[1] === "ethernet")
+                .map(p => ({ device: p[0], state: p[2] || "unavailable", connection: p[3] || "" }));
+            resolve({ ok: true, devices });
+        });
+    });
+    ipc.handle("eth:status", () => new Promise(resolve => {
+        if (process.platform !== "linux")
+            return resolve({ ok: true, device: "enp0s0", state: "connected", connection: "Wired", ip: "192.168.1.50", gateway: "192.168.1.1", dns: ["192.168.1.1"] });
+        ethDevices().then(async r => {
+            if (!r.ok) return resolve(r);
+            const dev = r.devices[0];
+            if (!dev) return resolve({ ok: true, device: null, state: "unavailable" });
+            if (dev.state !== "connected") return resolve({ ok: true, ...dev });
+            const details = await new Promise(r2 => {
+                execFile("nmcli", ["-t", "-f", "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS", "device", "show", dev.device],
+                    { timeout: 8000 }, (err2, out2) => {
+                        if (err2) return r2({});
+                        const ipM = /^IP4\.ADDRESS\[1\]:([^\n]*)$/m.exec(out2);
+                        const gwM = /^IP4\.GATEWAY:([^\n]*)$/m.exec(out2);
+                        const dns = (out2.match(/^IP4\.DNS\[\d+\]:([^\n]*)$/gm) || []).map(l => l.split(":")[1].trim());
+                        r2({ ip: ipM ? ipM[1].trim().split("/")[0] : "", gateway: gwM ? gwM[1].trim() : "", dns });
+                    });
+            });
+            resolve({ ok: true, ...dev, ...details });
+        });
+    }));
+    ipc.handle("eth:connect", (e, { device }) => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve({ ok: true });
+        execFile("nmcli", ["device", "connect", String(device)], { timeout: 20000 },
+            (err, stdout, stderr) => resolve(err ? { ok: false, error: (stderr || err.message).trim() } : { ok: true }));
+    }));
+    ipc.handle("eth:disconnect", (e, { device }) => new Promise(resolve => {
+        if (process.platform !== "linux") return resolve({ ok: true });
+        execFile("nmcli", ["device", "disconnect", String(device)], { timeout: 20000 },
+            (err, stdout, stderr) => resolve(err ? { ok: false, error: (stderr || err.message).trim() } : { ok: true }));
+    }));
+
     // Let the renderer open the WiFi panel (floating button / hotkey).
     ipc.on("open-wifi-panel", () => { if (win && !win.isDestroyed()) win.webContents.send("open-wifi-panel"); });
 
