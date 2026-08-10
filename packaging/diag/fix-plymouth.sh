@@ -90,21 +90,28 @@ echo "    主题文件就绪。"
 # 3) 设为默认主题(绝对路径 — 脚本以普通用户跑,其 PATH 没有 /usr/sbin)。
 #    plymouth-set-default-theme 可能缺失(真机就踩到了:plymouthd 在而
 #    set-default-theme 不在,报 "command not found")。存在就用它,否则直接
-#    写 plymouthd.conf / plymouthd.defaults —— 效果相同,不需要该二进制。
+#    写 plymouthd.conf / plymouthd.defaults + 重指 default.plymouth 链接。
 echo "[2/4] 设置默认主题为 edex ..."
 PSDT="$(dirname "$PLYMOUTHD")/plymouth-set-default-theme"
 if [ -x "$PSDT" ]; then
     run "$PSDT" edex
     echo "    默认主题: $(run "$PSDT" 2>/dev/null || echo 'edex')"
 else
-    echo "    (plymouth-set-default-theme 缺失 —— 直接写配置文件)"
+    echo "    (plymouth-set-default-theme 缺失 —— 直接写配置 + 重指默认主题链接)"
     run bash -c '
         grep -q "^Theme=" /etc/plymouth/plymouthd.conf \
             && sed -i "s/^Theme=.*/Theme=edex/" /etc/plymouth/plymouthd.conf \
             || printf "Theme=edex\n" >> /etc/plymouth/plymouthd.conf
         printf "[Daemon]\nTheme=edex\n" > /usr/share/plymouth/plymouthd.defaults
     '
-    echo "    Theme=edex 已写入 plymouthd.conf + plymouthd.defaults"
+    # 关键补丁:真机缺 plymouth-set-default-theme,而 initramfs 的 plymouth hook
+    # 在拿不到该工具时,靠 /usr/share/plymouth/themes/default.plymouth 这个
+    # update-alternatives 链接决定烤哪个主题 —— 它此前还指向 stock spinner。
+    # 只写 plymouthd.defaults 不会动这个链接,重建 initramfs 仍把 spinner 烤
+    # 进去,开机就还是 Ubuntu 圆圈。这里直接重指 /etc/alternatives 链接。
+    run bash -c 'ln -sf /usr/share/plymouth/themes/edex/edex.plymouth /etc/alternatives/default.plymouth'
+    echo "    默认主题链接: $(run readlink -f /usr/share/plymouth/themes/default.plymouth 2>/dev/null || echo 未解析)"
+    echo "    plymouthd.conf: $(run bash -c 'grep -E "^Theme=" /etc/plymouth/plymouthd.conf 2>/dev/null || echo 空')"
 fi
 
 # 4) 重建 initramfs + grub,让开机即生效
@@ -114,6 +121,16 @@ echo "[4/4] 更新 GRUB ..."
 run update-grub
 
 echo ""
+echo "==== 验证(重建后实际烤进 initramfs 的主题)===="
+INITRD="/boot/initrd.img-$(uname -r)"
+echo "plymouthd.defaults: $(run bash -c 'grep -E "^Theme=" /usr/share/plymouth/plymouthd.defaults 2>/dev/null || echo 空')"
+echo "initramfs 路径: $INITRD"
+echo "  内含 edex 主题文件数: $(run lsinitramfs "$INITRD" 2>/dev/null | grep -c 'themes/edex' || echo 0)"
+echo "  内含 spinner 主题文件数: $(run lsinitramfs "$INITRD" 2>/dev/null | grep -c 'themes/spinner' || echo 0)"
+echo "initramfs hook 的主题判定逻辑(edex 数为 0 时,从这里看它到底读哪个):"
+run bash -c "grep -nE 'set-default-theme|plymouthd.defaults|default.plymouth|THEME|theme' /usr/share/initramfs-tools/hooks/plymouth 2>/dev/null | head -25 || echo '(hook 文件不存在)'"
+
+echo ""
 echo "==== 完成 ===="
-echo "重启后开机动画应显示 eDEX 品牌(不再是 Ubuntu 圆圈)。"
-echo "如果仍有问题,把 /usr/share/plymouth/themes/edex 目录内容发回来核对。"
+echo "若上面 initramfs 的 edex 主题文件数 > 0,重启后开机动画就是 eDEX 品牌。"
+echo "若仍显示 Ubuntu 圆圈,把上面整段验证输出发回来核对。"

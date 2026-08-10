@@ -252,7 +252,19 @@ r /usr/sbin/plymouth-set-default-theme 2>&1
 r ls -la /usr/share/plymouth/themes/
 r ls -la /usr/share/plymouth/themes/edex/ 2>/dev/null
 r grep -E 'CMDLINE_LINUX_DEFAULT|splash' /etc/default/grub
-rp 'sudo -n lsinitramfs /boot/initrd.img-$(uname -r) 2>&1 | grep -iE "plymouth|edex|spinner" | head -20 || true'
+# 主题状态三个来源全转储:plymouthd.conf / plymouthd.defaults / default.plymouth 链接。
+# 之前只 ls 主题目录,看不出 initramfs hook 到底选了谁 —— 真机缺
+# plymouth-set-default-theme 时它回退读链接,链接还指向 spinner 就白搭。
+r cat /etc/plymouth/plymouthd.conf 2>/dev/null || echo "(无 /etc/plymouth/plymouthd.conf)"
+r cat /usr/share/plymouth/plymouthd.defaults 2>/dev/null || echo "(无 /usr/share/plymouth/plymouthd.defaults)"
+rp 'readlink -f /usr/share/plymouth/themes/default.plymouth 2>&1; ls -la /etc/alternatives/default.plymouth 2>&1'
+# 完整(不 head)列出 initramfs 里实际烤的 plymouth 主题文件,按目录数数量。
+rp 'sudo -n lsinitramfs /boot/initrd.img-$(uname -r) 2>&1 | grep -E "plymouth|edex|spinner" || echo "(initramfs 内无 plymouth 主题文件)"'
+rp 'echo "initramfs 内 edex 主题文件数: $(sudo -n lsinitramfs /boot/initrd.img-$(uname -r) 2>/dev/null | grep -c "themes/edex" || echo 0)"; echo "initramfs 内 spinner 主题文件数: $(sudo -n lsinitramfs /boot/initrd.img-$(uname -r) 2>/dev/null | grep -c "themes/spinner" || echo 0)"'
+# BGRT:有固件 logo 时 two-step 用固件图(读不到 plymouth 主题的 fallback),没 BGRT 才用 bgrt-fallback.png。
+rp 'ls /sys/firmware/acpi/bgrt/ 2>&1 || echo "(无 BGRT:开机会用主题的 bgrt-fallback.png = eDEX logo)"'
+# initramfs hook 的主题判定逻辑源码(决定 hook 读 plymouthd.defaults 还是 default.plymouth 链接)。
+rp 'grep -nE "set-default-theme|plymouthd.defaults|default.plymouth|THEME" /usr/share/initramfs-tools/hooks/plymouth 2>/dev/null | head -20 || echo "(hook 文件不存在)"'
 
 # ---------- 输入/触摸板(#163:解锁后光标消失/点不到东西) ----------
 # 区分"应用层面被 overlay 吞了点击" vs "内核/驱动层面触摸板失效"。
