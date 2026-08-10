@@ -198,9 +198,8 @@ fcitx5-diagnose | head -60; pgrep -a fcitx5
 - 修复:网络分类加 **Wired** 段(状态 / 设备·IP·路由器·DNS 详情 / 连接-断开切换按钮);`_boot.js` 加 `eth:status`(`nmcli` 列 ethernet 设备,已连接时再取 IP4.ADDRESS/GATEWAY/DNS)、`eth:connect`/`eth:disconnect`(`nmcli device connect|disconnect`)。macOS 预览返回 mock(enp0s0 已连接)。
 - CDP 已验证:分类渲染出三行;mock 已连接 → "enp0s0 — 已连接" + "IP 192.168.1.50 · 路由器 192.168.1.1 · DNS 192.168.1.1" + 按钮"断开";stub 未连接态 → 按钮"连接",点击走 `eth:connect`;双分支切换正常。已同步 src,待装验。
 
-**plymouth:转圈下方仍是 Ubuntu 徽标**(OS,根因已定,待装验):
+**plymouth:转圈下方仍是 Ubuntu 徽标**(OS,待再重启确认):
 - 现象:开机动画(黑底 spinner)有了,但转圈图标下方还是 Ubuntu logo。
-- **根因(已定位,勿再按 bgrt 猜)**:Ubuntu 24.04 的 plymouth 0.9.3 `two-step` 插件**根本没有 BGRT/bgrt-fallback 绘制代码**(grep plugin.c 验证;0.9.3 的 debian patch 系列也无 BGRT 补丁)。它把主题目录里的 **`watermark.png`** 画在黑底背景上 —— stock spinner 主题的 watermark.png 正是 Ubuntu 圆圈,装机时被 `cp -n`(只排除了 bgrt-fallback.png)拷进了 edex 主题目录,于是每次开机都画出来。之前的"换 eDEX 品牌 logo"方向错了:0.9.3 根本不画 bgrt-fallback.png,edex logo 一闪而过另有机制,但 logo 一律删掉就都消失。
-- **修复(已改源码)**:edex 主题目录**不装任何 logo 文件** —— 拷帧循环同时排除 `bgrt-fallback.png` 和 `watermark.png`,并 `rm -f` 清掉旧安装残留;`edex.plymouth` 加 `UseFirmwareBackground=false`(为 plymouth ≥1.0 留后路,0.9.3 忽略)。开机只剩黑底 + 转圈。改动在 `packaging/boot/edex.plymouth`、`packaging/diag/fix-plymouth.sh`(已装机真机补丁)、`packaging/install/install-edex.sh`(装机)、`packaging/build-iso.sh`(payload)。**待装验**:装好/跑过 fix-plymouth.sh 后重启,应无 Ubuntu 圆圈、无 eDEX logo、无联想固件 logo 以外的任何品牌画面。
+- 状态:fix-plymouth-result.txt 已证明 `edex` 主题(76)烘焙进了 initramfs、spinner=0、默认主题链全部指向 edex —— 说明上一次观察是**修复前**的启动。**再重启一次**应显示纯 eDEX 品牌动画(联想 logo 消失属正常:MBR 级 logo 由固件画,黑底 plymouth 直接盖住);若重启后仍是 Ubuntu 徽标,把照片发回,查 real-root 阶段/BGRT(需要关闭 plymouth 的 bgrt 插件或换 background 主题)。
 
 

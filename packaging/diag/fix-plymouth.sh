@@ -6,14 +6,13 @@
 #   跑 edex-diag.sh。
 #
 # 用途:
-#   已经装好的机器(ThinkPad E580)开机仍是 Ubuntu 圆圈(#142 / #19)。原因:
-#   Ubuntu 24.04 的 plymouth 0.9.3 two-step 插件会把主题目录里的 watermark.png
-#   画在黑底背景上——stock spinner 主题带的 watermark.png 正是 Ubuntu 圆圈,
-#   装机时被 cp -n 拷进了 edex 主题目录。这个脚本把 edex 主题目录里的
-#   watermark.png / bgrt-fallback.png 清掉,只留黑底 + throbber 转圈(无任何 logo)。
+#   已经装好的机器(ThinkPad E580)开机仍是 Ubuntu 圆圈(#142)。原因是安装时
+#   eDEX plymouth 主题的 payload 没进 chroot(见 61ec9c6),安装脚本静默回退到
+#   stock spinner 主题,它的 bgrt-fallback.png 就是 Ubuntu 圆圈。
+#   这个脚本在已装好的系统上直接补上 eDEX 主题,不用重装。
 #
 # 用法:
-#   1) 把本文件 + 同一目录下的 edex.plymouth 拷到 U 盘根目录
+#   1) 把本文件 + 同一目录下的 edex.plymouth + edex-boot-logo.png 拷到 U 盘根目录
 #   2) 插到真机 → 文件浏览器进入 U 盘 → 点击 fix-plymouth.sh → RUN(确认框)
 #   3) 跑完重启机器。诊断报告在同目录 fix-plymouth-result.txt,拔回 Mac 读。
 #
@@ -32,6 +31,7 @@ case "$SCRIPT" in
 esac
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT")" 2>/dev/null && pwd || echo "$HOME")"
 PLYMOUTH_FILE="$SCRIPT_DIR/edex.plymouth"
+LOGO_FILE="$SCRIPT_DIR/edex-boot-logo.png"
 OUT="$SCRIPT_DIR/fix-plymouth-result.txt"
 : > "$OUT"
 chmod 666 "$OUT" 2>/dev/null
@@ -65,9 +65,9 @@ log "时间: $(date '+%Y-%m-%d %H:%M:%S')"
 log "报告: $OUT"
 log ""
 
-if [ ! -f "$PLYMOUTH_FILE" ]; then
-    log "!! 缺少 payload:需要 $SCRIPT_DIR/edex.plymouth"
-    log "!! 请确认这个文件和本脚本放在一起。"
+if [ ! -f "$PLYMOUTH_FILE" ] || [ ! -f "$LOGO_FILE" ]; then
+    log "!! 缺少 payload:需要 $SCRIPT_DIR/edex.plymouth 和 $SCRIPT_DIR/edex-boot-logo.png"
+    log "!! 请确认这两个文件和本脚本放在一起。"
     exit 1
 fi
 
@@ -117,30 +117,25 @@ runlog ls -la /usr/share/plymouth/themes/ 2>&1
 log "edex 主题目录:"
 runlog ls -la /usr/share/plymouth/themes/edex/ 2>&1 || true
 log "BGRT(固件 logo):"
-runlog bash -c 'if ls /sys/firmware/acpi/bgrt/ >/dev/null 2>&1; then echo "  存在(0.9.3 two-step 不画 BGRT;开机的 logo 来自主题目录里的 watermark.png)"; ls /sys/firmware/acpi/bgrt/ | sed "s/^/    /"; else echo "  无"; fi'
+runlog bash -c 'if ls /sys/firmware/acpi/bgrt/ >/dev/null 2>&1; then echo "  存在(开机会用固件 logo 而非主题的 bgrt-fallback.png)"; ls /sys/firmware/acpi/bgrt/ | sed "s/^/    /"; else echo "  无(开机会用主题的 bgrt-fallback.png = eDEX logo)"; fi'
 log "当前 initramfs 内主题文件数:"
 log "  edex:   $(run lsinitramfs /boot/initrd.img-$(uname -r) 2>/dev/null | grep -c 'themes/edex' || echo 0)"
 log "  spinner: $(run lsinitramfs /boot/initrd.img-$(uname -r) 2>/dev/null | grep -c 'themes/spinner' || echo 0)"
 
-# 1) 建主题目录,复用 stock spinner 的动画帧。显式排除 bgrt-fallback.png 和
-#    watermark.png —— 0.9.3 的 two-step 会把 watermark.png 画在黑底背景上
-#    (stock spinner 的 watermark.png 就是 Ubuntu 圆圈),这俩文件一个都不能留。
+# 1) 建主题目录,复用 stock spinner 的动画帧(排除 bgrt-fallback.png)
 log ""
 log "[1/4] 组装 /usr/share/plymouth/themes/edex ..."
 run mkdir -p /usr/share/plymouth/themes/edex
 if [ -d /usr/share/plymouth/themes/spinner ]; then
     for f in /usr/share/plymouth/themes/spinner/*.png; do
-        case "$(basename "$f")" in
-            bgrt-fallback.png|watermark.png) continue ;;  # 永不拷贝 logo
-        esac
+        [ "$(basename "$f")" = "bgrt-fallback.png" ] && continue
         run cp -n "$f" /usr/share/plymouth/themes/edex/ 2>/dev/null || true
     done
 fi
 
-# 2) 放入 eDEX 主题配置。清掉可能从旧安装/旧脚本留下的 logo 文件,确保主题
-#    目录里只有黑底 + throbber 转圈,开机的任何阶段都不画 logo。
+# 2) 放入 eDEX 主题配置 + 品牌 logo(作为 BGRT 兜底图,也就是默认开机显示那张)
 run cp "$PLYMOUTH_FILE" /usr/share/plymouth/themes/edex/edex.plymouth
-run rm -f /usr/share/plymouth/themes/edex/watermark.png /usr/share/plymouth/themes/edex/bgrt-fallback.png
+run cp "$LOGO_FILE" /usr/share/plymouth/themes/edex/bgrt-fallback.png
 log "    主题文件就绪。"
 
 # 3) 设为默认主题(绝对路径 — 脚本以普通用户跑,其 PATH 没有 /usr/sbin)。
@@ -194,7 +189,7 @@ runlog bash -c 'grep -nE "set-default-theme|plymouthd.defaults|default.plymouth|
 log ""
 if [ "${EDEX_COUNT:-0}" -gt 0 ]; then
     log "==== 结果:成功 ===="
-    log "initramfs 已烤入 eDEX 主题($EDEX_COUNT 个文件)。重启后开机动画应只有黑底 + 转圈,无任何 logo。"
+    log "initramfs 已烤入 eDEX 主题($EDEX_COUNT 个文件)。重启后开机动画应为 eDEX 品牌。"
 else
     log "==== 结果:未生效 ===="
     log "initramfs 里没有 eDEX 主题文件(edex=${EDEX_COUNT:-0} / spinner=${SPINNER_COUNT:-0})。"

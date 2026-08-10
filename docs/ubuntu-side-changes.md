@@ -27,29 +27,19 @@ install 里的 `plymouth-set-default-theme spinner` 一直静默失败(`|| true`
    会话启动时 `xsetroot -solid black` 把 X 根窗口涂黑 —— lightdm greeter 关掉、eDEX
    窗口还没映射的瞬间(之前白屏 + 原生箭头)变黑底黑光标。
 
-4. **开机无 logo(只留转圈)**:根因查明 —— Ubuntu 24.04 的 plymouth 0.9.3 two-step 插件
-   没有 BGRT/bgrt-fallback 绘制代码,它把主题目录里的 **watermark.png** 画在黑底背景上,
-   stock spinner 主题的 watermark.png 就是 Ubuntu 圆圈(装机时被 cp 拷进了 edex 主题目录)。
-   现在 edex 主题目录**不装任何 logo 文件**(拷贝帧时排除 watermark.png + bgrt-fallback.png,
-   并 rm 清残留),`edex.plymouth` 加 `UseFirmwareBackground=false`(plymouth ≥1.0 用,0.9.3
-   忽略)。开机只剩黑底 + 转圈。已装机真机用 `fix-plymouth.sh` 补丁,装机路径走
-   install-edex.sh。
-
 **真机验证:**
 ```bash
 cat /etc/default/grub | grep CMDLINE_LINUX_DEFAULT   # 应含 quiet splash
 cat /etc/default/grub | grep -E "GRUB_COLOR|TERMINAL" # 应见 dark 配色
-plymouth-set-default-theme                             # 应输出 edex(不再是 spinner)
-ls /usr/share/plymouth/themes/edex/                    # 应无 watermark.png / bgrt-fallback.png
-lsinitramfs /boot/initrd.img-* | grep 'themes/edex'    # 应列出 edex 主题文件
+plymouth-set-default-theme                             # 应输出 spinner
+lsinitramfs /boot/initrd.img-* | grep plymouth | head   # 应列出 plymouth 文件
 update-alternatives --list x-cursor-theme               # 应含 DMZ-Black
 grep -A2 "Icon Theme" /usr/share/icons/default/index.theme  # 默认主题
 ```
 
-开机应看到:GRUB 黑底菜单 → 黑底 + 转圈(无任何 logo)→ 黑底 lightdm → eDEX 锁屏,全程无
-白屏无原生箭头。看到纯文本滚动 = plymouth 没生效(跑 `sudo update-initramfs -u && sudo
-update-grub` 后重启);看到 logo = 主题目录里残留了 watermark.png/bgrt-fallback.png(跑
-fix-plymouth.sh)。
+开机应看到:GRUB 黑底菜单 → spinner 动画 → 黑底 lightdm → eDEX 锁屏,全程无白屏无原生
+箭头。看到纯文本滚动 = plymouth 没生效(跑 `sudo update-initramfs -u && sudo update-grub`
+后重启)。
 
 ---
 
