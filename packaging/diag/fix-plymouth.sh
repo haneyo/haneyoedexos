@@ -78,7 +78,7 @@ run mkdir -p /usr/share/plymouth/themes/edex
 if [ -d /usr/share/plymouth/themes/spinner ]; then
     for f in /usr/share/plymouth/themes/spinner/*.png; do
         [ "$(basename "$f")" = "bgrt-fallback.png" ] && continue
-        cp -n "$f" /usr/share/plymouth/themes/edex/ 2>/dev/null || true
+        run cp -n "$f" /usr/share/plymouth/themes/edex/ 2>/dev/null || true
     done
 fi
 
@@ -87,12 +87,25 @@ run cp "$PLYMOUTH_FILE" /usr/share/plymouth/themes/edex/edex.plymouth
 run cp "$LOGO_FILE" /usr/share/plymouth/themes/edex/bgrt-fallback.png
 echo "    主题文件就绪。"
 
-# 3) 设为默认主题(绝对路径 — 脚本以普通用户跑,其 PATH 没有 /usr/sbin)
+# 3) 设为默认主题(绝对路径 — 脚本以普通用户跑,其 PATH 没有 /usr/sbin)。
+#    plymouth-set-default-theme 可能缺失(真机就踩到了:plymouthd 在而
+#    set-default-theme 不在,报 "command not found")。存在就用它,否则直接
+#    写 plymouthd.conf / plymouthd.defaults —— 效果相同,不需要该二进制。
 echo "[2/4] 设置默认主题为 edex ..."
 PSDT="$(dirname "$PLYMOUTHD")/plymouth-set-default-theme"
-[ -x "$PSDT" ] || PSDT=/usr/sbin/plymouth-set-default-theme
-run "$PSDT" edex
-echo "    默认主题: $(run "$PSDT" 2>/dev/null || echo 'edex')"
+if [ -x "$PSDT" ]; then
+    run "$PSDT" edex
+    echo "    默认主题: $(run "$PSDT" 2>/dev/null || echo 'edex')"
+else
+    echo "    (plymouth-set-default-theme 缺失 —— 直接写配置文件)"
+    run bash -c '
+        grep -q "^Theme=" /etc/plymouth/plymouthd.conf \
+            && sed -i "s/^Theme=.*/Theme=edex/" /etc/plymouth/plymouthd.conf \
+            || printf "Theme=edex\n" >> /etc/plymouth/plymouthd.conf
+        printf "[Daemon]\nTheme=edex\n" > /usr/share/plymouth/plymouthd.defaults
+    '
+    echo "    Theme=edex 已写入 plymouthd.conf + plymouthd.defaults"
+fi
 
 # 4) 重建 initramfs + grub,让开机即生效
 echo "[3/4] 重建 initramfs ..."
