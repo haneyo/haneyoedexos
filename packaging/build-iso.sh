@@ -130,13 +130,13 @@ if [ "$MOUNTS_OK" = "1" ]; then
     # claude CLI install is the last command and without it the chroot would
     # return 0 even when the GUI stack failed to install (masked breakage).
     sudo -E chroot "$WORK/rootfs" /bin/bash -c \
-        "set -e; export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean; $INSTALL_CLAUDE" \
+        "set -e; export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean; addgroup --system netdev || true; $INSTALL_CLAUDE" \
         || { echo "ERROR: chroot apt install failed"; exit 1; }
 else
     echo "[edex] installing proot and using userspace chroot"
     sudo apt-get install -y proot >/dev/null 2>&1 || true
     proot -S "$WORK/rootfs" /bin/bash -c \
-        "set -e; export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean; $INSTALL_CLAUDE" \
+        "set -e; export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean; addgroup --system netdev || true; $INSTALL_CLAUDE" \
         || { echo "ERROR: proot apt install failed"; exit 1; }
 fi
 

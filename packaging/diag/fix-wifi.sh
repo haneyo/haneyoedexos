@@ -9,9 +9,12 @@
 #     device (wlp5s0): Couldn't initialize supplicant interface:
 #     Failed to D-Bus activate wpa_supplicant service
 #   导致 wlp5s0 停在 "unavailable",nmcli dev wifi list 空白 —— 连不上 WiFi。
-#   驱动/固件都正常(RTL8821CE, 固件 24.11.0 已加载),卡在 wpa_supplicant
-#   起不来。最常见原因:wpasupplicant 包没装上(NetworkManager 对它只是
-#   Recommends 而非 Depends,缺了也不报安装错误)。
+#   驱动/固件都正常(RTL8821CE, 固件 24.11.0 已加载)。真实根因
+#   (fix-wifi-result.txt 确认):系统缺 netdev 组 → wpa_supplicant.service
+#   (声明 Group=netdev)起不来(status=216/GROUP "Failed to determine group
+#   credentials")→ D-Bus 激活失败。其次才是 wpasupplicant 包缺失
+#   (NetworkManager 对它只是 Recommends 而非 Depends,缺了也不报安装错误)。
+#   本脚本:先确保 wpa_supplicant 在,再补 netdev 组,最后重启服务。
 #
 # 用法:
 #   1) 把本文件拷到 U 盘根目录
@@ -80,15 +83,15 @@ log "D-Bus 激活文件:"
 runlog bash -c 'ls -la /usr/share/dbus-1/system-services/fi.w1.wpa_supplicant1.service 2>&1 || echo "(缺少 D-Bus 激活文件 fi.w1.wpa_supplicant1.service —— 包没装/被清理就会这样)"'
 log "wpa_supplicant 服务状态:"
 runlog bash -c 'systemctl status wpa_supplicant --no-pager -l 2>&1 | head -15 || echo "(无 wpa_supplicant 服务)"'
+log "netdev 系统组(wpa_supplicant 服务的属组):"
+runlog bash -c 'getent group netdev 2>&1 || echo "缺失 —— netdev 组不存在,wpa_supplicant 服务 Group=netdev 解析失败(status=216/GROUP)"'
 log "NetworkManager 最近 supplicant 报错:"
 runlog bash -c 'journalctl -u NetworkManager -b --no-pager 2>&1 | grep -iE "supplicant|Failed to D-Bus activate" | tail -6 || true'
 
 # ===== 判定 + 修复 =====
 log ""
 if run test -x /usr/sbin/wpa_supplicant; then
-    log "wpa_supplicant 已存在 —— 问题不在缺包。重启 NetworkManager 让 D-Bus 重新激活:"
-    runlog systemctl restart NetworkManager
-    sleep 5
+    log "wpa_supplicant 已存在 —— 问题不在缺包,转入下面的组/服务修复。"
 else
     log "!! /usr/sbin/wpa_supplicant 缺失 —— 尝试安装 wpasupplicant ..."
     if run apt-get update >/dev/null 2>&1 && run apt-get install -y wpasupplicant >/dev/null 2>&1; then
@@ -103,19 +106,45 @@ else
         log "!! (或手动: sudo apt-get install -y wpasupplicant && sudo systemctl restart NetworkManager)"
         exit 0
     fi
-    if run test -x /usr/sbin/wpa_supplicant; then
-        log "    安装完成,重启 NetworkManager ..."
-        runlog systemctl restart NetworkManager
-        sleep 5
-    else
+    if ! run test -x /usr/sbin/wpa_supplicant; then
         log "!! wpa_supplicant 仍缺失 —— 见上方 apt/dpkg 输出。报告已保存,发回核对。"
         exit 0
     fi
+    log "    wpa_supplicant 就绪。"
 fi
+
+# 真机根因(2026-08-10 fix-wifi-result.txt):wpa_supplicant.service 声明
+# Group=netdev,但系统里没有 netdev 组 → systemd 解析组凭据失败
+# (status=216/GROUP "Failed to determine group credentials: No such process")
+# → D-Bus 激活 wpa_supplicant 失败 → wlp5s0 停在 "unavailable"。
+# 光重启 NetworkManager 不解决;必须先补上 netdev 组。
+log ""
+log "检查 netdev 系统组(wpa_supplicant 服务声明的属组):"
+if run getent group netdev >/dev/null 2>&1; then
+    log "    netdev 组存在。"
+else
+    log "    netdev 组缺失 —— 创建系统组(供 wpa_supplicant 服务解析组凭据)..."
+    run bash -c 'groupadd --system netdev 2>/dev/null || addgroup --system netdev 2>/dev/null || true'
+    if run getent group netdev >/dev/null 2>&1; then
+        log "    netdev 组已创建。"
+    else
+        log "!! netdev 组仍无法解析 —— 继续重启服务试一下,报告里会有 systemctl 输出。"
+    fi
+fi
+
+log "重载 systemd + 重启 wpa_supplicant / NetworkManager:"
+runlog systemctl daemon-reload
+runlog systemctl restart wpa_supplicant || true
+runlog systemctl restart NetworkManager
+sleep 6
 
 # ===== 修复后验证 =====
 log ""
 log "===== 修复后验证 ====="
+log "netdev 组:"
+runlog bash -c 'getent group netdev 2>&1 || echo "(仍缺失)"'
+log "wpa_supplicant 服务:"
+runlog bash -c 'systemctl is-active wpa_supplicant 2>&1 || true; systemctl status wpa_supplicant --no-pager -l 2>&1 | head -8 || true'
 runlog bash -c 'nmcli dev status 2>&1'
 log "无线扫描:"
 runlog bash -c 'nmcli -t dev wifi list 2>&1 | head -12 || true'
