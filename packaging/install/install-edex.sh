@@ -211,6 +211,13 @@ fi
 usermod -aG video "$U" 2>/dev/null || true
 echo "[edex] configured for user: $U"
 
+# WiFi: wpa_supplicant.service declares Group=netdev. The build-time rootfs
+# addgroup does NOT survive the install — the real machine (2026-08-10) came up
+# missing netdev, so wpa_supplicant failed to start (status=216/GROUP) and the
+# wifi scan returned empty. Ensure the group exists on every installed system.
+getent group netdev >/dev/null 2>&1 || addgroup --system netdev
+usermod -aG netdev "$U" 2>/dev/null || true
+
 echo "[edex] fcitx5 profile: keyboard-us + pinyin + Rime, default US (input method #16)"
 # fcitx5 is launched and the IM env is set (edex-session.sh), but without a
 # profile the engine list is EMPTY — so Ctrl+Space has nothing to switch to and
@@ -489,7 +496,7 @@ cat > "/home/$U/.config/eDEX-UI/settings.json" <<'SETTINGS'
     "clockHours": 24,
     "pingAddr": "223.5.5.5",
     "port": 3000,
-    "nointro": true,
+    "nointro": false,
     "nocursor": false,
     "forceFullscreen": true,
     "allowWindowed": false,
