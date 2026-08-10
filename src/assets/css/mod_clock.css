@@ -26,12 +26,30 @@ div#mod_clock {
 #edex_battery .battery_out { fill: none; stroke: rgba(var(--color_r), var(--color_g), var(--color_b), 0.5); }
 #edex_battery .battery_fill { fill: rgba(var(--color_r), var(--color_g), var(--color_b), 0.9); }
 #edex_battery .battery_cap { fill: none; stroke: rgba(var(--color_r), var(--color_g), var(--color_b), 0.5); }
-#edex_battery .battery_bolt { fill: none; stroke: #05080d; stroke-width: 1.4; }
 #edex_battery .battery_pct { font-size: 1.6vh; line-height: 1; }
+/* Breathing edge glow. Grade picks the colour: red for critical/low, amber for
+   mid, theme for high/full. Charging additionally pulses the fill and makes the
+   glow breathe brighter. There is no bolt glyph inside the cell anymore — it
+   drew a stray symbol (#169). */
+@keyframes battery_glow_theme {
+    0%, 100% { filter: drop-shadow(0 0 0.3vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.35)); }
+    50%      { filter: drop-shadow(0 0 0.8vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.70)); }
+}
+@keyframes battery_glow_red {
+    0%, 100% { filter: drop-shadow(0 0 0.3vh rgba(255, 64, 54, 0.40)); }
+    50%      { filter: drop-shadow(0 0 0.9vh rgba(255, 64, 54, 0.80)); }
+}
+@keyframes battery_glow_amber {
+    0%, 100% { filter: drop-shadow(0 0 0.3vh rgba(255, 185, 70, 0.40)); }
+    50%      { filter: drop-shadow(0 0 0.8vh rgba(255, 185, 70, 0.75)); }
+}
+#edex_battery .battery_ico { animation: battery_glow_theme 3s ease-in-out infinite; }
+#edex_battery.battery_low .battery_ico,
+#edex_battery.battery_critical .battery_ico { animation-name: battery_glow_red; }
+#edex_battery.battery_mid .battery_ico { animation-name: battery_glow_amber; }
 /* charging pulse */
 @keyframes battery_charge_pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 #edex_battery.battery_charging .battery_fill { animation: battery_charge_pulse 1.2s ease-in-out infinite; }
-#edex_battery.battery_charging .battery_bolt { stroke: rgba(var(--color_r), var(--color_g), var(--color_b), 0.95); }
 
 /* Battery grade tints (#37): critical = red blink, low = red, mid = amber,
    high = theme, full = theme + glow. Discharged grades override the base fill
@@ -43,7 +61,6 @@ div#mod_clock {
 #edex_battery.battery_low .battery_fill { fill: rgba(255, 96, 80, 0.95); }
 #edex_battery.battery_mid .battery_fill { fill: rgba(255, 185, 70, 0.95); }
 #edex_battery.battery_full .battery_fill { fill: rgba(var(--color_r), var(--color_g), var(--color_b), 1); }
-#edex_battery.battery_full .battery_ico { filter: drop-shadow(0 0 0.35vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.85)); }
 
 /* Current date, pinned to the clock's bottom edge (position:absolute, so it
    never participates in the flex layout and the centered time never shifts —

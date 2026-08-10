@@ -1046,15 +1046,16 @@ async function initUI() {
                     }
                     if (!b || !b.present) { el.className = "battery_hidden"; return; }
                     const pct = Math.max(0, Math.min(100, Math.round((b.level || 0) * 100)));
-                    // Grade: critical ≤5% (red blink) < low ≤20% (red) < mid
-                    // ≤50% (amber) < high ≤80% (theme) < full (theme + glow).
-                    const grade = b.charging ? "charging"
-                        : pct <= 5 ? "critical"
+                    // Grade always follows the charge level so a low battery
+                    // stays red even while charging (#169). Charging is an
+                    // additive class: it pulses the fill and brightens the edge
+                    // glow (mod_clock.css).
+                    const grade = pct <= 5 ? "critical"
                         : pct <= 20 ? "low"
                         : pct <= 50 ? "mid"
                         : pct <= 80 ? "high"
                         : "full";
-                    el.className = "battery_" + grade;
+                    el.className = "battery_" + grade + (b.charging ? " battery_charging" : "");
                     el.title = `${pct}% ${b.charging ? "(charging)" : "(battery)"}`;
                     // One-shot toasts on transitions: plug-in, low, critical,
                     // full. Reset the discharged warnings once back above 20%.
@@ -1080,12 +1081,14 @@ async function initUI() {
                         battTrack.lowWarned = false;
                         battTrack.critWarned = false;
                     }
+                    // No bolt inside the cell: the old charging/non-charging bolt
+                    // paths both drew a stray glyph (#169) — charging is now
+                    // indicated purely by a gentle breathing glow (mod_clock.css).
                     el.innerHTML =
                         `<svg viewBox="0 0 32 14" class="battery_ico">` +
                         `<rect x="1" y="1" width="25" height="12" rx="2" class="battery_out"/>` +
                         `<rect x="3" y="3" width="${(23 * pct / 100).toFixed(1)}" height="8" rx="1" class="battery_fill"/>` +
                         `<path d="M28 5v4" class="battery_cap"/>` +
-                        `<path d="${b.charging ? 'M11 8l2-3 2 3' : 'M9 8l2 1 1-4 2 3'}" class="battery_bolt"/>` +
                         `</svg>`;
                 } catch (e) {}
             }
