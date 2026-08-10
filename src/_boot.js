@@ -1252,6 +1252,16 @@ app.on('ready', async () => {
                     charging = st === "charging" || st === "full";
                 }
             } catch (err) {}
+            // On Linux the kernel's per-battery `status` file is authoritative
+            // for whether a charger is feeding the battery; Electron's UPower
+            // state mapping can read "discharging"/"unknown" even while a USB-C
+            // PD charger is actively charging (ThinkPad E580, #173). When the
+            // powerMonitor path says not-charging, cross-check sysfs and let the
+            // kernel status override a wrong negative.
+            if (!charging && process.platform === "linux") {
+                const sys = readSysfsBattery("/sys/class/power_supply");
+                if (sys && sys.charging) charging = true;
+            }
             return { present: true, level, charging };
         }
         if (process.platform === "linux") {
