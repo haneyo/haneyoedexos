@@ -4727,12 +4727,17 @@ window.cursorTrap = (() => {
 
 // ---- Software screen-off ----
 // After `screenOffIdle` seconds without input the display is blanked with a
-// fullscreen black overlay (#93). It engages even while the screensaver plays
-// (the timeout is clamped to be ≥ screensaverIdle, so the screensaver always
-// starts first) and any input wakes it. It is a pure overlay — nothing else
-// changes state — so waking fades it away and the normal screensaver / lock
-// flow continues underneath.
+// fullscreen black overlay (#93) AND the panel is powered down for real via
+// xset DPMS (power:screen) — the overlay alone would leave the backlight lit,
+// which on an LCD reads as "black, not off". It engages even while the
+// screensaver plays (the timeout is clamped to be ≥ screensaverIdle, so the
+// screensaver always starts first) and any input wakes it: DPMS auto-wakes on
+// input and hideScreenOff() sends the matching force-on. The overlay fades
+// away and the normal screensaver / lock flow continues underneath.
 const screenOffEl = () => document.getElementById("screen_off");
+// True while the real panel has been powered down (screen:power off) — set on
+// show, cleared on hide so the matching force-on is sent exactly once.
+let screenOffPowered = false;
 const showScreenOff = () => {
     if (screenOffEl()) return;
     const el = document.createElement("div");
@@ -4742,10 +4747,20 @@ const showScreenOff = () => {
     // The custom pointer pack would glow through the black — hide the cursor
     // exactly like the screensaver does.
     if (window.cursorTrap) window.cursorTrap.hide();
+    // Power the panel down for real. Non-Linux previews have no panel to turn
+    // off — the handler returns a mock and only the overlay blanks.
+    if (!screenOffPowered) {
+        screenOffPowered = true;
+        ipc.invoke("power:screen", { action: "off" }).catch(() => {});
+    }
 };
 window.hideScreenOff = () => {
     const el = screenOffEl();
     if (!el) return;
+    if (screenOffPowered) {
+        screenOffPowered = false;
+        ipc.invoke("power:screen", { action: "on" }).catch(() => {});
+    }
     el.classList.add("screen_off_fade_out");
     // Disable pointer capture immediately: the overlay is invisible by now and
     // must never swallow clicks, even if the removal timeout below is delayed

@@ -1368,6 +1368,20 @@ app.on('ready', async () => {
         return { ok: true, percent: max ? Math.round(cur / max * 100) : 0 };
     });
 
+    // True display power-off. The renderer's screen-off overlay only blanks
+    // pixels — the panel/backlight stays lit, which on an LCD reads as "black,
+    // not off". On the X11 session a DPMS force-off powers the panel down for
+    // real; any input wakes it at the hardware level and the renderer sends the
+    // matching force-on when it removes the overlay. Non-Linux (macOS preview)
+    // keeps the software overlay only.
+    ipc.handle("power:screen", async (e, payload) => {
+        const action = payload && payload.action === "off" ? "off" : "on";
+        if (process.platform !== "linux") return { ok: true, mock: true, action };
+        const { exec } = require("child_process");
+        const ok = await new Promise(res => exec("xset dpms force " + action, err => res(!err)));
+        return { ok, action };
+    });
+
     // System volume control (settings slider) — pactl with an amixer fallback.
     ipc.handle("power:volume", async (e, payload) => {
         const { exec } = require("child_process");
