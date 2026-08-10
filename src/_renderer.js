@@ -4308,7 +4308,14 @@ window.screensaver = (() => {
             document.body.classList.add("screensaver_on");
             if (window.cursorTrap) window.cursorTrap.hide();
             if (window.settings.screensaverStyle === "matrix") {
-                if (!canvas) {
+                // A stale canvas can survive DETACHED: after the lock adopts it
+                // into #lock_screen, the lock's teardown removes that element
+                // (and the canvas with it) without telling this module. A
+                // detached canvas still "draws", so the rain runs but never
+                // shows — the screensaver looks like fake panels with no rain.
+                // Rebuild on any missing-or-detached canvas (#177).
+                if (!canvas || !canvas.isConnected) {
+                    if (canvas && canvas.remove) { try { canvas.remove(); } catch (e) {} }
                     canvas = document.createElement("canvas");
                     canvas.id = "screensaver_canvas";
                     canvas.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;background:#05080d;display:none;";
@@ -4459,7 +4466,16 @@ window.screensaver = (() => {
             if (!canvas || mTimer === null) return null;
             const timer = mTimer;
             mTimer = null;               // the lock now owns this interval
-            return { canvas, ctx, drops, cols, GRID, mTimer: timer };
+            const adopted = { canvas, ctx, drops, cols, GRID, mTimer: timer };
+            // The lock now owns this canvas (it moves it inside #lock_screen and
+            // tears that element down on unlock, detaching the canvas). Forget
+            // the reference so the NEXT screensaver start builds a fresh,
+            // attached canvas — otherwise show() keeps drawing to the detached
+            // one and the rain silently stops appearing after the first
+            // screensaver→lock→unlock cycle (#177).
+            canvas = null;
+            ctx = null;
+            return adopted;
         },
         // Expose the procedural code generator so the lock screen can stream
         // the same sci-fi C++ onto its own fullscreen canvas.
