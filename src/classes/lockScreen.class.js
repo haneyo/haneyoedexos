@@ -229,6 +229,7 @@ class LockScreen {
         // restore the terminal's pty send (physical keys + virtual keyboard both
         // flowed through it while locked), reset the display and show the cursor
         if (this._term) {
+            let hadSaved = false;
             try {
                 if (this._origSend) this._term.socket.send = this._origSend;
                 if (this._term.term) {
@@ -247,6 +248,7 @@ class LockScreen {
                         this._term.term.write(this._savedTerm);
                         this._savedTerm = null;
                         this._serializeAddon = null;
+                        hadSaved = true;
                     }
                 }
                 // No buffer to restore (fallback): term.reset() wiped the shell's
@@ -254,7 +256,10 @@ class LockScreen {
                 // its own — ask the pty for a fresh prompt so the tab is not left
                 // blank after unlock (#62). On a timeout the screensaver re-owns
                 // the terminal instead.
-                if (restoreWindows && !this._savedTerm && this._term.socket && this._term.socket.readyState === 1) {
+                // NB: gate on hadSaved, not on this._savedTerm — nulling it above
+                // would make this fallback fire even after a successful replay and
+                // print a spurious extra prompt after unlock (#176).
+                if (restoreWindows && !hadSaved && this._term.socket && this._term.socket.readyState === 1) {
                     try { this._term.socket.send("\r"); } catch (e) {}
                 }
             } catch (e) {}
@@ -426,6 +431,16 @@ class LockScreen {
                         // must re-serialize the CURRENT live buffer, not reuse
                         // this pre-screensaver snapshot.
                         window.screensaver.preSaverTerm0 = null;
+                    } else if (this._savedTerm && typeof this._savedTerm === "string" && this._savedTerm.length) {
+                        // Re-engaging from a screensaver whose clean snapshot is
+                        // gone (the lock-first flow started the streamer via
+                        // resumeCode/show, never preSaverTerm0). The FIRST engage
+                        // in this cycle captured the pre-lock buffer BEFORE any
+                        // fake code touched the terminal, and teardown-to-
+                        // screensaver kept it. A live re-serialize now would
+                        // replay that fake code on unlock (#176) — keep the clean
+                        // snapshot instead.
+                        this._serializeAddon = null;
                     } else {
                         const {SerializeAddon} = require("xterm-addon-serialize");
                         this._serializeAddon = new SerializeAddon();
