@@ -150,6 +150,82 @@ const LOCK2_NEW = '_teardownLock(e){if(this._keydownHandler){try{window.removeEv
 // 每 3/4/5 分钟随机清一次累积状态。锚点改为文件尾,expectOut 标记 __edexGlobeReset。
 const RESET_JS = ';(function(){window.__edexGlobeReset=function(){try{var _g=window.mods&&window.mods.globe;if(!_g||!_g.globe)return;try{_g.removePins&&_g.removePins()}catch(e){}try{_g.removeMarkers&&_g.removeMarkers()}catch(e){}_g.conns=[];try{var p=window.mods.netstat&&window.mods.netstat.ipinfo&&window.mods.netstat.ipinfo.geo;if(p&&void 0!==p.latitude&&void 0!==p.longitude){try{_g._locPin=_g.globe.addPin(p.latitude,p.longitude,"",1.2)}catch(e){}try{_g._locMarker=_g.globe.addMarker(p.latitude,p.longitude,"",!1,1.2)}catch(e){}}}catch(e){}}catch(e){}};var t=function(){try{window.__edexGlobeReset&&window.__edexGlobeReset()}catch(e){}setTimeout(t,[18e4,24e4,3e5][Math.floor(3*Math.random())])};setTimeout(t,[18e4,24e4,3e5][Math.floor(3*Math.random())])})();';
 
+// ---- 修复 13:cursorTrap 光标策略(用户反馈"鼠标不见了")----
+// 原实现:全局闲置定时器,闲置 cursorAutoHideDelay(默认10s)后加 body.cursor_hidden 隐藏光标
+// → UI 状态 10s 不动鼠标光标就消失,用户频繁"找不到鼠标"。
+// 用户要求:UI 状态光标**一直显示**;只有锁屏/屏保状态才闲置自动隐藏,且动一下鼠标恢复。
+// 修复:show() 只在锁屏/屏保激活(_ls)时才武装闲置隐藏定时器;UI 状态 show() 后不再武装,
+// 光标常显。hide() 无条件生效(锁屏/屏保/息屏调用),解锁/退出屏保时 show() 恢复。
+const CURSOR1_OLD = 'window.cursorTrap=(()=>{let e=null,t=!1===window.settings.cursorAutoHide;const n=()=>{t||document.body.classList.add("cursor_hidden")},o=()=>{document.body.classList.remove("cursor_hidden"),t||(e&&clearTimeout(e),e=setTimeout(n,1e3*(Number(window.settings.cursorAutoHideDelay)||10)))},s=()=>{t=!0,document.body.classList.remove("cursor_hidden")},i=()=>{t=!1,o()};return t||(window.addEventListener("mousemove",()=>o(),{passive:!0}),o()),{show:o,hide:n,off:s,on:i}})();';
+const CURSOR1_NEW = 'window.cursorTrap=(()=>{let e=null;const _ls=()=>{try{return!!(window.lockScreen&&window.lockScreen.active)||!!(window.screensaver&&window.screensaver.isActive())}catch(_){return!1}},n=()=>{document.body.classList.add("cursor_hidden")},o=()=>{document.body.classList.remove("cursor_hidden"),e&&clearTimeout(e),_ls()&&(e=setTimeout(n,1e3*(Number(window.settings.cursorAutoHideDelay)||10)))},s=()=>{o()},i=()=>{o()};window.addEventListener("mousemove",()=>o(),{passive:!0}),o();return{show:o,hide:n,off:s,on:i}})();';
+
+// ---- 修复 14:设置菜单加 SSH 开关(#4)----
+// 用户需求:设置菜单加一个能真正启停 sshd 的开关。
+// eDEX 渲染进程有 node 权限(require("child_process")),edex 用户有免密 sudo,
+// 直接 sysCmd.run("sudo -n systemctl ...") 即可,不动主进程。
+// 1) 设置编辑器新增 "SSH" 分区:状态(运行中/已停止)+ 开/关 select。
+//    html() 渲染时 select 默认"开",openSettings 的监听块会 refreshStatus() 回填真实状态。
+// 2) window.ssh 对象(挂 clang 块后,和 clash 同层):refreshStatus 查 is-active 并回填;
+//    applyEnabled 按 select 值 start/stop。
+// 3) 打开设置时绑定 change 监听 + 刷新状态(插在 clash 监听之后)。
+// 幂等:_renderer.js target 的 expectOut 由 13fix 的 cursorTrap 特征串换成 SSH 特征串,
+// 保证 13fix→14fix 会执行;旧的 CURSOR1_OLD 等替换对已含补丁的版本是安全 no-op。
+// 注意锚点里 minified 源是字面 `\n`(反斜杠+n),故 JS 字符串写 \\n;section 内容用单引号+
+// 字符串拼接(不用 `${}`,避免模板插值),与 APPEND 同风格。
+// 锚点首字符 `}` 是上一分区(apps)对象体 html()=>[...] 的闭合大括号,替换串必须以 `}` 开头
+// 先闭合 apps 对象,再 `,{id:"ssh",...}`,最后 `,{id:"network",...html:()=>{` 接回 network。
+const SSH_SEC_ANCHOR = '},{id:"network",titleKey:"settings.cat.network",html:()=>{';
+const SSH_SEC_NEW = `},{id:"ssh",titleKey:"settings.cat.ssh",html:()=>[o("settings.cat.ssh"),n("settings.ssh.status",'<span id="settingsSshStatus" class="settings_net_status">–</span>'),n("settings.ssh.enabled",'<select id="settingsSshEnabled">\\n                <option value="1" selected>'+t("settings.network.on")+'</option>\\n                <option value="0">'+t("settings.network.off")+'</option>\\n            </select>',"settings.ssh.enabled.help")].join("")},{id:"network",titleKey:"settings.cat.network",html:()=>{`;
+// 注:minified 源里 clash-log 的 ipc.on 结尾是 `...n.scrollHeight)});`(scrollHeight 后有个 `)`),
+// 后面紧跟版本比较器 `const v=(e,t)=>{const n=(e||"").replace`。锚在该唯一转移处,在其间插入 window.ssh。
+const SSH_OBJ_ANCHOR = ');const v=(e,t)=>{const n=(e||"").replace';
+const SSH_OBJ_NEW = ');window.ssh={status:null,refreshStatus(){window.sysCmd.run("sudo -n systemctl is-active ssh").then(e=>{this.status=e;const n=document.getElementById("settingsSshStatus"),o=document.getElementById("settingsSshEnabled"),a=e.ok&&"active"===(e.out||"").trim();n&&(n.textContent=a?t("settings.ssh.running"):t("settings.ssh.stopped"));o&&(o.value=a?"1":"0")}).catch(()=>{})},applyEnabled(){const e=document.getElementById("settingsSshEnabled");if(!e)return;const a="1"===e.value?"start":"stop";window.sysCmd.run("sudo -n systemctl "+a+" ssh").then(()=>{this.refreshStatus()})}};const v=(e,t)=>{const n=(e||"").replace';
+const SSH_WIRE_ANCHOR = 'window.clash&&window.clash.refreshStatus();const s=(e,t)=>{';
+const SSH_WIRE_NEW = 'window.clash&&window.clash.refreshStatus();const _se=document.getElementById("settingsSshEnabled");_se&&_se.addEventListener("change",()=>window.ssh.applyEnabled());window.ssh&&window.ssh.refreshStatus();const _mw=document.getElementById("settingsAppMonitorManageWebapps");_mw&&_mw.addEventListener("click",()=>{(window.appmonitorA||window.appmonitorB)&&(window.appmonitorA||window.appmonitorB).manageWebapps()});const s=(e,t)=>{';
+
+// ---- #3 appmonitor 应用列表(apps 态)----
+// tab4/5 不再默认 Firefox:原生应用只保留用户装的 UI 应用(appimage:/custom:/demo: 前缀,
+// 去掉 native: 即 Firefox 等系统应用);init 不再回退选第一个 native;无已保存选择时
+// 自动打开应用菜单;菜单加 WEBAPPS 管理入口(manageWebapps 弹窗删自定义 webapp);
+// 设置分区加"管理 Webapps"按钮(接线已并入 SSH_WIRE_NEW)。
+const AM_FILTER_OLD = 'const e=await window.appmonitorApi.nativeList();(e&&e.apps||[]).forEach(e=>this.apps.push(Object.assign({},e,{kind:"native"})))';
+const AM_FILTER_NEW = 'const e=await window.appmonitorApi.nativeList();(e&&e.apps||[]).forEach(e=>("appimage:"===String(e.id).slice(0,9)||"custom:"===String(e.id).slice(0,7)||"demo:"===String(e.id).slice(0,5))&&this.apps.push(Object.assign({},e,{kind:"native"})))';
+const AM_SEL_OLD = 'const t=e&&this.apps.find(t=>t.name===e)||this.apps.find(e=>"native"===e.kind)||this.apps[0];this.labelEl&&!t&&';
+const AM_SEL_NEW = 'const t=e&&this.apps.find(t=>t.name===e);this.labelEl&&!t&&';
+const AM_INITTAIL_OLD = 'this._statusTimer||(this._statusTimer=setInterval(()=>this._fetchStatus(),3e3)),this._renderMenu()}';
+const AM_INITTAIL_NEW = 'this._statusTimer||(this._statusTimer=setInterval(()=>this._fetchStatus(),3e3)),this._renderMenu(),t||setTimeout(()=>this.openAppList(),500)}';
+const AM_ADDR_OLD = 'this.menu.appendChild(e),this.apps.forEach(';
+const AM_ADDR_NEW = 'this.menu.appendChild(e),this._appendWaEntry(),this.apps.forEach(';
+const AM_METHODS_OLD = '}}module.exports={AppMonitorPanel};';
+const AM_METHODS_NEW = `}openAppList(){if(!this.menu)return;this._positionMenuDefault(),this.menu.style.display="block",this.menu.focus(),this._focusMenu(0)}_positionMenuDefault(){const e=this.container&&this.container.getBoundingClientRect?this.container.getBoundingClientRect():null;this.menu.style.left=Math.max(4,(e?e.left:40)+16)+"px",this.menu.style.top=Math.max(4,(e?e.top:40)+12)+"px"}manageWebapps(){this.refresh();const that=this,rows=(window.webapps&&window.webapps._customList&&window.webapps._customList()||[]).map(e=>'<div class="appmonitor_wa_row"><span class="appmonitor_wa_name">'+e.name+'</span><span class="appmonitor_wa_url">'+e.url+'</span><button type="button" class="appmonitor_wa_del">'+window.t("appmonitor.webapps.delete")+'</button></div>').join(""),id=new Modal({type:"custom",title:window.t("appmonitor.webapps.manage"),html:'<div class="appmonitor_wa_list">'+(rows||'<div class="appmonitor_wa_empty">'+window.t("appmonitor.webapps.empty")+"</div>")+"</div>",buttons:[{label:window.t("appmonitor.webapps.title"),action:"window.appmonitorWaModal&&window.appmonitorWaModal.close()"}]});that._waModalId=id,window.appmonitorWaModal=window.modals[id],setTimeout(()=>{document.querySelectorAll(".appmonitor_wa_del").forEach(t=>{t.onclick=()=>{const u=t.parentElement&&t.parentElement.querySelector(".appmonitor_wa_url");if(!u)return;window.webapps&&window.webapps.removeCustom(u.textContent),window.modals&&window.modals[that._waModalId]&&window.modals[that._waModalId].close(),that._notify(window.t("appmonitor.webapps.removed")),that.refresh()}})},50)}_appendWaEntry(){const e=document.createElement("div");e.className="webapp_menu_opt appmonitor_opt appmonitor_menu_wa",e.textContent=window.t("appmonitor.webapps.manage"),e.onclick=e=>{e.stopPropagation(),this.manageWebapps()},this.menu.appendChild(e)}}module.exports={AppMonitorPanel};`;
+const AM_ROW_OLD = '"settings.appMonitor.appImageDirs.help"),o("settings.cat.download"),';
+const AM_ROW_NEW = '"settings.appMonitor.appImageDirs.help"),n("appmonitor.webapps.manage",`<button type="button" id="settingsAppMonitorManageWebapps" class="settings_net_btn">${t("appmonitor.webapps.manage")}</button>`,"appmonitor.webapps.manage.help"),o("settings.cat.download"),';
+const AM_CSS = `
+.appmonitor_menu{position:fixed;z-index:9000;min-width:240px;max-width:60vw;max-height:70vh;overflow-y:auto;background:rgba(10,14,16,.96);border:1px solid rgba(var(--color_r),var(--color_g),var(--color_b),.45);border-radius:6px;padding:6px 0;box-shadow:0 6px 24px rgba(0,0,0,.5);font-family:var(--font_main);font-size:1.1vh;color:rgb(var(--color_r),var(--color_g),var(--color_b))}
+.appmonitor_menu .appmonitor_opt{display:flex;align-items:center;gap:10px;padding:8px 14px;cursor:pointer;white-space:nowrap}
+.appmonitor_menu .appmonitor_opt:hover,.appmonitor_menu .appmonitor_opt.active{background:rgba(var(--color_r),var(--color_g),var(--color_b),.12)}
+.appmonitor_menu .appmonitor_menu_add{font-weight:600}
+.appmonitor_menu .appmonitor_menu_wa{border-top:1px solid rgba(var(--color_r),var(--color_g),var(--color_b),.2);margin-top:4px;padding-top:8px}
+.appmonitor_dot_slot{width:10px;height:10px;flex:0 0 10px;display:flex;align-items:center;justify-content:center}
+.appmonitor_dot{width:8px;height:8px;border-radius:50%;background:rgb(var(--color_r),var(--color_g),var(--color_b))}
+.appmonitor_dot_running{background:#2ecc71;box-shadow:0 0 6px rgba(46,204,113,.7)}
+.appmonitor_dot_starting{background:#f39c12}
+.appmonitor_dot_exited{background:#e74c3c}
+.appmonitor_icon_slot{width:22px;height:22px;flex:0 0 22px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.appmonitor_icon_slot img{width:100%;height:100%;object-fit:contain}
+.appmonitor_icon_ph{width:18px;height:18px}
+.appmonitor_name{overflow:hidden;text-overflow:ellipsis;max-width:280px}
+.webapp_menu_del{background:transparent;border:none;color:inherit;cursor:pointer;font-size:1.3vh;opacity:.7;margin-left:auto;padding:2px 6px}
+.webapp_menu_del:hover{opacity:1}
+.appmonitor_wa_list{max-height:55vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
+.appmonitor_wa_row{display:flex;align-items:center;gap:10px;border:1px solid rgba(var(--color_r),var(--color_g),var(--color_b),.25);border-radius:4px;padding:8px 12px}
+.appmonitor_wa_name{font-weight:600}
+.appmonitor_wa_url{opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:46vw;font-family:var(--font_mono)}
+.appmonitor_wa_del{background:rgba(231,76,60,.18);color:#e74c3c;border:1px solid rgba(231,76,60,.5);border-radius:4px;padding:4px 12px;cursor:pointer;font-family:var(--font_main);font-size:1.05vh}
+.appmonitor_wa_del:hover{background:rgba(231,76,60,.3)}
+.appmonitor_wa_empty{opacity:.6;padding:12px;text-align:center}
+`;
+
 
 const targets = [
   {
@@ -168,25 +244,30 @@ const targets = [
       .join('let d=new Terminal({role:"server",shell:a,params:l,login:c,cwd:tty.tty._cwd||e.cwd,env:p,port:i,noBootCR:!!s})'),
   },
   {
-    name: 'terminal.class.js (enableMouseEvents + alt-screen wheel 放行)',
+    name: 'terminal.class.js (enableMouseEvents + alt-screen wheel 放行 + #9 完成音效)',
     path: ['classes', 'terminal.class.js'],
     expectIn: 'scrollback:1500,',
-    expectOut: 'scrollback:1500,enableMouseEvents:!0,',
+    expectOut: 'this._doneT=setTimeout',
     // 终端滚动修复:Claude Code 等 TUI 用 alt-screen buffer,滚轮事件被 eDEX 的 capture
     // handler preventDefault+scrollLines 吞掉(alt buffer 无 scrollback,scrollLines 无效)。
     // 1) xterm 开 enableMouseEvents:TUI 应用自会发 DECSET 请求鼠标跟踪,滚轮才以 SGR 发给
     //    pty(Claude Code/Ink 响应滚轮);bash 等不请求鼠标跟踪,不受影响。
     // 2) wheel handler 检测到 alt buffer 时直接 return(不 preventDefault),让事件到 xterm。
+    // claude 启动修复:新终端连接建立时 server 会给 pty 写一个裸 \r(为了刷新 bash 提示符)。
+    // 但 claude 的 shell 是 claude-launcher.js(目录选择器),\r → select() → cursor=-1 →
+    // 立即 launch(claude) → "选 cd 路径"和"启动 claude"同时发生。
+    // 修复:claude 终端(noBootCR)跳过 boot 回车,用户先选目录再 Enter 才启动。
+    // #9 完成音效:终端/Claude 停止输出后静默 1.5s 播放 info.wav(需已启用音频设置;
+    // 且用户至少输入过一次,避免启动时空响)。_lastOut 由每条输出刷新,新输出重置定时器。
     transform: c => c
       .split('scrollback:1500,').join('scrollback:1500,enableMouseEvents:!0,')
       .split('m.addEventListener("wheel",e=>{e.preventDefault(),e.stopPropagation();const t=Number(window.settings.terminalScrollSensitivity)')
       .join('m.addEventListener("wheel",e=>{const _b=this.term&&this.term.buffer&&this.term.buffer.active;if(_b&&"alt"===_b.type){return}e.preventDefault(),e.stopPropagation();const t=Number(window.settings.terminalScrollSensitivity)')
-      // claude 启动修复:新终端连接建立时 server 会给 pty 写一个裸 \r(为了刷新 bash 提示符)。
-      // 但 claude 的 shell 是 claude-launcher.js(目录选择器),\r → select() → cursor=-1 →
-      // 立即 launch(claude) → "选 cd 路径"和"启动 claude"同时发生。
-      // 修复:claude 终端(noBootCR)跳过 boot 回车,用户先选目录再 Enter 才启动。
       .split('this._disableCWDtracking=!1,').join('this._disableCWDtracking=!1,this._noBootCR=!!e.noBootCR,')
-      .split('try{this.tty.write("\\r")}catch(e){}}').join('try{this._noBootCR||this.tty.write("\\r")}catch(e){}}'),
+      .split('try{this.tty.write("\\r")}catch(e){}}').join('try{this._noBootCR||this.tty.write("\\r")}catch(e){}}')
+      .split('this.socket.addEventListener("message",e=>{let t=Date.now();if(t-this.lastSoundFX>30&&(window.audioManager.stdout.play(),this.lastSoundFX=t),')
+      .join('this.socket.addEventListener("message",e=>{let t=Date.now();if(t-this.lastSoundFX>30&&(window.audioManager.stdout.play(),this.lastSoundFX=t),this._doneT&&clearTimeout(this._doneT),this._lastOut=Date.now(),this._doneT=setTimeout(()=>{this._doneT=null;if(this._userIn&&Date.now()-this._lastOut>=1500)try{window.audioManager&&window.audioManager.info&&window.audioManager.info.play()}catch(_){}},1500),')
+      .split('this.write=e=>{this.socket.send(e)}').join('this.write=e=>{this._userIn=!0;this.socket.send(e)}'),
   },
   {
     name: 'lockScreen.class.js (code 锁屏用独立虚拟终端)',
@@ -198,10 +279,10 @@ const targets = [
       .split('_teardownLock(e){this.active=!1,').join(LOCK2_NEW),
   },
   {
-    name: 'backend.js (openbox --config → --config-file)',
+    name: 'backend.js (openbox --config → --config-file + #5 剪贴板桥 + #7 Xvfb 光标)',
     path: ['appmonitor', 'backend.js'],
     expectIn: '"openbox",["--config",d,"--sm-disable"]',
-    expectOut: '"openbox",["--config-file",d,"--sm-disable"]',
+    expectOut: 'edex-clipboard-bridge.sh',
     // appmonitor 的 realBackend 用非法参数 --config 启动嵌套 openbox(正确是 --config-file),
     // openbox 秒退 → 虚拟显示器上无 WM → 应用窗口永不最大化。修复:用正确参数。
     // 另:noVNC 直连 ws://127.0.0.1:<rfbPort>/websockify,但 x11vnc 只提供 RFB(无 websocket)
@@ -211,12 +292,19 @@ const targets = [
     // (不是 per-display)。主屏 :0 的 fcitx5 由 edex-session.sh 启动,供 eDEX 显示候选窗;
     // backend 对 :101/:102 再 spawn "fcitx5 -d --replace" 会把主屏实例顶掉 → eDEX 输入中文
     // 无候选窗(#144 盲打)。删除虚拟屏 fcitx5,让主屏实例独占 dbus name。
+    // #5 剪贴板桥:每个虚拟显示器再拉起 edex-clipboard-bridge.sh,把虚拟屏与主屏 :0 的
+    // CLIPBOARD(文本)双向同步 → Firefox 复制可在 eDEX 终端粘贴,反之亦然。
+    // #7 Xvfb 光标:spawn 的应用 env 加 XCURSOR_THEME=edex,虚拟屏内用 eDEX 风格光标。
     transform: c => c
       .split('"openbox",["--config",d,"--sm-disable"]').join('"openbox",["--config-file",d,"--sm-disable"]')
       .split('s=o("x11vnc",["-display",e.display,"-rfbport",String(e.rfbPort),"-shared","-forever","-nopw","-listen","127.0.0.1"],{stdio:"ignore"});r.push(i,t,s);')
-      .join('s=o("x11vnc",["-display",e.display,"-rfbport",String(e.rfbPort+10),"-shared","-forever","-nopw","-listen","127.0.0.1"],{stdio:"ignore"}),w=o("websockify",[String(e.rfbPort),"127.0.0.1:"+String(e.rfbPort+10)],{stdio:"ignore"});r.push(i,t,s,w);')
+      .join('s=o("x11vnc",["-display",e.display,"-rfbport",String(e.rfbPort+10),"-shared","-forever","-nopw","-listen","127.0.0.1"],{stdio:"ignore"}),w=o("websockify",[String(e.rfbPort),"127.0.0.1:"+String(e.rfbPort+10)],{stdio:"ignore"}),B=o("/usr/local/bin/edex-clipboard-bridge.sh",[e.display],{stdio:"ignore",env:Object.assign({},process.env,{DISPLAY:e.display})});r.push(i,t,s,w,B);')
       .split('const n=o("fcitx5",["-d","--replace"],{stdio:"ignore",env:Object.assign({},process.env,{DISPLAY:e.display,GTK_IM_MODULE:"fcitx",QT_IM_MODULE:"fcitx",XMODIFIERS:"@im=fcitx"})});r.push(n);')
-      .join(''),
+      .join('')
+      .split('{DISPLAY:i.display,GTK_IM_MODULE:"fcitx",QT_IM_MODULE:"fcitx",XMODIFIERS:"@im=fcitx"}')
+      .join('{DISPLAY:i.display,GTK_IM_MODULE:"fcitx",QT_IM_MODULE:"fcitx",XMODIFIERS:"@im=fcitx",XCURSOR_THEME:"edex"}')
+      .split('{DISPLAY:":0"}')
+      .join('{DISPLAY:":0",XCURSOR_THEME:"edex"}'),
   },
   {
     name: 'keyboard.class.js',
@@ -256,10 +344,12 @@ const targets = [
       .split('module.exports={LocationGlobe};').join('module.exports={LocationGlobe};'+RESET_JS),
   },
   {
-    name: '_renderer.js (battery centering + periodic widget-layer reset)',
+    name: '_renderer.js (battery centering + widget-layer reset + 光标策略 + SSH 开关 + 管理 Webapps 按钮)',
     path: ['_renderer.js'],
     expectIn: 'document.addEventListener("visibilitychange",()=>{"visible"===document.visibilityState&&resumeFromSuspend()})',
-    expectOut: 'window.__edexWidgetReset',
+    // 幂等标记 = SSH 开关补丁后的特征串(13fix 的 cursorTrap 标记不足以判断本 target 是否
+    // 打过 14fix 的 SSH 补丁,换用 SSH 专属标记,保证 13fix→14fix 会执行;对 .orig 同样适用)。
+    expectOut: 'window.ssh={status:null',
     // 合并成一个 target:多个 _renderer.js target 会相互覆盖,必须合并。
     // 1) 电池图标对准:外框 rect x=1 w=25(rx=2,圆角从 x=24 开始),发光条 x=3 w=23*s/100。
     //    满电时条右端到 x=26 插进右圆角、条整体右偏 1 单位。改 21:条右端恰止于 x=24。
@@ -271,7 +361,10 @@ const targets = [
     //    顺带挂 system-idle 监听:主进程每秒推系统级空闲秒数,供 idle 检测(修复 C)使用。
     // 5) 锁屏误触发修复 C:idle 检测改用系统级空闲秒数。原来只算 eDEX 窗口自身 DOM 事件
     //    停更时长,焦点在其它窗口(全屏 Firefox)时误判闲置 → 误触发屏保/锁屏。
+    // 6) 修复 13:光标策略 —— UI 常显;仅锁屏/屏保激活时闲置自动隐藏(见 CURSOR1_NEW)。
+    // 7) 修复 14:SSH 开关(#4)—— 新增设置分区、window.ssh 对象、打开设置时的监听(见 SSH_* 常量)。
     transform: c => c
+      .split(CURSOR1_OLD).join(CURSOR1_NEW)
       .split('(23*s/100)').join('(21*s/100)')
       .split('document.addEventListener("visibilitychange",()=>{"visible"===document.visibilityState&&resumeFromSuspend()})')
       .join('document.addEventListener("visibilitychange",()=>{"visible"===document.visibilityState&&resumeFromSuspend()})'+APPEND)
@@ -280,7 +373,54 @@ const targets = [
       .split('ipc.on("pm:suspend",()=>{try{window.lockScreen&&!window.lockScreen.active&&window.settings&&String(window.settings.lockCode||"").length>0&&!1!==window.settings.lockOnIdle&&window.lockScreen.engage()}catch(e){try{console.error("pm:suspend handler failed:",e&&e.stack||e)}catch(e){}}})')
       .join('ipc.on("pm:suspend",()=>{}),ipc.on("system-idle",(e,s)=>{try{window._sysIdleSec=Number(s)||0}catch(_){}})')
       .split('const e=Date.now()-lastActivity,t=window.lockScreen')
-      .join('const e=1e3*(window._sysIdleSec>=0?window._sysIdleSec:Math.round((Date.now()-lastActivity)/1e3)),t=window.lockScreen'),
+      .join('const e=1e3*(window._sysIdleSec>=0?window._sysIdleSec:Math.round((Date.now()-lastActivity)/1e3)),t=window.lockScreen')
+      .split(SSH_SEC_ANCHOR).join(SSH_SEC_NEW)
+      .split(SSH_OBJ_ANCHOR).join(SSH_OBJ_NEW)
+      .split(AM_ROW_OLD).join(AM_ROW_NEW)
+      .split(SSH_WIRE_ANCHOR).join(SSH_WIRE_NEW),
+  },
+  {
+    name: 'appmonitorPanel.class.js (#3 apps 态:默认应用列表,不含 Firefox,加 WEBAPPS 管理)',
+    path: ['classes', 'appmonitorPanel.class.js'],
+    expectIn: AM_ADDR_OLD,
+    expectOut: 'this._appendWaEntry()',
+    // tab4/5 应用列表:1) native 过滤掉系统应用(只留 appimage:/custom:/demo:);
+    //   2) init 不再回退选第一个 native(Firefox),无已保存选择时 500ms 后自动弹出应用菜单;
+    //   3) 菜单 "+ ADD APP" 下加 WEBAPPS 管理入口;4) 新增 openAppList/manageWebapps 等方法。
+    transform: c => c
+      .split(AM_FILTER_OLD).join(AM_FILTER_NEW)
+      .split(AM_SEL_OLD).join(AM_SEL_NEW)
+      .split(AM_INITTAIL_OLD).join(AM_INITTAIL_NEW)
+      .split(AM_ADDR_OLD).join(AM_ADDR_NEW)
+      .split(AM_METHODS_OLD).join(AM_METHODS_NEW),
+  },
+  {
+    name: 'main_shell.css (appmonitor 应用列表菜单样式)',
+    path: ['assets', 'css', 'main_shell.css'],
+    expectIn: '.xterm:not(.enable-mouse-events){cursor:text}',
+    expectOut: '.appmonitor_menu{position:fixed',
+    // 原 asar 没有任何 appmonitor_menu 样式(菜单裸排),追加一套主题化样式(锚在文件末尾最后一条规则后)。
+    transform: c => c
+      .split('.xterm:not(.enable-mouse-events){cursor:text}')
+      .join('.xterm:not(.enable-mouse-events){cursor:text}' + AM_CSS),
+  },
+  {
+    name: '_i18n.js (SSH 设置文案 + appmonitor Webapps 文案)',
+    path: ['_i18n.js'],
+    expectIn: '"settings.cat.updates":"更新",',
+    expectOut: '"appmonitor.webapps.manage"',
+    // 新增 SSH 设置分区的中英文案(挂在 updates 分类键后;对象里键顺序无关紧要)。
+    // #3 再加 appmonitor.webapps.* 文案,锚在前一步刚插入的 ssh.stopped 键上(链式,
+    // 必须在同一 transform 里按序执行;对未打 SSH 补丁的镜像也能一次到位)。
+    transform: c => c
+      .split('"settings.cat.updates":"更新",')
+      .join('"settings.cat.updates":"更新","settings.cat.ssh":"SSH 远程登录","settings.ssh.status":"服务状态","settings.ssh.enabled":"SSH 服务","settings.ssh.enabled.help":"启用/停用 OpenSSH 服务器(sshd)。需要从其它设备远程连到本机时保持开启。","settings.ssh.running":"运行中","settings.ssh.stopped":"已停止",')
+      .split('"settings.cat.updates":"Updates",')
+      .join('"settings.cat.updates":"Updates","settings.cat.ssh":"SSH","settings.ssh.status":"Service status","settings.ssh.enabled":"SSH service","settings.ssh.enabled.help":"Start/stop the OpenSSH server (sshd). Keep it on to reach this machine from other devices.","settings.ssh.running":"running","settings.ssh.stopped":"stopped",')
+      .split('"settings.ssh.stopped":"已停止",')
+      .join('"settings.ssh.stopped":"已停止","appmonitor.webapps.title":"Webapps","appmonitor.webapps.manage":"管理 Webapps","appmonitor.webapps.manage.help":"管理自建 Webapp 应用(可点应用列表菜单里的管理 Webapps 打开)。","appmonitor.webapps.empty":"暂无自定义 Webapp,用 + ADD APP 添加","appmonitor.webapps.delete":"删除","appmonitor.webapps.removed":"已删除",')
+      .split('"settings.ssh.stopped":"stopped",')
+      .join('"settings.ssh.stopped":"stopped","appmonitor.webapps.title":"Webapps","appmonitor.webapps.manage":"Manage webapps","appmonitor.webapps.manage.help":"Manage your custom webapps (open via the Manage webapps entry in the app list menu).","appmonitor.webapps.empty":"No custom webapps — add one with + ADD APP","appmonitor.webapps.delete":"Delete","appmonitor.webapps.removed":"Removed",'),
   },
 ];
 

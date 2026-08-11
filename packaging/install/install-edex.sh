@@ -38,13 +38,14 @@ nmcli radio wifi on 2>/dev/null || true
 if [ -d /sys/class/leds/tpacpi::kbd_backlight ]; then
     echo 2 > /sys/class/leds/tpacpi::kbd_backlight/brightness 2>/dev/null || true
 fi
-# Black the X root window + use the dark DMZ-Black cursor theme for the gap
-# between the lightdm greeter closing and the eDEX window mapping — this is the
-# "white flash with the default arrow" seen on real hardware at boot. Once eDEX
-# is up it paints its own sci-fi image cursor over the whole screen, so the OS
-# cursor only ever shows during this handoff and should be dark + minimal.
+# Black the X root window + use the eDEX cursor theme for the gap between the
+# lightdm greeter closing and the eDEX window mapping — this is the "white flash
+# with the default arrow" seen on real hardware at boot. Once eDEX is up it
+# paints its own sci-fi image cursor over the whole screen, so the OS cursor
+# only ever shows during this handoff; using the same WP7-style cursor keeps it
+# visually consistent with the eDEX overlay (task #7).
 xsetroot -solid black 2>/dev/null || true
-export XCURSOR_THEME=DMZ-Black
+export XCURSOR_THEME=edex
 openbox --replace >/dev/null 2>&1 &
 # Kill Xorg's own screen blanking/DPMS. X ships a ~10-minute idle default that
 # physically blanks the display regardless of the app, so on real hardware the
@@ -63,17 +64,46 @@ exec /opt/edex/eDEX-UI.AppImage --no-sandbox
 SESH
 chmod +x /usr/local/sbin/edex-session.sh
 
-# Default X cursor theme (system-wide): DMZ-Black, so the lightdm greeter and any
-# native window show a dark pointer that matches the eDEX palette instead of the
-# stock white/black arrow. The dark root window + XCURSOR_THEME in
-# edex-session.sh cover the per-session case; this covers the greeter too.
-if [ -e /usr/share/icons/DMZ-Black/cursor.theme ]; then
-    update-alternatives --install /usr/share/icons/default/index.theme x-cursor-theme \
-        /usr/share/icons/DMZ-Black/cursor.theme 100 2>/dev/null || true
-    update-alternatives --set x-cursor-theme DMZ-Black 2>/dev/null || true
-else
-    echo "[edex] WARN: DMZ-Black cursor theme missing — 'xcursor-themes' must be in build-iso.sh APTOPTS"
+# Default X cursor theme (system-wide): eDEX (WP7 style), so the lightdm greeter
+# and any native window show the eDEX-style pointer instead of the stock
+# white/black arrow. The theme is bundled in the ISO payload (build-iso.sh
+# copies packaging/cursor/edex into nocloud) and installed just below; the
+# session XCURSOR_THEME in edex-session.sh covers the per-session case.
+# Install the bundled theme (mirror of the plymouth payload pattern: check
+# /root first for late-commands, then /cdrom/nocloud as fallback).
+CURSOR_SRC=""
+for C in /root/edex-cursor /cdrom/nocloud/edex-cursor; do
+    if [ -d "$C" ] && [ -f "$C/index.theme" ]; then CURSOR_SRC="$C"; break; fi
+done
+if [ -n "$CURSOR_SRC" ]; then
+    mkdir -p /usr/share/icons/edex
+    cp -a "$CURSOR_SRC/cursors" /usr/share/icons/edex/
+    cp "$CURSOR_SRC/index.theme" /usr/share/icons/edex/index.theme
+    echo "[edex] cursor theme: edex (from $CURSOR_SRC)"
+elif [ ! -e /usr/share/icons/edex/index.theme ]; then
+    echo "[edex] WARN: edex cursor theme missing from ISO payload"
 fi
+if [ -e /usr/share/icons/edex/index.theme ]; then
+    update-alternatives --install /usr/share/icons/default/index.theme x-cursor-theme \
+        /usr/share/icons/edex/index.theme 100 2>/dev/null || true
+    update-alternatives --set x-cursor-theme /usr/share/icons/edex/index.theme 2>/dev/null || true
+fi
+
+# Clipboard bridge (task #5): the appmonitor backend spawns one of these per
+# nested virtual display to sync its CLIPBOARD (text) with the main display :0,
+# so copying in Firefox (nested Xvfb) pastes in the eDEX terminal and vice
+# versa. Needs xclip (in build-iso.sh APTOPTS). backend.js hardcodes the path
+# /usr/local/bin/edex-clipboard-bridge.sh.
+for S in /root/edex-clipboard-bridge.sh /cdrom/nocloud/edex-clipboard-bridge.sh; do
+    if [ -f "$S" ]; then
+        cp "$S" /usr/local/bin/edex-clipboard-bridge.sh
+        chmod +x /usr/local/bin/edex-clipboard-bridge.sh
+        echo "[edex] clipboard bridge installed"
+        break
+    fi
+done
+command -v xclip >/dev/null 2>&1 \
+    || echo "[edex] WARN: xclip missing — 'xclip' must be in build-iso.sh APTOPTS"
 
 # Fcitx5 as the system input-method framework (Rime/小狼毫 engine), so any
 # GTK/Qt app (including the ones in the nested virtual displays) can type
@@ -229,6 +259,21 @@ echo "[edex] configured for user: $U"
 getent group netdev >/dev/null 2>&1 || addgroup --system netdev
 usermod -aG netdev "$U" 2>/dev/null || true
 
+# Audio boot race fix: rtkit-daemon fails to start if the `rtkit` system user is
+# missing ("Failed to find user 'rtkit'") — then every RealtimeKit activation
+# (pulseaudio realtime, xdg-desktop-portal, ...) blocks on a 25s D-Bus timeout,
+# which on this machine made pulseaudio take 51-76s to become ready. eDEX plays
+# its boot animation sound in the first ~6s, before pulse was up -> no sound.
+# Ensure the user exists (idempotent) and the service starts at boot.
+if ! id rtkit >/dev/null 2>&1; then
+    getent group rtkit >/dev/null 2>&1 || addgroup --system rtkit
+    useradd --system --gid rtkit --home-dir /var/lib/rtkit \
+        --shell /usr/sbin/nologin --comment "RealtimeKit" rtkit
+fi
+mkdir -p /var/lib/rtkit
+chown rtkit:rtkit /var/lib/rtkit 2>/dev/null || true
+systemctl enable rtkit-daemon 2>/dev/null || true
+
 echo "[edex] fcitx5 profile: keyboard-us + pinyin + Rime, default US (input method #16)"
 # fcitx5 is launched and the IM env is set (edex-session.sh), but without a
 # profile the engine list is EMPTY — so Ctrl+Space has nothing to switch to and
@@ -348,7 +393,11 @@ echo "[edex] plymouth boot splash (#19)"
 # build side.
 cat > /etc/default/grub <<'GRUB'
 GRUB_DEFAULT=0
-GRUB_TIMEOUT=2
+# Hidden menu + zero timeout: skip the 2s black text-menu entirely on normal
+# boots (task #6 "黑屏"). The menu still appears on a FAILED boot via the
+# recordfail path (grub.cfg then sets timeout=30), so recovery stays reachable.
+GRUB_TIMEOUT_STYLE=hidden
+GRUB_TIMEOUT=0
 GRUB_DISTRIBUTOR=`lsb_release -i -s 2>/dev/null || echo Debian`
 # pcie_aspm=off: PCIe Active State Power Management is the single most common
 # cause of flaky built-in WiFi on laptops (RTL8821CE/8822CE flood the log with
@@ -397,6 +446,12 @@ if command -v plymouthd >/dev/null 2>&1; then
     if [ -n "$PLYMOUTH_SRC" ]; then
         cp "$PLYMOUTH_SRC/edex.plymouth" /usr/share/plymouth/themes/edex/edex.plymouth
         cp "$PLYMOUTH_SRC/edex-boot-logo.png" /usr/share/plymouth/themes/edex/bgrt-fallback.png
+        # Replace the stock white Ubuntu spinner ring (the "power-on Ubuntu logo",
+        # task #8) with the eDEX green ring shipped in the payload.
+        if [ -d "$PLYMOUTH_SRC/throbber" ]; then
+            cp "$PLYMOUTH_SRC/throbber/"*.png /usr/share/plymouth/themes/edex/ 2>/dev/null || true
+            cp "$PLYMOUTH_SRC/animation/"*.png /usr/share/plymouth/themes/edex/ 2>/dev/null || true
+        fi
         plymouth-set-default-theme edex 2>/dev/null || true
         echo "[edex] plymouth theme: edex"
     else

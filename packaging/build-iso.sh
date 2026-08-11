@@ -96,7 +96,7 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     libxkbcommon0 xdg-utils libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 \
     libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 \
     linux-firmware network-manager wpasupplicant bluez rfkill upower \
-    pulseaudio alsa-utils \
+    pulseaudio rtkit alsa-utils \
     uget aria2 \
     nodejs npm \
     flatpak xdg-desktop-portal xdg-desktop-portal-gtk \
@@ -105,7 +105,7 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     fcitx5 fcitx5-rime fcitx5-pinyin fcitx5-chinese-addons librime-bin \
     fcitx5-config-qt fcitx5-frontend-gtk3 fcitx5-frontend-qt5 \
     p7zip-full intel-microcode \
-    plymouth plymouth-theme-spinner xcursor-themes"
+    plymouth plymouth-theme-spinner xcursor-themes xclip"
 
 # Bind-mount /proc,/sys,/dev for the chroot. If the runner forbids mounts
 # (GitHub containers), fall back to proot (userspace chroot, no mounts).
@@ -297,6 +297,15 @@ cp "$REPO_DIR/packaging/install/install-edex.sh"   "$EXTRACT/nocloud/install-ede
 # "bgrt-fallback" image that plymouth otherwise draws on boot).
 cp "$REPO_DIR/packaging/boot/edex.plymouth"        "$EXTRACT/nocloud/edex.plymouth"
 cp "$REPO_DIR/packaging/boot/edex-boot-logo.png"   "$EXTRACT/nocloud/edex-boot-logo.png"
+# eDEX green spinner frames replace the stock white Ubuntu ring (task #8).
+cp -r "$REPO_DIR/packaging/boot/throbber"          "$EXTRACT/nocloud/throbber"
+cp -r "$REPO_DIR/packaging/boot/animation"         "$EXTRACT/nocloud/animation"
+# eDEX cursor theme (task #7): install-edex.sh copies these into the target's
+# /usr/share/icons/edex and makes it the system default (update-alternatives).
+cp -r "$REPO_DIR/packaging/cursor/edex"            "$EXTRACT/nocloud/edex-cursor"
+# Clipboard bridge (task #5): backend.js spawns /usr/local/bin/edex-clipboard-bridge.sh
+# per virtual display; install-edex.sh installs it from nocloud.
+cp "$REPO_DIR/packaging/install/edex-clipboard-bridge.sh" "$EXTRACT/nocloud/edex-clipboard-bridge.sh"
 
 echo "[edex] enabling autoinstall on the kernel command line"
 # Append  autoinstall ds=nocloud\;s=/cdrom/nocloud/  just before the '---'

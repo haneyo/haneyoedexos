@@ -69,9 +69,14 @@ main_hex=$(printf '#%02x%02x%02x' "$((10#$r))" "$((10#$g))" "$((10#$b))")
 # (主题里 black 多为 #000000 / 接近黑的深色,这里统一为纯黑 + 无边框,保证通配)。
 bg_hex="#000000"
 
-# 高亮块 = 主色;高亮文字 = 黑(反色,同 eDEX 选中态)
-hi_bg="$main_hex"
-hi_fg="$bg_hex"
+# 选中候选 = 框选(主题色 2px 边框 + 黑色填充),不再用整块高亮填充(用户反馈"高亮不易识别")
+#   - 边框颜色:theme.conf 里 [InputPanel/Highlight] BorderColor(及 Background BorderColor 兜底)
+#   - 边框宽度:2px(受 highlight margin 限制,margin 需 ≥ 2)
+#   - 填充:黑色(与面板同色 → 视觉上只剩一个空心框)
+#   - 选中候选文字:亮白(比普通候选更醒目,配合边框明确指示选中)
+hi_bg="$bg_hex"            # 选中候选填充 = 黑(空心)
+hi_fg="#ffffff"            # 选中候选文字 = 白
+hi_border="$main_hex"      # 选中候选边框 = 主题主色
 # 普通候选文字 = 主色;普通底 = 黑
 norm_fg="$main_hex"
 norm_bg="$bg_hex"
@@ -84,30 +89,39 @@ font_family=$(echo "$font_family" | sed -E 's/[[:space:]]+(Regular|Medium|Light|
 [ -z "$font_family" ] && font_family="Fira Mono"
 
 # ---------- 4. 写 classicui.conf(只用本版 fcitx5 支持的键) ----------
+# 注:本版 classicui 的实际渲染由 theme.conf 驱动,classicui.conf 的色值键已证实不参与
+# 候选框绘制(见仓库备注),这里仍写入保持一致,便于其它 fcitx5 前端读到。
 mkdir -p "$(dirname "$FCITX_CONF")"
 cat > "$FCITX_CONF" <<EOF
 [Appearance]
 UseDarkTheme=False
 NormalColor=${norm_fg}
 HighlightColor=${hi_fg}
-HighlightBackgroundColor=${hi_bg}
+HighlightBackgroundColor=${bg_hex}
 PerScreenDPI=False
 EOF
 
-# ---------- 5. 更新 /usr/share/edex 的 default 主题(黑底/无边框/主题色/主题字体) ----------
+# ---------- 5. 更新 /usr/share/edex 的 default 主题(黑底/无边框/框选/主题色/主题字体) ----------
+# 选中候选为「框选」:2px 主题色边框 + 黑色填充 + 白字。
+#   - [InputPanel/Highlight] BorderColor:本版 classicui 的 highlight borderColor 来源
+#     有两个可能(上游源码 `*inputPanel->background->borderColor` / 定制 bake 直接读 highlight
+#     BorderColor),两处都写主色,任意来源都得到主题色边框;
+#   - [InputPanel/Background] BorderColor 设主色但 BorderWidth=0 → 面板本身无边框。
 sudo tee "$SYSTEM_THEME" > /dev/null <<EOF
 [Metadata]
 Name=Default
 Name[zh_CN]=默认(eDEX 风格)
 Version=1
 Author=eDEX-OS
-Description=eDEX-OS styled default theme (black panel, no border). Synced from active eDEX theme.
+Description=eDEX-OS styled default theme (black panel, framed selection). Synced from active eDEX theme.
 ScaleWithDPI=True
 
 [InputPanel]
 Font=${font_family} ${FONT_SIZE}
 NormalColor=${main_hex}
-HighlightColor=${bg_hex}
+HighlightColor=${main_hex}
+HighlightBackgroundColor=${bg_hex}
+HighlightCandidateColor=${hi_fg}
 PageButtonAlignment=Last Candidate
 
 [InputPanel/TextMargin]
@@ -125,7 +139,7 @@ Bottom=0
 [InputPanel/Background]
 Image=
 Color=${bg_hex}
-BorderColor=${bg_hex}
+BorderColor=${main_hex}
 BorderWidth=0
 Opacity=1
 
@@ -137,11 +151,13 @@ Bottom=0
 
 [InputPanel/Highlight]
 Image=
-Color=${main_hex}
+Color=${bg_hex}
+BorderColor=${main_hex}
+BorderWidth=2
 
 [InputPanel/Highlight/Margin]
-Left=2
-Right=2
+Left=3
+Right=3
 Top=2
 Bottom=2
 

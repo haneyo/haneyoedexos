@@ -1,6 +1,7 @@
 # ⏸️ 工作交接文档 — 重启后从这里继续
 
-> **最后更新**:2026-08-11 11:45(eDEX 重启前由 Claude 写入)
+> **最后更新**:2026-08-11 19:15(本会话追加 3.16/3.17 节,多任务进行中)
+> **目的**:eDEX 重启会中断当前会话。重启后打开 Claude 先读本文件 + `ubuntu/README.md`,即可无缝续接。
 > **目的**:eDEX 重启会中断当前会话。重启后打开 Claude 先读本文件 + `ubuntu/README.md`,即可无缝续接。
 
 ---
@@ -286,6 +287,62 @@ U盘(sha `648b5639…`)。重启后 edex-session.sh 会照常起 :0 fcitx5,backe
 - ⚠️ 若重启后仍卡(cyberPanel 等固定 60fps 渲染开销):可给 cyberPanel 雷达降频
   (每 2 帧渲染一次=30fps,视觉无感),或光标改系统 Xcursor(去 CSS `cursor:none` + 自定义
   Xcursor 主题,渲染卡死时光标也可见,3.13 用户提议过的方向)。
+
+## 3.16 ✅ 开机动画无音效 — 根因已修复(rtkit/RealtimeKit 超时,2026-08-11 晚)
+
+**报告**:开机动画(logo 出现、boot log 滚动、主题音乐)没有音效,不像原版 eDEX-UI。
+
+**根因(实锤,证据链完整)**:
+1. 系统音频本身正常(paplay/aplay 成功、monitor 有信号、终端输出触发 stdout.wav 有声音事件)。
+2. 但**开机前 ~6 秒的 intro 无声**:Chromium 音频服务在开机时连 pulse 失败
+   (`ALSA lib pulse.c pulse_connect: Connection refused`)。
+3. **为什么 pulse 没就绪**:`pulseaudio.service`(systemd user,`Type=notify`)每次开机都
+   **51-76s 才 Started**(journal 多日记录:10:14→10:15:25、14:10→14:12、16:41→16:43、18:16:30→18:17:46)。
+   51s=2 次、76s=3 次 × **25s 超时**(journal:`Failed to activate org.freedesktop.RealtimeKit1:
+   timed out (service_start_timeout=25000ms)`)。
+4. **RealtimeKit 为何激活超时**:`rtkit-daemon.service` 失败退出
+   (`Failed to find user 'rtkit'`)——系统里**没有 `rtkit` 用户**(rtkit 包是被其它包拉进来的依赖,
+   postinst 建用户这步丢了/被删)。daemon 起不来 → D-Bus 名字无人持有 → 所有激活请求等 25s 超时。
+
+**修复(本机已应用 + 部署脚本已更新)**:
+- 本机:创建 rtkit 系统用户 → `systemctl enable rtkit-daemon` → 重启 pulse 实测
+  **从 76s → 0.34s**(systemd 67ms 即 active)。`org.freedesktop.RealtimeKit1` NameHasOwner=true。
+- 部署(`packaging/`):
+  - `build-iso.sh`:`rtkit` 加入 APTOPTS 包列表(pulseaudio 旁)。
+  - `install/install-edex.sh`:netdev 段后新增 idempotent rtkit 段(建用户/组 + /var/lib/rtkit 属主 + enable 服务)。
+- 时序:rtkit 在 multi-user.target 起(早于 lightdm)→ 用户会话 pulse 调用 RealtimeKit 立即成功 →
+  pulse 开机 ~0.3s 就绪 → intro(~6s)音频服务连 pulse 成功 → **开机音效恢复**。
+
+**⚠️ 待重启验证**:重启后听 intro 是否有音效。若仍无声,再查 intro 时机(动画开始即播放,
+音频服务首次开设备若仍在 pulse 就绪前,可加"theme 音效重试"兜底)。
+
+**⚠️ 当前会话副作用(测试导致)**:验证时我重启了 pulse 并杀掉了 Chromium 音频服务
+(`kill 1498`),当前会话 app 音效可能失效(音频服务会按需重生,但需真实 renderer 音频请求才触发;
+xdotool 输入进了 Claude 标签没触发到 eDEX 终端)。**重启后即恢复,无需处理。**
+
+## 3.17 ✅ 已完成(2026-08-11 晚,本会话任务 #3-#9,构建 16fix)
+
+本会话在原有 5 任务基础上新增 4 个用户需求,已全部实现并打包进 **16fix**:
+- **#3 tab4/5 默认 Firefox → 应用列表**(apps 态,只列用户装的 UI 应用,不含 Firefox;clash 加 webapp 管理入口)
+- **#4 设置菜单加 SSH 开关**(能真正启停 sshd)
+- **#5 全系统剪贴板**(Firefox 复制 → eDEX 终端/Claude 粘贴)
+- **#6 消除开机黑屏+白闪**(进开机动画前两段突兀画面)
+- **#7 系统默认光标 → eDEX 风格**
+- **#8 去除开机(电源)Ubuntu logo**(grub/plymouth)
+- **#9 终端/Claude 停止输出时播放完成音效**(提示用户输出结束/等待确认)
+- 另有已构建待重启的 **13fix(光标策略)**:UI 态常显;锁屏/屏保态闲置自动隐藏、动鼠标恢复。
+
+**16fix**(`/opt/edex/eDEX-UI.AppImage.16fix-20260811`,185068282B) = orig + 全部补丁,已提取验证:
+backend.js(桥+光标)/terminal.class.js(#9)都通过 node --check,各 marker 全部命中。**尚未部署/重启**。
+
+**本会话系统侧改动(已 live 生效)**:xclip 已装;update-alternatives x-cursor-theme → edex;
+gsettings cursor-theme=edex;`/usr/local/bin/edex-clipboard-bridge.sh` 已装并双向实测通过。
+
+**打包持久化已同步**:build-iso.sh APTOPTS +xclip;nocloud 新增 `edex-cursor`(packaging/cursor/edex)
+与 `edex-clipboard-bridge.sh`(packaging/install/);install-edex.sh 装光标主题并设 update-alternatives、
+装桥脚本、XCURSOR_THEME=edex(会话期导出)。
+
+**待办**:统一重启 eDEX(见 §4),16fix 部署到 `/opt/edex/eDEX-UI.AppImage` 后验证 #3/#5/#7/#9。
 
 ## 4. 重启后如何继续
 
