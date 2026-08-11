@@ -59,6 +59,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Patch AppImage (true-machine fixes)
+        run: |
+          APPIMAGE=$(ls dist/*.AppImage | head -1)
+          bash packaging/patch-appimage.sh "$APPIMAGE"
+          # keep the release-asset basename: the in-app updater and the ISO
+          # job both expect <name>.AppImage (the patched output is
+          # <name>.patched.AppImage), and the sha256 step below hashes it
+          mv "${APPIMAGE%.AppImage}.patched.AppImage" "$APPIMAGE"
+
       - name: Compute sha256 (sibling asset for the in-app updater)
         run: |
           APPIMAGE=$(ls dist/*.AppImage | head -1)

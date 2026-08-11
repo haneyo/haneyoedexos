@@ -254,6 +254,16 @@ if [ -s "$WORK/zh-asr.tar.bz2" ]; then
         || echo "[edex] WARN: ASR model extract failed"
 fi
 
+# Patch the eDEX AppImage BEFORE baking it in — without these true-machine
+# fixes (see packaging/patch-appimage.sh) a freshly built ISO re-introduces
+# the boot/UI bugs. Idempotent: a previously patched AppImage passes through
+# unchanged, so this is safe even when the input already came from a patched
+# Release asset.
+PATCHED_APPIMAGE="${EDEX_APPIMAGE%.AppImage}.patched.AppImage"
+bash "$SCRIPT_DIR/patch-appimage.sh" "$EDEX_APPIMAGE" "$PATCHED_APPIMAGE" \
+    || { echo "[edex] ERROR: AppImage patch failed"; exit 1; }
+EDEX_APPIMAGE="$PATCHED_APPIMAGE"
+
 # Bake the eDEX AppImage straight into the image.
 sudo mkdir -p "$WORK/rootfs/opt/edex"
 sudo cp "$EDEX_APPIMAGE" "$WORK/rootfs/opt/edex/eDEX-UI.AppImage"

@@ -10,6 +10,7 @@
 | `autoinstall/user-data` | Subiquity autoinstall:`interactive-sections` 让 locale/网络/分区/建用户仍像装 Ubuntu 一样交互,其余自动化;`late-commands` 装 eDEX。 |
 | `install/install-edex.sh` | 装完系统后运行:xorg + lightdm 自动登录 + openbox + eDEX AppImage + appmonitor 依赖 + eDEX 配置预置。 |
 | `build-iso-local.sh` | 在 Ubuntu 24.04 机器上本地构建(自动先编 AppImage)。 |
+| `patch-appimage.sh` | 给 AppImage 打上真机修复(8 处,幂等)。已自动接进 `release.yml` 与 `build-iso.sh`,无需手动。 |
 
 ## 一、构建 ISO
 
@@ -34,6 +35,9 @@ git clone <your-repo> && cd <repo>
 bash packaging/build-iso-local.sh            # 自动下载官方 ISO 并构建(本地始终从源码编译)
 # 产物: eDEX-OS-local.iso
 ```
+
+> 所有构建路径(release.yml / build-iso.yml / build-iso-local.sh)都会自动运行
+> `packaging/patch-appimage.sh`,给进入 ISO 与 Release 的 AppImage 打上真机修复,无需手动。
 
 ## 二、装到笔记本
 1. 烧录:`dd if=eDEX-OS-*.iso of=/dev/sdX bs=4M status=progress`(或用 balenaEtcher / Rufus)。U 盘 ≥8GB。

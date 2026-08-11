@@ -187,11 +187,22 @@ HandlePowerKey=ignore
 LOGIND
 
 echo "[edex] detecting installed user"
-# Find the real login user via /etc/passwd, NOT by listing /home: the ISO's live
-# rootfs can carry leftover home dirs (e.g. /home/runner leaked in from the CI
-# builder) that get copied into every install and would otherwise win `head -1`,
-# which then made chown fail and abort the whole install.
-U="$(getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1; exit}')"
+# Find the REAL user Ubuntu's installer created — the username typed at install
+# time must be the account that owns the desktop. Do NOT take the first
+# uid>=1000 account from /etc/passwd: the live rootfs can carry leftover
+# accounts (e.g. "edex"/"runner" leaked in from the CI builder) that get copied
+# into every install and would win an order-based pick, redirecting the whole
+# desktop to the wrong username while the real /home dir sits unused.
+# Subiquity always puts the account it creates into the admin groups
+# (adm, cdrom, dip, lxd, plugdev, sudo); a leftover account is not in them. So:
+#   1) the first uid>=1000 member of group `adm`,
+#   2) else the first uid>=1000 account,
+#   3) else create the documented kiosk default below.
+U="$(getent group adm | cut -d: -f4 | tr ',' '\n' | while read -r c; do
+    uid="$(id -u "$c" 2>/dev/null)"
+    [ -n "$uid" ] && [ "$uid" -ge 1000 ] && [ "$uid" -lt 65534 ] && { echo "$c"; break; }
+  done)"
+[ -z "$U" ] && U="$(getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1; exit}')"
 if [ -z "$U" ]; then
     # No login user was created — the interactive identity answer can be lost on
     # an installer restart. Self-heal so the system still boots to a usable
