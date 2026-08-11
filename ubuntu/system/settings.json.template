@@ -1,0 +1,76 @@
+{
+    "shell": "bash",
+    "shellArgs": "",
+    "cwd": "/home/edex",
+    "theme": "tron",
+    "termFontSize": 14,
+    "audio": true,
+    "audioVolume": 1,
+    "disableFeedbackAudio": false,
+    "clockHours": 24,
+    "pingAddr": "223.5.5.5",
+    "port": 3000,
+    "nointro": false,
+    "nocursor": false,
+    "forceFullscreen": true,
+    "allowWindowed": false,
+    "excludeThreadsFromToplist": true,
+    "hideDotfiles": false,
+    "fsListView": false,
+    "screensaverEnabled": true,
+    "screensaverIdle": 1800,
+    "screensaverStyle": "code",
+    "appMonitor": {
+        "enabled": true,
+        "mock": false,
+        "appImageDirs": "~/Applications,~/AppImages"
+    },
+    "claude": {
+        "enabled": true,
+        "provider": "deepseek",
+        "baseUrl": "https://api.deepseek.com/anthropic",
+        "apiKey": "<your-api-key>",
+        "model": "deepseek-v4-flash",
+        "haikuModel": "deepseek-v4-flash"
+    },
+    "webapps": [
+        {
+            "name": "Google",
+            "url": "https://www.google.com"
+        },
+        {
+            "name": "Bing",
+            "url": "https://www.bing.com"
+        }
+    ],
+    "nointroOverride": false,
+    "nocursorOverride": false,
+    "lockCode": "<your-pin>",
+    "lockOnIdle": true,
+    "language": "zh",
+    "username": "edex",
+    "weatherLocation": {
+        "name": "Chengdu, China",
+        "latitude": 30.5723,
+        "longitude": 104.0675,
+        "timezone": "auto"
+    },
+    "screenOffIdle": 18000,
+    "showKeyboard": false,
+    "terminalScrollSensitivity": 1,
+    "terminalScrollDirection": "normal",
+    "cursorAutoHide": true,
+    "cursorAutoHideDelay": 10,
+    "cursorSize": 28,
+    "mouseWheelSpeed": 1,
+    "cursorSpeed": 1,
+    "appSort": "name-asc",
+    "clash": {
+        "enabled": false,
+        "port": 7890,
+        "controller": "127.0.0.1:9090",
+        "secret": "",
+        "subUrl": "",
+        "preProxy": null
+    }
+}

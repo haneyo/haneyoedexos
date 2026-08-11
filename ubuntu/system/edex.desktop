@@ -1,0 +1,5 @@
+[Desktop Entry]
+Name=eDEX-OS
+Comment=eDEX-OS sci-fi shell
+Exec=/usr/local/sbin/edex-session.sh
+Type=Application
