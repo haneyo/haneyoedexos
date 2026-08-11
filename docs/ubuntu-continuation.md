@@ -404,3 +404,89 @@ sudo systemctl start lightdm
 2. 改完 `patch-appimage.sh` 后:用 `artifacts/eDEX-UI.AppImage.11fix-20260811` 重建 → 校验 → 部署,
    **不要**从损坏版上改。
 3. 每次新版本:U 盘 `artifacts/` 存一份 + 更新本文件 + `FIX-RECORD-20260811-12fix.md`。
+
+## 3.18 ✅ 已完成(2026-08-11 晚,本会话 4 项 UI 需求,已构建 17fix)
+
+用户新报 4 个问题,全部修复并打包进 **17fix**(`packaging/patch-appimage.sh` 新增 3 个 target + 改 1 个常量):
+- **#1 tab4/5 两个网页(Google/Bing)不是用户加的,删除**:本机 `~/.config/eDEX-UI/settings.json` 的
+  `webapps` 已清空(已备份 .bak-20260811);`packaging/install/install-edex.sh` 默认 `webapps` 也改为 `[]`。
+- **#2 应用列表不显示系统内置 Firefox**:`appmonitorPanel.class.js` 的 native 过滤恢复 `native:` 前缀
+  (AM_FILTER_NEW 加 `||"native:"===String(e.id).slice(0,7)`)→ Firefox 回到列表。
+  **用户原则:只有有 UI 的应用才显示。** 故同时给 `appmonitor/native-apps.js` 的 SYSTEM_APP_RE 补漏
+  (`im-config|kbd-layout-viewer5|x11vnc`),滤掉 Input Method / Keyboard layout viewer / X11VNC Server
+  三个非 UI 系统工具。列表最终=Firefox、uGet(皆有 UI)+ AppImage/webapp。
+- **#3 top processes 数字太靠右/不协调**:`mod_toplist.css` NAME 列 `7vw→5vw`(缩短)+ 新增 PID 列定宽
+  `4.2vw`(防 auto 列吸走多余空间),CPU/MEM 保持右对齐 → 表格紧凑、数字位置整齐。
+- **#4 左上 LOAD/UPTIME/TYPE/POWER 的 POWER 字母 r 被裁掉一半**:`mod_sysinfo.css` 四个子列改
+  `flex:1 1 0;min-width:0`(等宽均分、永不溢出)+ 收紧水平内边距 `.46vh→.25vh`。
+
+**17fix**(`/tmp/edex-17fix/eDEX-UI.AppImage.17fix`,185072378B)= orig + 全部 15 个 patch,已全量验证:
+10 个 patch JS `node --check` 全过;15 个 marker 全命中(native: filter / x11vnc / 5vw / flex:1 1 0 等)。
+比对 16fix 只多了 native-apps.js + 两个 CSS + appmonitorPanel 过滤变化。
+
+**⚠️ 当前有两个 eDEX 实例**:1372(18:16,旧版)与 3483184(22:05,16fix)同时在 :0。重启时需
+`pkill -f eDEX-UI.AppImage` 全部杀掉,lightdm autologin=edex 会拉起新实例。
+
+**待办**:部署 17fix 到 `/opt/edex/eDEX-UI.AppImage` + 重启后验证:①tab4/5 无 Google/Bing、含 Firefox;
+②Firefox 可启动铺满;③top processes 数字整齐;④sysinfo POWER 不裁切。
+
+## 4. 重启后如何继续
+
+1. 启动 Claude,读 `/home/edex/edex-ubuntu-work/CONTINUE.md` + `ubuntu/README.md`
+2. 若 eDEX 刚重启 → **先验证 globe 卡顿修复(3.15)**:用 `ps -eo pid,pcpu,comm --sort=-pcpu | grep edex-ui`
+   看渲染进程 CPU 应**显著低于 63%**(恢复 30fps + 靠 3-5 分钟无感重置清累积,数值应明显回落),
+   鼠标可正常移动、不再锁死,界面不卡(用几分钟后看 CPU 是否维持低位,验证重置生效)。
+   → 再看三个 UI 修复(3.5/3.6/3.7):① Claude tab 发条消息不再弹 t.setAttribute;② 天气弹窗
+   字体是 United Sans;③ 电池图标满电发光条不外偏。→ 再**优先做任务 #4**:确认开机动画(nointro:false)。
+3. 然后按 `ubuntu/README.md`「v2.3.11 之后要做」清单逐项验证:
+   - DPMS 熄屏(#181):闲置 30s → 屏灭;动鼠标 → 亮。
+   - tab4/5 选 Firefox → 画面填满无黑框、Firefox 真启动。
+   - 插电 → 电池图标呼吸(#173)。
+4. 诊断 #174:开机 Welcome back 仍显示 "edex"。
+   - 根因推测:登录用户就是 `edex`(GECOS=edex),`getDisplayName` 的 GECOS 优先失效。
+   - 排查:`getent passwd edex`(看 GECOS)、装机时用户填的名字在哪。
+   - 修复方向(App 侧,Mac 上有 src):首启向导 firstRun.class.js 让用户输入显示名 → 写 settings.json → getDisplayName 优先读它。
+
+## 5. 安全注意
+
+- Aliyun OSS bucket/URL 永不进公开文档/日志
+- AccessKey Secret 永不粘贴到聊天
+
+## 6. 附:本机截图工具
+
+- `DISPLAY=:0 scrot -z /tmp/xxx.png` 可截 eDEX 全屏(1920x1080)
+- 截图 Read 不了时先缩小:`python3 -c "from PIL import Image; Image.open(p).resize((960,540)).save('/tmp/small.png')"`
+
+---
+
+## 7. ⚠️ 2026-08-11 晚:UI 无法启动事故 & 12fix 修正版(必读)
+
+### 发生了什么
+3.15 节的 fix-12(RESET_JS 注入)当时把重置逻辑注进了 `locationGlobe.class.js` 的 **class 类体内**
+(构造器 `},4e3)}` 与方法 `_addRandomActivity(){` 之间)。JS 类体只允许方法/字段/分号,不允许
+`const`/IIFE 语句 → `SyntaxError: Unexpected identifier` → renderer 加载该模块即崩 → **eDEX UI 无法启动**。
+故障版 sha256 `7dbe8aeb…`(185055881B)。用户用 U 盘 `fix-edex.sh` 一键恢复(换回 `.orig`)才活过来。
+
+### 修正(已重建 12fix,sha256 `7850fff8…`,185055881B)
+- `packaging/patch-appimage.sh` 修复 12 target:**锚点从类体内改为文件尾** `module.exports={LocationGlobe};`,
+  RESET_JS 改为**模块级 IIFE**(每次查 `window.mods.globe` 单例,随机 3/4/5 分钟清 pins/markers/conns,
+  重加 `_locPin/_locMarker`,保持 30fps)。幂等标记 `expectOut` 改为 `__edexGlobeReset`。
+- 已对 12fix 全量验证:7 个 patch 文件 `node --check` 全过;非 node_modules/vendor 的 app JS 全过;
+  用户关心的修复(candidate window/Claude 滚动/性能/锁屏/天气弹窗)逐项断言在位。
+- 12fix 相对 11fix 的差异只有 globe 一个文件:8fps→30fps + 文件尾无感重置 IIFE。
+
+### 部署(当前 /opt/edex/eDEX-UI.AppImage = .orig,已由恢复脚本换回)
+```bash
+sudo systemctl stop lightdm
+sudo pkill -f eDEX-UI.AppImage || true
+sudo cp <12fix> /opt/edex/eDEX-UI.AppImage && sudo chmod 755 /opt/edex/eDEX-UI.AppImage
+sudo systemctl start lightdm
+```
+部署后再验证:candidate window(#144)、Claude 滚动、性能、开机音效(音效链路已查健康,若仍无声属
+动画时机/音频层问题,另立 issue)。
+
+### 以后改 App 的纪律(重要)
+1. **任何注入点**都必须 `node --check` 校验后再部署——类体内禁 const/IIFE,只在模块作用域或字段里写。
+2. 改完 `patch-appimage.sh` 后:用 `artifacts/eDEX-UI.AppImage.11fix-20260811` 重建 → 校验 → 部署,
+   **不要**从损坏版上改。
+3. 每次新版本:U 盘 `artifacts/` 存一份 + 更新本文件 + `FIX-RECORD-20260811-12fix.md`。
