@@ -7,9 +7,17 @@
 
 - ✅ **WiFi**:已可用(#172 netdev 组修复生效)。
 - ❌ **用户名 #174**:装机时设了自己的 Ubuntu 用户名,Welcome back **仍显示 "edex"**。
-  根因推测:eDEX 会话以固定 `edex` 账号运行,`os.userInfo().realname` 拿到的是该账号的 GECOS
-  = "edex",`getDisplayName` 的 GECOS 优先逻辑因此失效。待查:install-edex.sh 到底创建了哪个
-  会话账号;真名应改为读 Ubuntu 安装时创建的主用户(如最高非系统 uid 的 GECOS,或首启向导把用户名写进 settings.json)。
+  **注意**:v2.3.11 已含 `6c5dbe8` 的 autoinstall 修复(身份屏不再预填 `username: edex` 默认值),
+  但真机仍显示 "edex" → 问题在更深处,大概率**实际登录账号就是 "edex"**(install-edex.sh 的
+  self-heal:当 `/etc/passwd` 无 uid≥1000 账号时 `useradd -m edex`,且该账号 GECOS 为空)。
+  真机诊断(eDEX 终端里跑,WiFi 可用可远程):
+  ```bash
+  getent passwd | awk -F: '$3 >= 1000 && $3 < 65534'   # 看 uid≥1000 账号和 GECOS
+  whoami && grep -E '^autologin-user' /etc/lightdm/lightdm.conf.d/*.conf
+  grep -i username ~/.config/eDEX-UI/settings.json      # 看是否有残留 username 键
+  ```
+  若首账号是 `edex` 且 GECOS 空 → 修 install-edex.sh(self-heal 用用户真名 / 写 GECOS);若账号正常
+  但 settings.json 残留 username → 修 `getDisplayName`(去掉 `if (user) settings.username = user` 的持久化,或存之前先对比 GECOS)。
 - 🆕 **#182 开机终端两行**:一开机终端就有两行,疑似解锁时按 Enter 多打了一行。
 - 🆕 **#183 开机过渡**:黑屏 + 原生鼠标光标 → 白屏一下 → 才进 eDEX UI。logo 部分用户已取消,白屏/原生光标过渡仍待处理(不动开机动画)。
 
