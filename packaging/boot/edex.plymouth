@@ -1,0 +1,73 @@
+# eDEX-OS boot splash — a custom "two-step" theme that keeps the stock spinner
+# theme's (unbranded) animation frames but replaces the Ubuntu logo with the
+# eDEX-OS terminal wordmark.
+#
+# Why the Ubuntu logo appears on boot at all: the two-step plugin, when the
+# firmware provides no BGRT logo (no /sys/firmware/acpi/bgrt/image), draws
+# "bgrt-fallback.png" centered at 38% of the screen height on a black screen.
+# The stock spinner theme ships the Ubuntu circle as that fallback — so we
+# install our own theme whose bgrt-fallback.png is the eDEX-OS logo.
+#
+# Same black background as the stock spinner theme; progress bar recolored to
+# the eDEX green.
+[Plymouth Theme]
+Name=eDEX-OS
+Description=eDEX-OS boot splash (terminal style)
+ModuleName=two-step
+
+[two-step]
+Font=Cantarell 12
+TitleFont=Cantarell Light 30
+ImageDir=/usr/share/plymouth/themes/edex
+DialogHorizontalAlignment=.5
+DialogVerticalAlignment=.382
+TitleHorizontalAlignment=.5
+TitleVerticalAlignment=.382
+HorizontalAlignment=.5
+VerticalAlignment=.7
+WatermarkHorizontalAlignment=.5
+WatermarkVerticalAlignment=.96
+Transition=none
+TransitionDuration=0.0
+BackgroundStartColor=0x000000
+BackgroundEndColor=0x000000
+ProgressBarBackgroundColor=0x1a4d3c
+ProgressBarForegroundColor=0x00ff9f
+MessageBelowAnimation=true
+
+[boot-up]
+UseEndAnimation=false
+
+[shutdown]
+UseEndAnimation=false
+
+[reboot]
+UseEndAnimation=false
+
+[updates]
+SuppressMessages=true
+ProgressBarShowPercentComplete=true
+UseProgressBar=true
+Title=Installing Updates...
+SubTitle=Do not turn off your computer
+
+[system-upgrade]
+SuppressMessages=true
+ProgressBarShowPercentComplete=true
+UseProgressBar=true
+Title=Upgrading System...
+SubTitle=Do not turn off your computer
+
+[firmware-upgrade]
+SuppressMessages=true
+ProgressBarShowPercentComplete=true
+UseProgressBar=true
+Title=Upgrading Firmware...
+SubTitle=Do not turn off your computer
+
+[system-reset]
+SuppressMessages=true
+ProgressBarShowPercentComplete=true
+UseProgressBar=true
+Title=Resetting System...
+SubTitle=Do not turn off your computer

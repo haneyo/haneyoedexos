@@ -1,0 +1,48 @@
+#cloud-config
+# eDEX-OS autoinstall — keeps the key steps interactive (like installing stock
+# Ubuntu: locale / network / storage / identity), automates everything else and
+# installs eDEX as the whole desktop shell via late-commands.
+#
+# Files this relies on, all on the ISO under /cdrom/nocloud/:
+#   install-edex.sh       the target-setup script (runs inside the installed chroot)
+#   eDEX-UI.AppImage      the eDEX-UI AppImage (built by the CI pipeline)
+autoinstall:
+  version: 1
+  # Installer language: the locale step STAYS interactive so the language choice
+  # is preserved (first screen), but it now PRE-FILLS en_US as the safe default.
+  # NOTE: the installer runs in the kernel VT console, which has NO CJK glyphs —
+  # choosing Chinese here still renders as boxes (console limitation, not a font
+  # problem). The installed system gets fonts-noto-cjk so the eDEX UI itself can
+  # display Chinese correctly once the machine boots.
+  locale: en_US.UTF-8
+  keyboard: { layout: us }
+  # Fully OFFLINE install: the GUI stack + eDEX are baked into the squashfs, so
+  # no network and no update download is needed. The network step is optional —
+  # connect WiFi during install if you like (it just writes the config), skip it
+  # to stay fully offline. Subiquity's "updates" key only accepts security|all
+  # (there is no valid "none"), so leave it at the default and let apt fall back
+  # to an offline install when no mirror is usable.
+  interactive-sections:
+    - locale
+    - network
+    - storage
+    - identity
+  # Identity stays FULLY interactive with NO defaults: pre-filling the screen
+  # with a default username (the old "username: edex" here) silently became the
+  # login user when the user's typed answer didn't override it — exactly the
+  # #174 complaint ("the username is edex, not what I set during install"). With
+  # an empty screen the user's typed username/hostname ARE the answer, stock
+  # Ubuntu behavior. If the interactive answer is ever lost (installer restart
+  # after a crash), install-edex.sh self-heals: it creates a default "edex"
+  # login user when /etc/passwd has no UID>=1000 account.
+  apt:
+    fallback: offline-install
+  late-commands:
+    - cp /cdrom/nocloud/install-edex.sh /target/root/install-edex.sh
+    # Plymoouth theme payload: install-edex.sh runs inside the chroot (curtin
+    # in-target), where /cdrom does NOT exist — copy the theme files into the
+    # chroot too, or the plymouth block silently falls back to the stock
+    # spinner theme whose bgrt-fallback.png is the Ubuntu circle.
+    - cp /cdrom/nocloud/edex.plymouth /target/root/edex.plymouth
+    - cp /cdrom/nocloud/edex-boot-logo.png /target/root/edex-boot-logo.png
+    - curtin in-target --target=/target -- bash /root/install-edex.sh

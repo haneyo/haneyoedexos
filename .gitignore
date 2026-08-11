@@ -1,0 +1,12 @@
+# 本地 Claude 配置(机器相关)
+.claude/
+# 密钥占位目录
+sk-*/
+# 二进制/产物
+*.AppImage
+artifacts/
+*.log
+*.png
+# 系统/编辑器
+.DS_Store
+*~
