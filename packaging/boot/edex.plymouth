@@ -16,6 +16,11 @@ Description=eDEX-OS boot splash (terminal style)
 ModuleName=two-step
 
 [two-step]
+# Ignore the firmware BGRT logo (Lenovo on the E580): plymouth's two-step
+# defaults to UseFirmwareBackground=true, which draws the firmware logo from
+# /sys/firmware/acpi/bgrt/image instead of our bgrt-fallback. With this off we
+# always show the eDEX-OS wordmark on black (user request: no Ubuntu/boot logo).
+UseFirmwareBackground=false
 Font=Cantarell 12
 TitleFont=Cantarell Light 30
 ImageDir=/usr/share/plymouth/themes/edex
