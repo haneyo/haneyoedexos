@@ -586,10 +586,7 @@ cat > "/home/$U/.config/eDEX-UI/settings.json" <<'SETTINGS'
         "model": "",
         "haikuModel": ""
     },
-    "webapps": [
-        { "name": "Google", "url": "https://www.google.com" },
-        { "name": "Bing",   "url": "https://www.bing.com" }
-    ]
+    "webapps": []
 }
 SETTINGS
 # fix the seeded cwd to the real home dir

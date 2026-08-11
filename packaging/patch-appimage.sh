@@ -184,12 +184,12 @@ const SSH_WIRE_ANCHOR = 'window.clash&&window.clash.refreshStatus();const s=(e,t
 const SSH_WIRE_NEW = 'window.clash&&window.clash.refreshStatus();const _se=document.getElementById("settingsSshEnabled");_se&&_se.addEventListener("change",()=>window.ssh.applyEnabled());window.ssh&&window.ssh.refreshStatus();const _mw=document.getElementById("settingsAppMonitorManageWebapps");_mw&&_mw.addEventListener("click",()=>{(window.appmonitorA||window.appmonitorB)&&(window.appmonitorA||window.appmonitorB).manageWebapps()});const s=(e,t)=>{';
 
 // ---- #3 appmonitor 应用列表(apps 态)----
-// tab4/5 不再默认 Firefox:原生应用只保留用户装的 UI 应用(appimage:/custom:/demo: 前缀,
-// 去掉 native: 即 Firefox 等系统应用);init 不再回退选第一个 native;无已保存选择时
-// 自动打开应用菜单;菜单加 WEBAPPS 管理入口(manageWebapps 弹窗删自定义 webapp);
-// 设置分区加"管理 Webapps"按钮(接线已并入 SSH_WIRE_NEW)。
+// tab4/5 应用列表:原生应用保留全部 native:/appimage:/custom:/demo:(含系统内置 Firefox,
+// 系统工具由后端 native-apps.js 的 SYSTEM_APP_RE 过滤掉);init 不再回退选第一个 native;
+// 无已保存选择时自动打开应用菜单;菜单加 WEBAPPS 管理入口(manageWebapps 弹窗删自定义
+// webapp);设置分区加"管理 Webapps"按钮(接线已并入 SSH_WIRE_NEW)。
 const AM_FILTER_OLD = 'const e=await window.appmonitorApi.nativeList();(e&&e.apps||[]).forEach(e=>this.apps.push(Object.assign({},e,{kind:"native"})))';
-const AM_FILTER_NEW = 'const e=await window.appmonitorApi.nativeList();(e&&e.apps||[]).forEach(e=>("appimage:"===String(e.id).slice(0,9)||"custom:"===String(e.id).slice(0,7)||"demo:"===String(e.id).slice(0,5))&&this.apps.push(Object.assign({},e,{kind:"native"})))';
+const AM_FILTER_NEW = 'const e=await window.appmonitorApi.nativeList();(e&&e.apps||[]).forEach(e=>("appimage:"===String(e.id).slice(0,9)||"custom:"===String(e.id).slice(0,7)||"demo:"===String(e.id).slice(0,5)||"native:"===String(e.id).slice(0,7))&&this.apps.push(Object.assign({},e,{kind:"native"})))';
 const AM_SEL_OLD = 'const t=e&&this.apps.find(t=>t.name===e)||this.apps.find(e=>"native"===e.kind)||this.apps[0];this.labelEl&&!t&&';
 const AM_SEL_NEW = 'const t=e&&this.apps.find(t=>t.name===e);this.labelEl&&!t&&';
 const AM_INITTAIL_OLD = 'this._statusTimer||(this._statusTimer=setInterval(()=>this._fetchStatus(),3e3)),this._renderMenu()}';
@@ -307,6 +307,18 @@ const targets = [
       .join('{DISPLAY:":0",XCURSOR_THEME:"edex"}'),
   },
   {
+    name: 'native-apps.js (SYSTEM_APP_RE 补漏:应用列表含 native 后滤掉系统工具)',
+    path: ['appmonitor', 'native-apps.js'],
+    expectIn: 'org\\.kde\\.)([\\s_.\\/-]|$)/i',
+    expectOut: '|x11vnc)([\\s_.\\/-]|$)/i',
+    // #17 应用列表恢复 native:(含 Firefox)后,Input Method / Keyboard layout viewer /
+    // X11VNC Server 这三个系统工具名没被原 SYSTEM_APP_RE 命中,会混进应用列表。
+    // 补漏:按 exec/名字追加三个精准替代(im-config / kbd-layout-viewer5 / x11vnc)。
+    transform: c => c
+      .split('org\\.kde\\.)([\\s_.\\/-]|$)/i')
+      .join('org\\.kde\\.|im-config|kbd-layout-viewer5|x11vnc)([\\s_.\\/-]|$)/i'),
+  },
+  {
     name: 'keyboard.class.js',
     path: ['classes', 'keyboard.class.js'],
     expectIn: '(t.length?', expectOut: '(t.forEach?',
@@ -403,6 +415,30 @@ const targets = [
     transform: c => c
       .split('.xterm:not(.enable-mouse-events){cursor:text}')
       .join('.xterm:not(.enable-mouse-events){cursor:text}' + AM_CSS),
+  },
+  {
+    name: 'mod_toplist.css (top processes NAME 列缩短,数字右对齐)',
+    path: ['assets', 'css', 'mod_toplist.css'],
+    expectIn: 'table#mod_toplist_table td:nth-child(2){max-width:7vw;min-width:7vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    expectOut: 'table#mod_toplist_table td:nth-child(2){max-width:5vw',
+    // #17 用户反馈 top processes 的数值太靠右、不协调。原 NAME 列 7vw(≈134px)太宽,
+    // 长进程名把 CPU/MEM 推到右缘。缩短 NAME 列到 5vw 并给 PID 列定宽(避免 auto 列把
+    // 多余空间吸收走),CPU/MEM 保持右对齐 → 表格紧凑、数字位置整齐。
+    transform: c => c
+      .split('table#mod_toplist_table td:nth-child(2){max-width:7vw;min-width:7vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}')
+      .join('table#mod_toplist_table td:nth-child(1){max-width:4.2vw;min-width:4.2vw}table#mod_toplist_table td:nth-child(2){max-width:5vw;min-width:5vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'),
+  },
+  {
+    name: 'mod_sysinfo.css (LOAD/UPTIME/TYPE/POWER 四列等宽不裁切)',
+    path: ['assets', 'css', 'mod_sysinfo.css'],
+    expectIn: 'div#mod_sysinfo div{height:100%;box-sizing:border-box;padding:.925vh .46vh;display:flex;flex-direction:column;align-items:flex-start;justify-content:space-around}',
+    expectOut: 'flex:1 1 0;min-width:0',
+    // #17 用户反馈左上 LOAD/UPTIME/TYPE/POWER 的 POWER 字母 r 有一半被裁掉。
+    // 根因:flex 容器 justify-content:space-between + 子项 min-width:auto,总宽超出时
+    // 末列溢出被裁。改为四列 flex:1 1 0;min-width:0(等宽均分,永不溢出),并收紧水平内边距。
+    transform: c => c
+      .split('div#mod_sysinfo div{height:100%;box-sizing:border-box;padding:.925vh .46vh;display:flex;flex-direction:column;align-items:flex-start;justify-content:space-around}')
+      .join('div#mod_sysinfo div{height:100%;box-sizing:border-box;padding:.925vh .25vh;flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:flex-start;justify-content:space-around}'),
   },
   {
     name: '_i18n.js (SSH 设置文案 + appmonitor Webapps 文案)',
