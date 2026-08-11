@@ -344,6 +344,31 @@ gsettings cursor-theme=edex;`/usr/local/bin/edex-clipboard-bridge.sh` 已装并�
 
 **待办**:统一重启 eDEX(见 §4),16fix 部署到 `/opt/edex/eDEX-UI.AppImage` 后验证 #3/#5/#7/#9。
 
+## 3.18 ✅ 已完成(2026-08-11 晚,本会话 4 项 UI 需求,已构建 17fix)
+
+用户新报 4 个问题,全部修复并打包进 **17fix**(`packaging/patch-appimage.sh` 新增 3 个 target + 改 1 个常量):
+- **#1 tab4/5 两个网页(Google/Bing)不是用户加的,删除**:本机 `~/.config/eDEX-UI/settings.json` 的
+  `webapps` 已清空(已备份 .bak-20260811);`packaging/install/install-edex.sh` 默认 `webapps` 也改为 `[]`。
+- **#2 应用列表不显示系统内置 Firefox**:`appmonitorPanel.class.js` 的 native 过滤恢复 `native:` 前缀
+  (AM_FILTER_NEW 加 `||"native:"===String(e.id).slice(0,7)`)→ Firefox 回到列表。
+  **用户原则:只有有 UI 的应用才显示。** 故同时给 `appmonitor/native-apps.js` 的 SYSTEM_APP_RE 补漏
+  (`im-config|kbd-layout-viewer5|x11vnc`),滤掉 Input Method / Keyboard layout viewer / X11VNC Server
+  三个非 UI 系统工具。列表最终=Firefox、uGet(皆有 UI)+ AppImage/webapp。
+- **#3 top processes 数字太靠右/不协调**:`mod_toplist.css` NAME 列 `7vw→5vw`(缩短)+ 新增 PID 列定宽
+  `4.2vw`(防 auto 列吸走多余空间),CPU/MEM 保持右对齐 → 表格紧凑、数字位置整齐。
+- **#4 左上 LOAD/UPTIME/TYPE/POWER 的 POWER 字母 r 被裁掉一半**:`mod_sysinfo.css` 四个子列改
+  `flex:1 1 0;min-width:0`(等宽均分、永不溢出)+ 收紧水平内边距 `.46vh→.25vh`。
+
+**17fix**(`/tmp/edex-17fix/eDEX-UI.AppImage.17fix`,185072378B)= orig + 全部 15 个 patch,已全量验证:
+10 个 patch JS `node --check` 全过;15 个 marker 全命中(native: filter / x11vnc / 5vw / flex:1 1 0 等)。
+比对 16fix 只多了 native-apps.js + 两个 CSS + appmonitorPanel 过滤变化。
+
+**⚠️ 当前有两个 eDEX 实例**:1372(18:16,旧版)与 3483184(22:05,16fix)同时在 :0。重启时需
+`pkill -f eDEX-UI.AppImage` 全部杀掉,lightdm autologin=edex 会拉起新实例。
+
+**待办**:部署 17fix 到 `/opt/edex/eDEX-UI.AppImage` + 重启后验证:①tab4/5 无 Google/Bing、含 Firefox;
+②Firefox 可启动铺满;③top processes 数字整齐;④sysinfo POWER 不裁切。
+
 ## 4. 重启后如何继续
 
 1. 启动 Claude,读 `/home/edex/edex-ubuntu-work/CONTINUE.md` + `ubuntu/README.md`
