@@ -3,6 +3,16 @@
 > 这里放 **只能在 Ubuntu 真机 / CI 打包侧** 做的事。macOS 预览(cdp 9222)做不了的都归这儿。
 > 详细背景见 [`docs/ubuntu-side-changes.md`](../docs/ubuntu-side-changes.md)。
 
+## Phase C 实测记录(2026-08-11,v2.3.11)
+
+- ✅ **WiFi**:已可用(#172 netdev 组修复生效)。
+- ❌ **用户名 #174**:装机时设了自己的 Ubuntu 用户名,Welcome back **仍显示 "edex"**。
+  根因推测:eDEX 会话以固定 `edex` 账号运行,`os.userInfo().realname` 拿到的是该账号的 GECOS
+  = "edex",`getDisplayName` 的 GECOS 优先逻辑因此失效。待查:install-edex.sh 到底创建了哪个
+  会话账号;真名应改为读 Ubuntu 安装时创建的主用户(如最高非系统 uid 的 GECOS,或首启向导把用户名写进 settings.json)。
+- 🆕 **#182 开机终端两行**:一开机终端就有两行,疑似解锁时按 Enter 多打了一行。
+- 🆕 **#183 开机过渡**:黑屏 + 原生鼠标光标 → 白屏一下 → 才进 eDEX UI。logo 部分用户已取消,白屏/原生光标过渡仍待处理(不动开机动画)。
+
 ## v2.3.11 之后要做:Phase C 真机验证(ThinkPad E580)
 
 以下修复代码已完成并随 v2.3.11 ISO 发布,**尚未在真机验证**:
