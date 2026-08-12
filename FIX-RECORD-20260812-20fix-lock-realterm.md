@@ -86,11 +86,14 @@ sudo systemctl start lightdm
 ### 2.5 确保内置 FFMPEG ——(**不进应用列表**)
 - `sudo apt install ffmpeg`,确认系统内 `ffmpeg` 命令可用即可(供下载后的转码/处理等用途)。
 
-### 2.6 CPU 超负荷 → CPU 型号文字红光闪烁(勿刺眼)
-- 当 CPU 超负荷(高占用)时,CPU USAGE 组件中的 **CPU 型号文字红光闪烁** 作为提示;
+### 2.6 超负荷 → 关键组件文字红光闪烁(勿刺眼)
+- **CPU USAGE** 组件:CPU 型号文字超负荷时红光闪烁;
+- **MEMORY** 组件:**USING** 文字同样在超负荷时闪红色;
+- **NETWORK TRAFFIC** 组件:**UP** 和 **DOWN** 文字也在超负荷时闪红色。
 - 要求**不要太刺眼**(低强度/柔和闪烁,如暗红 + 慢速呼吸式淡入淡出)。
-- 实现思路:定位 CPU USAGE 组件(mod_sysinfo.css / sysinfo widget,顶部 CPU 型号文字),
-  按占用率阈值加 class,配一个柔和的红色 box-shadow/text-shadow 闪烁动画。
+- 实现思路:定位 mod_sysinfo.css / sysinfo widget 中 CPU 型号、MEMORY USING、NETWORK
+  UP/DOWN 三处文字,按各自占用率阈值加 class,配一个柔和的红色 box-shadow/text-shadow
+  闪烁动画(阈值与"超负荷"判定同一处逻辑)。
 
 ---
 
@@ -121,5 +124,5 @@ sudo systemctl start lightdm
 - #9 ⏳ 下一轮:CLASH 设置增强(节点/测速/全局规则直连/规则,CLI 可视化)
 - #10 ⏳ 下一轮:内置 FASTFETCH(不进列表)
 - #11 ⏳ 下一轮:确保内置 FFMPEG(不进列表)
-- #12 ⏳ 下一轮:CPU 超负荷时 CPU 型号文字红光闪烁(勿刺眼)
+- #12 ⏳ 下一轮:超负荷时 CPU型号 / MEMORY USING / NETWORK UP·DOWN 文字红光闪烁(勿刺眼)
 - #2/#3/#4/#5 ⏳ 历史遗留(#5 滚动、#9 选择复制、appmonitor openbox、Ubuntu 待办)
