@@ -1,11 +1,19 @@
 # ⏸️ 工作交接文档 — 重启后从这里继续
 
-> **最后更新**:2026-08-12(18fix 已构建部署、已推 GitHub,等待重启验证)
+> **最后更新**:2026-08-12(19fix 已构建待部署;Task #1-#4 全部落地并已推 GitHub,待用户确认部署)
 
-> ⚠️ **18fix 已部署待重启验收**:四个 Bug(①sysinfo 重叠 ②code 锁屏框左上角+UI 消失 ③CLAUDE 终端无法滚动 ④回车时文件浏览器跳动)+ ws 重连 Bug5 + SSVT 屏保虚拟终端,全部写进 `packaging/patch-appimage.sh` 并构建部署。
-> `/opt/edex/eDEX-UI.AppImage` = **18fix(sha1 `0fd54cdb…`,185088762B)**,当前运行实例仍是 17fix,**重启生效**。
-> 已按用户指示推 GitHub(`haneyo/haneyoedexos` master)。**重启前先问用户**;重启后按
-> `FIX-RECORD-20260811-18fix.md` §7 验证清单逐项验收,再做真机验证归档同步。
+> ⚠️ **19fix 已构建未部署**:`/tmp/eDEX-UI.AppImage.19fix-20260811`(185088762B)已构建并
+> 全部验证(node --check 通过;lockScreen/appmonitor/_renderer 内容逐项核对)。含:
+> ①code 屏保改回"UI 假数据+假终端假代码"(ss_vt 收进 main_shell_innercontainer,z-2500)
+> ②code 锁屏框加大(54→72)+ 主题配色 + 独立虚拟终端(fontSize 18,z-3200,不碰真终端)
+> ③应用 tab 不再默认选 firefox(无保存选择时显示 MONITOR A/B + 自动打开应用列表)。
+> ④开机去 Ubuntu 元素(系统级,不在 AppImage):watermark.png 换全透明、GRUB gfxterm 去
+> 白屏、edex-session.sh 光标改 edex —— 已应用到真机,需**重启**生效。
+> **部署流程(先问用户)**:`sudo systemctl stop lightdm; sudo pkill -f eDEX-UI.AppImage;
+> sudo cp /tmp/eDEX-UI.AppImage.19fix-20260811 /opt/edex/eDEX-UI.AppImage && sudo chmod 755;
+> sudo rm -rf ~/.config/eDEX-UI/"Local Storage"`(清除残留 localStorage 键
+> `edex_monitor_a_app=Firefox`/`edex_monitor_b_app=Bing`,否则 19fix 仍会默认拉起 firefox);
+> `sudo systemctl start lightdm`。随后**重启**验收开机画面(§1)。
 > **目的**:eDEX 重启会中断当前会话。重启后打开 Claude 先读本文件 + `ubuntu/README.md`,即可无缝续接。
 
 ---

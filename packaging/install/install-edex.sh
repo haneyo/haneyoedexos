@@ -46,6 +46,9 @@ fi
 # visually consistent with the eDEX overlay (task #7).
 xsetroot -solid black 2>/dev/null || true
 export XCURSOR_THEME=edex
+# Set the root window cursor to the theme's dark arrow immediately (openbox does
+# this too once it maps, but doing it here covers the very first frames of X).
+xsetroot -cursor_name left_ptr 2>/dev/null || true
 openbox --replace >/dev/null 2>&1 &
 # Kill Xorg's own screen blanking/DPMS. X ships a ~10-minute idle default that
 # physically blanks the display regardless of the app, so on real hardware the
@@ -406,12 +409,17 @@ GRUB_DISTRIBUTOR=`lsb_release -i -s 2>/dev/null || echo Debian`
 # but makes WiFi across arbitrary hardware far more reliable.
 GRUB_CMDLINE_LINUX_DEFAULT="quiet splash pcie_aspm=off"
 GRUB_CMDLINE_LINUX=""
-# Dark sci-fi GRUB menu: keep the reliable VGA text console (works on every GPU)
-# but restyle it — black background, white normal text, cyan highlight — instead
-# of the stock Ubuntu purple that made the boot screen ugly. The `error: file
-# '/boot/' not found` line that flashes above the menu is UNRELATED to this file:
-# it comes from the signed grubx64.efi's embedded config and is cosmetic (#11).
-GRUB_TERMINAL_OUTPUT="console"
+# Dark sci-fi GRUB menu: render in graphical mode at the panel's native
+# resolution and keep the same framebuffer for the kernel, so there is no
+# VGA-text->KMS mode switch — that switch is the "white flash" before the boot
+# splash on real hardware (task #4 boot). gfxterm auto-falls back to the VGA
+# text console if a GPU cannot do graphical mode, so bootability is preserved.
+# The `error: file '/boot/' not found` line that flashes above the menu is
+# UNRELATED to this file: it comes from the signed grubx64.efi's embedded config
+# and is cosmetic (#11).
+GRUB_TERMINAL_OUTPUT="gfxterm"
+GRUB_GFXMODE=1920x1080,1024x768,800x600,auto
+GRUB_GFXPAYLOAD_LINUX=keep
 GRUB_COLOR_NORMAL="white/black"
 GRUB_COLOR_HIGHLIGHT="cyan/black"
 GRUB_DISABLE_OS_PROBER=true
@@ -427,9 +435,18 @@ if command -v plymouthd >/dev/null 2>&1; then
     if [ -d /usr/share/plymouth/themes/spinner ]; then
         for f in /usr/share/plymouth/themes/spinner/*.png; do
             [ "$(basename "$f")" = "bgrt-fallback.png" ] && continue
+            # watermark.png in the stock spinner theme IS the Ubuntu circle, drawn
+            # at the bottom of the splash (edex.plymouth WatermarkVerticalAlignment
+            # =.96). We install a transparent one below instead, so no Ubuntu logo
+            # survives at the bottom (task #4 boot).
+            [ "$(basename "$f")" = "watermark.png" ] && continue
             cp -n "$f" /usr/share/plymouth/themes/edex/ 2>/dev/null || true
         done
     fi
+    # Fully transparent watermark (1x1 PNG): the theme draws whatever watermark.png
+    # is at the bottom; transparent = no logo. base64 is coreutils, always present.
+    echo 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==' \
+        | base64 -d > /usr/share/plymouth/themes/edex/watermark.png
     # This script runs inside the curtin chroot (/target), where the live ISO's
     # /cdrom is NOT mounted — the payload is copied to /root by user-data
     # late-commands. Check /root first, then /cdrom/nocloud as a fallback for

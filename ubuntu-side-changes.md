@@ -18,28 +18,53 @@ install 里的 `plymouth-set-default-theme spinner` 一直静默失败(`|| true`
 
 1. **plymouth 真正内置**:build-iso.sh APTOPTS 加入 `plymouth plymouth-theme-spinner`
    (随 squashfs 打进系统),install 时 `plymouth-set-default-theme spinner` + `update-initramfs -u`
-   才真正生效 → 开机黑底 spinner 动画,不再滚文本。
-2. **GRUB 暗色主题**:`/etc/default/grub` 保留可靠的 VGA 文本控制台(任何 GPU 都能用),
-   但改黑底白字/青色高亮(原 Ubuntu 紫色界面是"难看"的元凶之一)。
+   才真正生效 → 开机黑底 spinner 动画,不再滚文本。默认主题设为自定义 **edex**
+   (见 §1.1),plymouthd.conf `Theme=edex`。
+2. **GRUB 暗色主题(消除开机白屏)**:`/etc/default/grub` 用 `GRUB_TERMINAL_OUTPUT=gfxterm`
+   图形模式 + `GRUB_GFXMODE=1920x1080,1024x768,800x600,auto` + `GRUB_GFXPAYLOAD_LINUX=keep`:
+   GRUB 以面板原生分辨率黑底渲染并让内核沿用同一 framebuffer,不再有 VGA 文本→KMS 的
+   模式切换 —— 那个切换正是真机开机"先白屏再动画"的来源。gfxterm 在 GPU 不支持图形模式时
+   会自动回退到 VGA 文本控制台,不影响引导。配色仍为黑底白字/青色高亮。
    GRUB 菜单上方闪的 `error: file '/boot/' not found` 与这份配置无关 —— 来自 UEFI 签名
    grubx64.efi 内嵌配置,纯装饰(#11,不影响引导)。
-3. **光标统一 + 黑根窗口**:系统默认 X 光标主题改 DMZ-Black(暗色,和 eDEX 配色一致),
-   会话启动时 `xsetroot -solid black` 把 X 根窗口涂黑 —— lightdm greeter 关掉、eDEX
-   窗口还没映射的瞬间(之前白屏 + 原生箭头)变黑底黑光标。
+3. **光标统一 + 黑根窗口**:系统默认 X 光标主题改 **edex**(WP7 暗色箭头,随 ISO 内置,
+   `update-alternatives` 指向 `/usr/share/icons/edex/index.theme`),会话启动时
+   `xsetroot -solid black` 涂黑 X 根窗口 + `xsetroot -cursor_name left_ptr` 立刻切暗色
+   箭头 —— lightdm greeter 关掉、eDEX 窗口还没映射的瞬间(之前白屏 + 原生箭头)变黑底黑光标。
+   ⚠️ 旧装机(如本机 E580)的 edex-session.sh 还写着 `XCURSOR_THEME=DMZ-Black`,而
+   `dmz-cursor-theme` **未安装** → X 回退到原始黑白箭头。已改为 `XCURSOR_THEME=edex`。
+
+### 1.1 edex plymouth 主题 — 底部 Ubuntu logo 的来源与去除
+
+edex 主题的动画/throbber 帧是 eDEX 绿色环(无 Ubuntu 品牌);品牌部分只有两处:
+`bgrt-fallback.png`(居中,已用 edex-boot-logo.png)与 **`watermark.png`(底部,edex.plymouth
+`WatermarkVerticalAlignment=.96`)**。install-edex.sh 从 spinner 主题复制 PNG 时只跳过了
+`bgrt-fallback.png`,`watermark.png` 仍是 **Ubuntu 圆标** → 真机开机屏幕最下方出现 Ubuntu
+logo。修复:复制时同样跳过 `watermark.png`,并向 edex 主题写入一张**全透明** PNG(base64
+内嵌 1x1),底部不再画任何 logo。真机验证(每张 initramfs 都应全透明):
+
+```bash
+cat /etc/plymouth/plymouthd.conf                    # Theme=edex
+grep -A2 Watermark /usr/share/plymouth/themes/edex/edex.plymouth
+python3 -c "from PIL import Image;print(Image.open('/usr/share/plymouth/themes/edex/watermark.png').getextrema()[3])"  # (0, 0)=全透明
+unmkinitramfs /boot/initrd.img-* out && python3 -c "from PIL import Image;print(Image.open('out/main/usr/share/plymouth/themes/edex/watermark.png').getextrema()[3])"
+```
 
 **真机验证:**
 ```bash
-cat /etc/default/grub | grep CMDLINE_LINUX_DEFAULT   # 应含 quiet splash
-cat /etc/default/grub | grep -E "GRUB_COLOR|TERMINAL" # 应见 dark 配色
-plymouth-set-default-theme                             # 应输出 spinner
+cat /etc/default/grub | grep CMDLINE_LINUX_DEFAULT    # 应含 quiet splash
+cat /etc/default/grub | grep -E "GRUB_COLOR|TERMINAL|GFXMODE|GFXPAYLOAD"  # 应见 gfxterm + dark 配色
+cat /etc/plymouth/plymouthd.conf                       # Theme=edex
 lsinitramfs /boot/initrd.img-* | grep plymouth | head   # 应列出 plymouth 文件
-update-alternatives --list x-cursor-theme               # 应含 DMZ-Black
-grep -A2 "Icon Theme" /usr/share/icons/default/index.theme  # 默认主题
+update-alternatives --get-selections | grep x-cursor-theme   # 应指向 /usr/share/icons/edex/index.theme
+grep -n XCURSOR_THEME /usr/local/sbin/edex-session.sh  # 应为 edex(不是 DMZ-Black)
+grep -A2 Watermark /usr/share/plymouth/themes/edex/edex.plymouth
 ```
 
-开机应看到:GRUB 黑底菜单 → spinner 动画 → 黑底 lightdm → eDEX 锁屏,全程无白屏无原生
-箭头。看到纯文本滚动 = plymouth 没生效(跑 `sudo update-initramfs -u && sudo update-grub`
-后重启)。
+开机应看到:GRUB 黑底(gfxterm,无白屏)→ edex 动画(黑底,居中 eDEX wordmark,底部**无**
+Ubuntu logo)→ 黑底 lightdm → eDEX 锁屏,全程无白屏无原生箭头。看到纯文本滚动 =
+plymouth 没生效(跑 `sudo update-initramfs -u && sudo update-grub` 后重启);底部仍见
+Ubuntu 圆标 = watermark.png 未替换(见 §1.1)。
 
 ---
 

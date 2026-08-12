@@ -131,7 +131,7 @@ if(_edexMins>0){setTimeout(function _edexWatch(){
 // 键盘输入用全局 keydown 捕获,完全不动真终端 term[0];移除对 main_shell 等元素的 z-index
 // 提升与 focusShellTab(0)。teardown 时移除 keydown、销毁虚拟终端、移除临时 input。
 const LOCK1_OLD = 'const i=document.getElementById("mod_clock");i&&(this._origClockPos=i.style.position,i.style.position="relative",i.style.zIndex="3100");const o=document.getElementById("main_shell_title");o&&(this._origTitleZ=o.style.zIndex,o.style.zIndex="3100");const s=document.getElementById("main_shell");s&&(this._origShellClip=s.style.clipPath,this._origShellZ=s.style.zIndex,s.style.zIndex="3200",s.style.clipPath="none");const n=document.getElementById("main_shell_innercontainer");n&&(this._origInnerZ=n.style.zIndex,this._origInnerClip=n.style.clipPath,n.style.zIndex="3001",n.style.clipPath="polygon(0 0, calc(100% - 15px) 0, 100% 15px, 100% 100%, 15px 100%, 0 calc(100% - 15px))"),window.focusShellTab&&window.focusShellTab(0);const r=window.term[0];if(this._term=r,this._codeBuf="",r&&r.term&&(this._origTermWrite=r.term.write,this._rawWrite=r.term.write.bind(r.term),r.term.write=e=>{this.active&&this._suppressOutput||this._rawWrite(e)}),this._suppressOutput=!0,r)try{this._origSend=r.socket.send.bind(r.socket),r.socket.send=e=>this._termKey(e);try{const e=window.screensaver&&window.screensaver.preSaverTerm0;if(e&&"string"==typeof e&&e.length)this._savedTerm=e,this._serializeAddon=null,window.screensaver.preSaverTerm0=null;else if(this._savedTerm&&"string"==typeof this._savedTerm&&this._savedTerm.length)this._serializeAddon=null;else{const{SerializeAddon:e}=require("xterm-addon-serialize");this._serializeAddon=new e,r.term.loadAddon(this._serializeAddon),this._savedTerm=this._serializeAddon.serialize()}}catch(e){this._savedTerm=null,this._serializeAddon=null}this._boxAnimating=!0,this._drawLockBox(!0)}catch(e){}';
-const LOCK1_NEW = 'const r={term:null,socket:null,id:"__lockvirt"};if(this._term=r,this._codeBuf="",this._suppressOutput=!0)try{const T=require("xterm").Terminal;r.term=new T({cols:120,rows:34,fontFamily:"monospace",fontSize:14,scrollback:0,disableStdin:!0,cursorBlink:!1,allowTransparency:!0,theme:{background:"rgba(0,0,0,0)",foreground:"#33ffaa"}})}catch(e){r.term=null}if(r.term){try{const vc=document.createElement("div");vc.id="lock_virt_term",vc.style.cssText="position:absolute;inset:0;overflow:hidden",t.appendChild(vc),r.term.open(vc);const _sz=()=>{try{const w=vc.clientWidth||window.innerWidth,h=vc.clientHeight||window.innerHeight,co=r.term._core;let cw=8,ch=17;try{const d=co._renderService&&co._renderService.dimensions;if(d&&d.css&&d.css.cell&&d.css.cell.width>0&&d.css.cell.height>0){cw=d.css.cell.width;ch=d.css.cell.height}}catch(_){}const c=Math.max(20,Math.floor(w/cw)),rr=Math.max(6,Math.floor(h/ch));if(c!==r.term.cols||rr!==r.term.rows)r.term.resize(c,rr)}catch(_){}};try{const F=require("xterm-addon-fit").FitAddon;r.term.loadAddon(new F),r.term.fit()}catch(e){}_sz();setTimeout(()=>{try{if(this.active&&r.term&&document.getElementById("lock_block")){_sz();this._boxAnimating=!1;try{this._drawLockBox(!1)}catch(e){};try{this._startLockAnim&&this._startLockAnim()}catch(e){}}}catch(e){}},150)}catch(e){}this._rawWrite=r.term.write.bind(r.term),r.term.write=e=>this._rawWrite(e)}try{const pi=document.createElement("input");pi.id="lock_pass_input",pi.type="text",pi.autocomplete="off",pi.inputMode="numeric",pi.style.cssText="position:fixed;left:-9999px;top:0;opacity:0",document.body.appendChild(pi),pi.focus(),this._keydownHandler=e=>{if(!this.active||this._boxAnimating)return;e.preventDefault(),e.stopPropagation();const k=e.key;if("Enter"===k)return this._codeSubmit();if("Backspace"===k||"Delete"===k)return this._codeBuf=this._codeBuf.slice(0,-1),this._codeRedraw();if(1===k.length&&k>=" ")this._codeBuf+=k,this._codeRedraw()},window.addEventListener("keydown",this._keydownHandler,!0)}catch(e){}';
+const LOCK1_NEW = 'const r={term:null,socket:null,id:"__lockvirt"};if(this._term=r,this._codeBuf="",this._suppressOutput=!0)try{const T=require("xterm").Terminal;r.term=new T({cols:120,rows:34,fontFamily:(window.theme&&window.theme.terminal&&window.theme.terminal.fontFamily)||"Fira Mono",fontSize:18,scrollback:0,disableStdin:!0,cursorBlink:!1,allowTransparency:!0,theme:{background:(window.theme&&window.theme.terminal&&window.theme.terminal.background)||"#05080d",foreground:(window.theme&&window.theme.terminal&&window.theme.terminal.foreground)||"#aacfd1"}})}catch(e){r.term=null}if(r.term){try{const vc=document.createElement("div");vc.id="lock_virt_term",vc.style.cssText="position:absolute;inset:0;overflow:hidden;z-index:3200",(document.getElementById("main_shell_innercontainer")||t).appendChild(vc),r.term.open(vc);const _sz=()=>{try{const w=vc.clientWidth||window.innerWidth,h=vc.clientHeight||window.innerHeight,co=r.term._core;let cw=8,ch=17;try{const d=co._renderService&&co._renderService.dimensions;if(d&&d.css&&d.css.cell&&d.css.cell.width>0&&d.css.cell.height>0){cw=d.css.cell.width;ch=d.css.cell.height}}catch(_){}const c=Math.max(20,Math.floor(w/cw)),rr=Math.max(6,Math.floor(h/ch));if(c!==r.term.cols||rr!==r.term.rows)r.term.resize(c,rr)}catch(_){}};try{const F=require("xterm-addon-fit").FitAddon;r.term.loadAddon(new F),r.term.fit()}catch(e){}_sz();setTimeout(()=>{try{if(this.active&&r.term&&document.getElementById("lock_block")){_sz();this._boxAnimating=!1;try{this._drawLockBox(!1)}catch(e){};try{this._startLockAnim&&this._startLockAnim()}catch(e){}}}catch(e){}},150)}catch(e){}this._rawWrite=r.term.write.bind(r.term),r.term.write=e=>this._rawWrite(e)}try{const pi=document.createElement("input");pi.id="lock_pass_input",pi.type="text",pi.autocomplete="off",pi.inputMode="numeric",pi.style.cssText="position:fixed;left:-9999px;top:0;opacity:0",document.body.appendChild(pi),pi.focus(),this._keydownHandler=e=>{if(!this.active||this._boxAnimating)return;e.preventDefault(),e.stopPropagation();const k=e.key;if("Enter"===k)return this._codeSubmit();if("Backspace"===k||"Delete"===k)return this._codeBuf=this._codeBuf.slice(0,-1),this._codeRedraw();if(1===k.length&&k>=" ")this._codeBuf+=k,this._codeRedraw()},window.addEventListener("keydown",this._keydownHandler,!0)}catch(e){}';
 const LOCK2_NEW = '_teardownLock(e){if(this._keydownHandler){try{window.removeEventListener("keydown",this._keydownHandler,!0)}catch(e){}this._keydownHandler=null}try{const pi=document.getElementById("lock_pass_input");pi&&pi.remove()}catch(e){}try{const v=document.getElementById("lock_virt_term");v&&v.remove()}catch(e){}try{if(this._term&&this._term.term&&this._term.term!==(window.term&&window.term[0]&&window.term[0].term)){try{this._term.term.dispose()}catch(e){}}this._term.term=null}catch(e){}this.active=!1,';
 
 // ---- 修复 12:globe 累积状态 3-5 分钟无感重置(12fix 修正版)----
@@ -249,8 +249,39 @@ const SSVT_WIND_OLD = 'windDownCodeToLock(o){if(!e||n)return void(o&&o());n=!0,t
 const SSVT_WIND_NEW = 'windDownCodeToLock(o){if(!e||n)return void(o&&o());n=!0,t&&(clearInterval(t),t=null);if(!Vt||"function"!=typeof Vt.write)return n=!1,void(o&&o());b().forEach(x=>Vt.write(x+"\\r\\n"));let i=0;const r=setInterval(()=>{try{for(let x=0;x<4;x++)Vt&&Vt.write&&Vt.write("\\n")}catch(_){}++i>=30&&(clearInterval(r),clearTimeout(a),n=!1,o&&o())},32),a=setTimeout(()=>{n&&(clearInterval(r),n=!1,o&&o())},2500)}';
 const SSVT_RESUME_OLD = 'resumeCode(){e||"code"!==window.settings.screensaverStyle||(e=!0,document.body.classList.add("screensaver_on"),window.cursorTrap&&window.cursorTrap.hide(),window.cover&&!window.cover.isActive()&&window.cover.set(!0),k=!0,d.clear(),n=!1,_=[],t||(t=setInterval(I,100)))}';
 const SSVT_RESUME_NEW = 'resumeCode(){e||"code"!==window.settings.screensaverStyle||(e=!0,document.body.classList.add("screensaver_on"),window.cursorTrap&&window.cursorTrap.hide(),window.cover&&!window.cover.isActive()&&window.cover.set(!0),k=!0,d.clear(),n=!1,_=[],this._mkSsvt(),t||(t=setInterval(I,100)))},' +
-  '_mkSsvt(){try{this._rmSsvt()}catch(_){}let d=null;try{d=document.createElement("div"),d.id="screensaver_vt",d.style.cssText="position:fixed;inset:0;z-index:2500;background:#05080d;overflow:hidden;",document.body.appendChild(d);const T=require("xterm").Terminal;Vt=new T({cols:120,rows:34,fontFamily:"monospace",fontSize:14,scrollback:0,disableStdin:!0,cursorBlink:!1,allowTransparency:!0,theme:{background:"#05080d",foreground:"#33ffaa"}}),Vt.open(d);const sz=()=>{try{const w=d.clientWidth||window.innerWidth,h=d.clientHeight||window.innerHeight,c=Math.max(20,Math.floor(w/8)),r=Math.max(6,Math.floor(h/17));if(c!==Vt.cols||r!==Vt.rows)Vt.resize(c,r)}catch(_){}};sz();try{const F=require("xterm-addon-fit").FitAddon;Vt.loadAddon(new F),Vt.fit()}catch(_){}Vo=d}catch(_){try{Vt&&Vt.dispose&&Vt.dispose()}catch(__){Vt=null}Vt=null,Vo=null}return Vt},' +
+  '_mkSsvt(){try{this._rmSsvt()}catch(_){}let d=null;try{const _box=document.getElementById("main_shell_innercontainer")||document.body;d=document.createElement("div"),d.id="screensaver_vt",d.style.cssText="position:absolute;inset:0;z-index:2500;overflow:hidden;",_box.appendChild(d);const T=require("xterm").Terminal,_bg=(window.theme&&window.theme.terminal&&window.theme.terminal.background)||"#05080d",_fg=(window.theme&&window.theme.terminal&&window.theme.terminal.foreground)||"#aacfd1",_fs=(window.theme&&window.theme.terminal&&window.theme.terminal.fontSize)||11,_ff=(window.theme&&window.theme.terminal&&window.theme.terminal.fontFamily)||"Fira Mono";Vt=new T({cols:120,rows:34,fontFamily:_ff,fontSize:_fs,scrollback:0,disableStdin:!0,cursorBlink:!1,allowTransparency:!0,theme:{background:_bg,foreground:_fg}}),Vt.open(d);const sz=()=>{try{const w=d.clientWidth||window.innerWidth,h0=d.clientHeight||window.innerHeight,co=Vt._core;let cw=8,ch=17;try{const dm=co._renderService&&co._renderService.dimensions;if(dm&&dm.css&&dm.css.cell&&dm.css.cell.width>0&&dm.css.cell.height>0){cw=dm.css.cell.width;ch=dm.css.cell.height}}catch(_){}const c=Math.max(20,Math.floor(w/cw)),r=Math.max(6,Math.floor(h0/ch));if(c!==Vt.cols||r!==Vt.rows)Vt.resize(c,r)}catch(_){}};sz();try{const F=require("xterm-addon-fit").FitAddon;Vt.loadAddon(new F),Vt.fit()}catch(_){}setTimeout(sz,120),Vo=d}catch(_){try{Vt&&Vt.dispose&&Vt.dispose()}catch(__){Vt=null}Vt=null,Vo=null}return Vt},' +
   '_rmSsvt(){try{if(Vt){try{Vt.dispose()}catch(_){}Vt=null}}catch(_){Vt=null}try{if(Vo){try{Vo.remove()}catch(_){}Vo=null}}catch(_){Vo=null}}';
+
+// ---- 19fix:code 锁屏框加大 + 主题配色 ----
+// 用户:code 锁屏框"有点略小了,颜色也和整体ui不搭配"。锁屏框画在独立虚拟终端里
+// (LOCK1_NEW,字号 14→20、前景/背景取 window.theme.terminal)。这里把 ASCII 框本身
+// 54→72 列、所有硬编码 ANSI 亮绿/黄/白/青换成主题色:
+//   _fc = 主题前景色 truecolor(默认 #aacfd1),_tb = 加粗主题色,_rd = 红(仅告警/拒绝)
+//   a(青)→_fc、_(加粗白)→_tb、n(亮红)→_rd、标题成功态 (e?n:绿)→(e?n:_fc)、
+//   PASSCODE 括号/密码点→_fc/_tb;绿[OK]/黄[WAIT]/dim 保留(状态语义)。
+// _codeRedraw/_lockAnimTick 也用 this._thC/_tbC(由 _buildBoxRows 头部写入)统一配色。
+const BOXROWS_HEAD_OLD = '_buildBoxRows(e,t){const i=54,';
+const BOXROWS_HEAD_NEW = '_buildBoxRows(e,t){const i=72,_fc=this._thC=function(){try{const x=(window.theme&&window.theme.terminal&&window.theme.terminal.foreground)||"#aacfd1",m=/^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/.exec(x);if(m)return"\x1b[38;2;"+parseInt(m[1],16)+";"+parseInt(m[2],16)+";"+parseInt(m[3],16)+"m";return"\x1b[38;2;170;207;209m"}catch(_){return"\x1b[38;2;170;207;209m"}}(),_tb=this._tbC="\x1b[1;"+_fc.slice(2),_rd=this._rdC="\x1b[1;38;2;231;72;72m",';
+const BOXPAD_OLD = '" ".repeat(Math.max(0,52-o(e).length))';
+const BOXPAD_NEW = '" ".repeat(Math.max(0,70-o(e).length))';
+const BOXLN_OLD = '"═".repeat(52)';
+const BOXLN_NEW = '"═".repeat(70)';
+const BOX_A_OLD = 'a=e=>"\x1b[36m"+e+"\x1b[0m"';
+const BOX_A_NEW = 'a=e=>_fc+e+"\x1b[0m"';
+const BOX_WB_OLD = '_=e=>"\x1b[1;37m"+e+"\x1b[0m"';
+const BOX_WB_NEW = '_=e=>_tb+e+"\x1b[0m"';
+const BOX_N_OLD = 'n="\x1b[1;38;5;196m"';
+const BOX_N_NEW = 'n=_rd';
+const BOX_TITLE_OLD = '(e?n:"\x1b[1;32m")';
+const BOX_TITLE_NEW = '(e?n:_fc)';
+const BOX_PASS_OLD = '+"  \x1b[1;36m[\x1b[0m\x1b[1;33m"+y+"█\x1b[0m\x1b[1;36m]\x1b[0m"';
+const BOX_PASS_NEW = '+"  "+_fc+"["+"\x1b[0m"+_tb+y+"█\x1b[0m"+_fc+"]\x1b[0m"';
+const BOX_DRAW_OLD = 'const i=t.cols||80,o=t.rows||24,s=54,';
+const BOX_DRAW_NEW = 'const i=t.cols||80,o=t.rows||24,s=72,';
+const CODE_REDRAW_OLD = '_writeLockLine(this._codeRow,"    \x1b[1;37mPASSCODE:\x1b[0m  \x1b[1;36m[\x1b[0m\x1b[1;33m"+t+"█\x1b[0m\x1b[1;36m]\x1b[0m")';
+const CODE_REDRAW_NEW = '_writeLockLine(this._codeRow,"    "+(this._tbC||"\x1b[1;38;2;170;207;209m")+"PASSCODE:"+"\x1b[0m  "+(this._thC||"\x1b[38;2;170;207;209m")+"["+"\x1b[0m"+(this._tbC||"\x1b[1;38;2;170;207;209m")+t+"█\x1b[0m"+(this._thC||"\x1b[38;2;170;207;209m")+"]\x1b[0m")';
+const LOCKANIM_OLD = '_writeLockLine(this._codeAnimRow,"    \x1b[2mhandshake\x1b[0m  \x1b[36m"+this._randHex()+"\x1b[0m  "+(this._animOn?"\x1b[1;37m▓\x1b[0m":" "))';
+const LOCKANIM_NEW = '_writeLockLine(this._codeAnimRow,"    \x1b[2mhandshake\x1b[0m  "+(this._thC||"\x1b[38;2;170;207;209m")+this._randHex()+"\x1b[0m  "+(this._animOn?(this._tbC||"\x1b[1;38;2;170;207;209m")+"▓\x1b[0m":" "))';
 
 
 const targets = [
@@ -311,13 +342,24 @@ const targets = [
       .split('this.wss.on("connection",e=>{this.onopened(this.tty.pid)').join('this.wss.on("connection",e=>{try{this.wss.clients.forEach(c=>{try{c!==e&&c.close()}catch(_){}})}catch(_){}this.onopened(this.tty.pid)'),
   },
   {
-    name: 'lockScreen.class.js (code 锁屏用独立虚拟终端)',
+    name: 'lockScreen.class.js (code 锁屏用独立虚拟终端 + 框加大 + 主题配色)',
     path: ['classes', 'lockScreen.class.js'],
     expectIn: 'const r=window.term[0];if(this._term=r,this._codeBuf=""',
     expectOut: 'id:"__lockvirt"',
     transform: c => c
       .split(LOCK1_OLD).join(LOCK1_NEW)
-      .split('_teardownLock(e){this.active=!1,').join(LOCK2_NEW),
+      .split('_teardownLock(e){this.active=!1,').join(LOCK2_NEW)
+      .split(BOXROWS_HEAD_OLD).join(BOXROWS_HEAD_NEW)
+      .split(BOXPAD_OLD).join(BOXPAD_NEW)
+      .split(BOXLN_OLD).join(BOXLN_NEW)
+      .split(BOX_A_OLD).join(BOX_A_NEW)
+      .split(BOX_WB_OLD).join(BOX_WB_NEW)
+      .split(BOX_N_OLD).join(BOX_N_NEW)
+      .split(BOX_TITLE_OLD).join(BOX_TITLE_NEW)
+      .split(BOX_PASS_OLD).join(BOX_PASS_NEW)
+      .split(BOX_DRAW_OLD).join(BOX_DRAW_NEW)
+      .split(CODE_REDRAW_OLD).join(CODE_REDRAW_NEW)
+      .split(LOCKANIM_OLD).join(LOCKANIM_NEW),
   },
   {
     name: 'backend.js (openbox --config → --config-file + #5 剪贴板桥 + #7 Xvfb 光标)',
