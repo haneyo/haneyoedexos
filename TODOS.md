@@ -36,6 +36,7 @@
 
 | # | 内容 | 何时 |
 |---|---|---|
+| #23 | 周期性 widget 重置后左右列消失 → 重建后补 reveal(animationPlayState=running) | 2026-08-12,见 FIX-RECORD-20260812-23fix-widget-reset.md,待重启部署 |
 | #22 | CODE 屏保/锁屏渲染修复:cat pty 改 `stty raw -echo`(消除 `^[` 乱码/双行/空行)+ 覆盖层不透明背景(遮住真终端) | 2026-08-12,见 FIX-RECORD-20260812-22fix-lock-garble.md,待重启部署 |
 | #20 | 锁屏/屏保改独立真实终端(engage ttyspawn 新建 cat pty,unlock/dismiss 销毁) | 2026-08-12,commit 7f2faa3,待重启部署 |
 | #6 | 21fix TAB5 Browser w3m 裸启动秒退 → 配默认主页 | 2026-08-12,已合并进 20fix 产物 |

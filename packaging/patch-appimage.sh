@@ -109,6 +109,11 @@ var _edexWidgetReset=function(){try{
  for(var i=0;i<_edexCols.length;i++){var k=_edexCols[i],m=mods[k];if(m){try{_edexDestroy(m)}catch(e){}}}
  ["mod_column_left","mod_column_right"].forEach(function(cid){try{var col=document.getElementById(cid);if(!col)return;var kids=col.children;for(var j=kids.length-1;j>=0;j--){var el=kids[j];if(el&&"H3"!==el.tagName){try{col.removeChild(el)}catch(e){}}}}catch(e){}});
  for(var i2=0;i2<_edexCols.length;i2++){var k2=_edexCols[i2];try{mods[k2]=_edexCtor[k2]()}catch(e){}}
+ // 重建后的 widget 是新挂载的 div,而 mod_column.css 里 .mod_column > div 默认
+ // opacity:0 + animation-play-state:paused(只有开机 reveal 才会置 running)。
+ // 重置后若不触发 reveal,部件将永远停在 opacity:0 → 左右列整列空。
+ // 与开机 reveal 相同:把动画置 running,0.5s fadeIn 后 fill-mode:forwards 停在可见。
+ ["mod_column_left","mod_column_right"].forEach(function(cid){try{var col=document.getElementById(cid);if(!col)return;var kids=col.children;for(var j=0;j<kids.length;j++){var el=kids[j];if(el&&"H3"!==el.tagName){try{el.style.animationPlayState="running"}catch(e){}}}}catch(e){}});
 }catch(e){try{console.error("edex widget reset failed:",e)}catch(_){}}};
 window.__edexWidgetReset=_edexWidgetReset;
 var _edexMins=window.settings&&window.settings.periodicResetMinutes;
