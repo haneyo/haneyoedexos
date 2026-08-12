@@ -21,7 +21,7 @@
     "screensaverIdle": 1800,
     "screensaverStyle": "code",
     "appMonitor": {
-        "enabled": true,
+        "enabled": false,
         "mock": false,
         "appImageDirs": "~/Applications,~/AppImages"
     },
