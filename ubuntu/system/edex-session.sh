@@ -17,13 +17,17 @@ nmcli radio wifi on 2>/dev/null || true
 if [ -d /sys/class/leds/tpacpi::kbd_backlight ]; then
     echo 2 > /sys/class/leds/tpacpi::kbd_backlight/brightness 2>/dev/null || true
 fi
-# Black the X root window + use the dark DMZ-Black cursor theme for the gap
-# between the lightdm greeter closing and the eDEX window mapping — this is the
-# "white flash with the default arrow" seen on real hardware at boot. Once eDEX
-# is up it paints its own sci-fi image cursor over the whole screen, so the OS
-# cursor only ever shows during this handoff and should be dark + minimal.
+# Black the X root window + use the eDEX cursor theme for the gap between the
+# lightdm greeter closing and the eDEX window mapping — this is the "white flash
+# with the default arrow" seen on real hardware at boot. Once eDEX is up it
+# paints its own sci-fi image cursor over the whole screen, so the OS cursor
+# only ever shows during this handoff; using the same WP7-style cursor keeps it
+# visually consistent with the eDEX overlay (task #7).
 xsetroot -solid black 2>/dev/null || true
-export XCURSOR_THEME=DMZ-Black
+export XCURSOR_THEME=edex
+# Set the root window cursor to the theme's dark arrow immediately (openbox does
+# this too once it maps, but doing it here covers the very first frames of X).
+xsetroot -cursor_name left_ptr 2>/dev/null || true
 openbox --replace >/dev/null 2>&1 &
 # Kill Xorg's own screen blanking/DPMS. X ships a ~10-minute idle default that
 # physically blanks the display regardless of the app, so on real hardware the

@@ -590,7 +590,7 @@ cat > "/home/$U/.config/eDEX-UI/settings.json" <<'SETTINGS'
     "screensaverIdle": 180,
     "screensaverStyle": "code",
     "appMonitor": {
-        "enabled": true,
+        "enabled": false,
         "mock": false,
         "httpPort": 6080,
         "wsPort": 6081,
