@@ -102,7 +102,6 @@ sudo systemctl start lightdm
 | # | 任务 | 状态 | 说明 |
 |---|---|---|---|
 | #5 | 终端滚动修复(历史遗留) | ⏳ | — |
-| #9 | 终端文本选择+复制(历史遗留) | ⏳ | 复制已确认可用;选择部分待确认 |
 | #4 | app monitor 填满:backend.js openbox `--config→--config-file` | ⏳ | 补丁已在链内,appMonitor 默认禁用未真机验证 |
 | #5-ubuntu | Ubuntu 侧待办清单跟踪(#11/#128/#139/#140/#145/#163/#174/#182/#183/#173/#175) | ⏳ | 待跟踪 |
 
@@ -125,4 +124,5 @@ sudo systemctl start lightdm
 - #10 ⏳ 下一轮:内置 FASTFETCH(不进列表)
 - #11 ⏳ 下一轮:确保内置 FFMPEG(不进列表)
 - #12 ⏳ 下一轮:超负荷时 CPU型号 / MEMORY USING / NETWORK UP·DOWN 文字红光闪烁(勿刺眼)
-- #2/#3/#4/#5 ⏳ 历史遗留(#5 滚动、#9 选择复制、appmonitor openbox、Ubuntu 待办)
+- #2/#4/#5 ⏳ 历史遗留(#5 滚动、appmonitor openbox、Ubuntu 待办)
+  (#9 终端选择+复制已由用户确认可用,已从清单移除)
