@@ -97,7 +97,7 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 \
     linux-firmware network-manager wpasupplicant bluez rfkill upower \
     pulseaudio rtkit alsa-utils \
-    uget aria2 \
+    uget aria2 btop ffmpeg \
     nodejs npm \
     flatpak xdg-desktop-portal xdg-desktop-portal-gtk \
     playerctl \
@@ -124,19 +124,24 @@ done
 # "claude native binary not installed" failure mode).
 INSTALL_CLAUDE='(set -o pipefail; npm install -g @anthropic-ai/claude-code >/tmp/edex-claude-install.log 2>&1; if ! command -v claude >/dev/null 2>&1 || ! claude --version >/dev/null 2>&1; then echo "[edex] ERROR: claude CLI failed to install"; tail -30 /tmp/edex-claude-install.log; exit 1; fi; echo "[edex] claude $(claude --version 2>/dev/null | head -1) OK")'
 
+# fastfetch:Ubuntu noble 官方源无此包,从 GitHub release 装静态二进制进 /usr/local/bin。
+# 装机即得 fastfetch 命令(不进 APP 列表)。失败则终止构建(用户要求内置)。
+FASTFETCH_VER="2.67.0"
+INSTALL_FASTFETCH='curl -fsSL https://github.com/fastfetch-cli/fastfetch/releases/download/2.67.0/fastfetch-linux-amd64.tar.gz -o /tmp/ff.tar.gz && mkdir -p /tmp/ff && tar -xzf /tmp/ff.tar.gz -C /tmp/ff && install -m 755 /tmp/ff/fastfetch-linux-amd64/usr/bin/fastfetch /usr/local/bin/fastfetch && fastfetch --version >/dev/null || { echo "[edex] ERROR: fastfetch install failed"; exit 1; }'
+
 if [ "$MOUNTS_OK" = "1" ]; then
     echo "[edex] chroot apt preinstall (mounted)"
     # `set -e` inside the chroot so a failing apt-get actually propagates: the
     # claude CLI install is the last command and without it the chroot would
     # return 0 even when the GUI stack failed to install (masked breakage).
     sudo -E chroot "$WORK/rootfs" /bin/bash -c \
-        "set -e; export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean; addgroup --system netdev || true; $INSTALL_CLAUDE" \
+        "set -e; export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean; addgroup --system netdev || true; $INSTALL_CLAUDE; $INSTALL_FASTFETCH" \
         || { echo "ERROR: chroot apt install failed"; exit 1; }
 else
     echo "[edex] installing proot and using userspace chroot"
     sudo apt-get install -y proot >/dev/null 2>&1 || true
     proot -S "$WORK/rootfs" /bin/bash -c \
-        "set -e; export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean; addgroup --system netdev || true; $INSTALL_CLAUDE" \
+        "set -e; export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y $APTOPTS; apt-get clean; addgroup --system netdev || true; $INSTALL_CLAUDE; $INSTALL_FASTFETCH" \
         || { echo "ERROR: proot apt install failed"; exit 1; }
 fi
 

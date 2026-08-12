@@ -1,22 +1,20 @@
 # ⏸️ 工作交接文档 — 重启后从这里继续
 
-> **最后更新**:2026-08-12(19fix 已构建待部署;Task #1-#4 已推 GitHub,追加 ⑤ sysinfo 间距修复已重建 19fix,待推 GitHub + 用户确认部署)
+> **最后更新**:2026-08-12(28fix 已构建待部署;本轮 #7/#10/#11/#12 已完成并推 GitHub)
 
-> ⚠️ **19fix 已构建未部署**:`/tmp/eDEX-UI.AppImage.19fix-20260811`(185088762B)已构建并
-> 全部验证(node --check 通过;lockScreen/appmonitor/_renderer 内容逐项核对)。含:
-> ①code 屏保改回"UI 假数据+假终端假代码"(ss_vt 收进 main_shell_innercontainer,z-2500)
-> ②code 锁屏框加大(54→72)+ 主题配色 + 独立虚拟终端(fontSize 18,z-3200,不碰真终端)
-> ③应用 tab 不再默认选 firefox(无保存选择时显示 MONITOR A/B + 自动打开应用列表)。
-> ④开机去 Ubuntu 元素(系统级,不在 AppImage):watermark.png 换全透明、GRUB gfxterm 去
-> 白屏、edex-session.sh 光标改 edex —— 已应用到真机,需**重启**生效。
-> ⑤左上 sysinfo LOAD/UPTIME/TYPE/POWER 单词间距不均(真机 OCR "UPTIMETYPE" 粘连):mod_sysinfo.css
-> 改 自然宽度+space-evenly+内容居中,四个单词间距严格相等。已并入重建 19fix。
-> **部署流程(先问用户)**:`sudo systemctl stop lightdm; sudo pkill -f eDEX-UI.AppImage;
-> sudo cp /tmp/eDEX-UI.AppImage.19fix-20260811 /opt/edex/eDEX-UI.AppImage && sudo chmod 755;
-> sudo rm -rf ~/.config/eDEX-UI/"Local Storage"`(清除残留 localStorage 键
-> `edex_monitor_a_app=Firefox`/`edex_monitor_b_app=Bing`,否则 19fix 仍会默认拉起 firefox);
-> `sudo systemctl start lightdm`。随后**重启**验收开机画面(§1)。
-> **目的**:eDEX 重启会中断当前会话。重启后打开 Claude 先读本文件 + `ubuntu/README.md`,即可无缝续接。
+> ⚠️ **28fix 已构建未部署**:`/tmp/eDEX-UI.AppImage.28fix-20260812`(185096954B)已构建并全部验证
+> (node --check 通过;21 target 全命中;幂等 21/21 no-op)。从 pristine 基线
+> `/opt/edex/eDEX-UI.AppImage.orig-20260811` 重建,含全部历史修复 + 本轮 4 项:
+> ①**#7 BTOP** 进 tab4/5 CLI 面板 APP 列表(本机已装 btop 1.3.0)
+> ②**#12** 超负荷时 CPU型号 / MEMORY USING / NETWORK UP·DOWN 文字柔和红光闪烁
+> ③**#10 FASTFETCH** 2.67.0 + **#11 FFMPEG** 6.1.1(系统级已装,不依赖 AppImage,已生效)
+> **部署流程**:`sudo systemctl stop lightdm; sudo pkill -f eDEX-UI.AppImage;
+> sudo cp /tmp/eDEX-UI.AppImage.28fix-20260812 /opt/edex/eDEX-UI.AppImage && sudo chmod 755;
+> sudo systemctl start lightdm`。重启后验收:tab4/5 有 BTOP 可选;高负载时三处文字柔和红闪。
+> 详见 `FIX-RECORD-20260812-28fix-apps.md`(本轮完整记录)。
+> **剩余待办**:#8 AXEL(改 CLI 面板,不走已放弃的 appmonitor)、#9 CLASH 增强、#2 终端滚动、
+> A2 #174 用户名 / #183 开机过渡 → 唯一权威 [`TODOS.md`](TODOS.md)。
+> **目的**:eDEX 重启会中断当前会话。重启后打开 Claude 先读本文件 + `TODOS.md` + `ubuntu/README.md`,即可无缝续接。
 
 ---
 

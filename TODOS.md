@@ -15,13 +15,8 @@
 | # | 任务 | 状态 | 备注 |
 |---|---|---|---|
 | #2 | 终端滚动修复 | ⏳ | 历史遗留 |
-| #4 | app monitor 填满:backend.js openbox `--config→--config-file` | ⏳ | **补丁已在链内**,只差打开 appMonitor 真机验证 |
-| #7 | 内置 **BTOP**,显示在 APP 列表 | ⏳ | apt + `window.cliApps` 加 `{id:"btop",name:"BTOP",cmd:["btop"]}`;写进 install-edex.sh / seed |
 | #8 | 内置 **AXEL**,替换设置里 UGET 菜单 | ⏳ | 设置菜单:URL + 线程(默认6) + 下载目录(可设);显示进度/速度/剩余;暂停/恢复。本质 CLI 可视化:`axel -n <线程> -o <目录> <URL>`。先定位现有 UGET 设置实现 |
 | #9 | **CLASH** 设置增强 | ⏳ | 节点选择/测速/全局·规则·直连/规则配置。本质 GUI 写命令:Clash API(9090)或改 config.yaml + `kill -HUP`。先定位现有 CLASH 设置实现 |
-| #10 | 内置 **FASTFETCH**(不进列表) | ⏳ | apt 安装,开机/欢迎信息显示系统信息 |
-| #11 | 确保内置 **FFMPEG**(不进列表) | ⏳ | apt 安装,确认 `ffmpeg` 可用 |
-| #12 | 超负荷时 **CPU型号 / MEMORY USING / NETWORK UP·DOWN** 文字红光闪烁(勿刺眼) | ⏳ | 三处文字按各自占用率阈值加 class + 柔和红色闪烁动画(mod_sysinfo.css / sysinfo widget) |
 
 ### A2. Ubuntu 侧(真机 / CI 打包侧)
 
@@ -36,6 +31,10 @@
 
 | # | 内容 | 何时 |
 |---|---|---|
+| #7 | 内置 BTOP 显示在 APP 列表:本机 apt 装 btop 1.3.0;补丁链 `window.cliApps` 加 `{id:"btop",name:"BTOP",cmd:["btop"]}`;build-iso APTOPTS +btop | 2026-08-12,见 FIX-RECORD-20260812-28fix-apps.md,**已并入 28fix 产物待重启部署** |
+| #10 | 内置 FASTFETCH(用户澄清只装 app,不做开机显示):本机已装 2.67.0(deb);build-iso 加 INSTALL_FASTFETCH(GitHub release 静态二进制) | 2026-08-12,见 FIX-RECORD-20260812-28fix-apps.md |
+| #11 | 确保内置 FFMPEG:本机已装 6.1.1(apt);build-iso APTOPTS +ffmpeg | 2026-08-12,见 FIX-RECORD-20260812-28fix-apps.md |
+| #12 | 超负荷时 CPU型号/MEMORY USING/NETWORK UP·DOWN 文字柔和红光闪烁:三组件加 `.edex_overload` 类 + 阈值切换 + 3 个 CSS 加闪烁动画 | 2026-08-12,见 FIX-RECORD-20260812-28fix-apps.md,**已并入 28fix 产物待重启部署** |
 | #24 | CODE 屏保假代码每 10 行整屏清屏(ESC[2J ESC[H)导致"跑到一半不见了从头跑" → 去掉清屏,改为自然上滚 | 2026-08-12,见 FIX-RECORD-20260812-24fix-ssaver-scroll.md,**已并入 25fix 产物待重启部署** |
 | #25 | 打开终端自带两行/像多按回车:连接时无条件写 boot `\r`(canonical ICRNL 空行提交) → 改延迟条件回退(1200ms 无输出且无输入才补发) | 2026-08-12,见 FIX-RECORD-20260812-25fix-term-bootcr-lockdim.md,**已并入 27fix 产物待重启部署** |
 | #26 | CODE 锁屏时钟/锁屏框被暗化(仅键盘不暗):恢复旧版 z-index 提升,时钟与锁屏框抬到暗化层(z3000)之上 | 2026-08-12,见 FIX-RECORD-20260812-25fix-term-bootcr-lockdim.md,**已并入 27fix 产物待重启部署** |
@@ -57,6 +56,7 @@
 
 | # | 内容 | 原因 |
 |---|---|---|
+| #4 | app monitor 填满:backend.js openbox `--config→--config-file` | 已放弃虚拟显示器路线(appMonitor 不再启用),2026-08-12 |
 | #11 | 开机 GRUB 报错 `file '/boot/' not found` | 装饰性,不影响引导 |
 | #128 | 安装器 subiquity 崩溃 `load_autoinstall_data` | 不再跟踪 |
 | #139 | 笔记本电量不显示(upower + sysfs 兜底) | 不再跟踪 |
