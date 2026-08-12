@@ -266,6 +266,20 @@ const POOL_NEW = 'for(let e=0;e<8;e++)extraTtys[z+e]=null';
 const ALLOC_OLD = 'let i=null;if(Object.keys(extraTtys).forEach(e=>{null===extraTtys[e]&&null===i&&(extraTtys[e]={},i=e)}),null===i)signale.error("TTY spawn denied (Reason: exceeded max TTYs number)"),n.sender.send("ttyspawn-reply","ERROR: max number of ttys reached");else{';
 const ALLOC_NEW = 'let i=null;if(Object.keys(extraTtys).forEach(e=>{null===extraTtys[e]&&null===i&&(extraTtys[e]={},i=e)}),null===i){for(let _k=z+8;_k<z+4096;_k++){if(void 0===extraTtys[_k]||null===extraTtys[_k]){extraTtys[_k]={},i=_k;break}}}if(null===i)signale.error("TTY spawn denied (Reason: exceeded max TTYs number)"),n.sender.send("ttyspawn-reply","ERROR: max number of ttys reached");else{';
 
+// ---- #19:tab1 EMPTY → TERM,与 tab2 统一成普通终端 ----
+// 用户:tab2(EMPTY)与 tab3(TERM)功能一模一样(都是普通终端),标签却不同,困惑。
+// 统一:tab1 静态标签从 "EMPTY" 改为 "TERM",tab2 本来就是 "TERM"。三处改动:
+//   a) 标签映射表 t[1]:"EMPTY"→"TERM";b) HTML 里 shell_tab1 的 <p>EMPTY</p>;
+//   c) onclose 终端关闭后重置标签 "<p>EMPTY</p>"→"<p>TERM</p>"。
+// 幂等:三锚点带上下文(1:"EMPTY"/<li id="shell_tab1"/shell_tab"+e)均唯一,
+//   重跑时已替换为 TERM → split 空转。
+const TAB_MAP_OLD = 't={0:"MAIN SHELL",1:"EMPTY",2:"TERM",3:"MONITOR A",4:"MONITOR B"}';
+const TAB_MAP_NEW = 't={0:"MAIN SHELL",1:"TERM",2:"TERM",3:"MONITOR A",4:"MONITOR B"}';
+const TAB1_HTML_OLD = '<li id="shell_tab1" onclick="window.focusShellTab(1);"><p>EMPTY</p></li>';
+const TAB1_HTML_NEW = '<li id="shell_tab1" onclick="window.focusShellTab(1);"><p>TERM</p></li>';
+const TAB1_CLOSE_OLD = 'document.getElementById("shell_tab"+e).innerHTML="<p>EMPTY</p>"';
+const TAB1_CLOSE_NEW = 'document.getElementById("shell_tab"+e).innerHTML="<p>TERM</p>"';
+
 // ---- Bug8:code 屏保/锁屏污染真终端 → 虚拟终端 ----
 // 屏保 code 模式原来把假代码写进 term[currentTerm],show 时还序列化 term[0] 存
 // preSaverTerm0;hide()/windDownCodeToLock 结束时对真终端 reset()+writelr("")。
@@ -570,7 +584,11 @@ const targets = [
       .split(TAB2_CLOSE_OLD).join(TAB2_CLOSE_NEW)
       .split(TAB2_HTML_OLD).join(TAB2_HTML_NEW)
       .split(TAB2_FB_OLD).join(TAB2_FB_NEW)
-      .split(CLI_PANEL_OLD).join(CLI_PANEL_NEW),
+      .split(CLI_PANEL_OLD).join(CLI_PANEL_NEW)
+      // #19:tab1 EMPTY→TERM 统一成普通终端(三处独立锚点,均带上下文唯一)
+      .split(TAB_MAP_OLD).join(TAB_MAP_NEW)
+      .split(TAB1_HTML_OLD).join(TAB1_HTML_NEW)
+      .split(TAB1_CLOSE_OLD).join(TAB1_CLOSE_NEW),
   },
   {
     name: 'appmonitorPanel.class.js (#3 apps 态:默认应用列表,不含 Firefox,加 WEBAPPS 管理)',

@@ -70,17 +70,20 @@
   挂在 `_boot.js` target 链尾。已在从 pristine orig 重建的产物中确认:动态分配片段在、池初始化
   `for(let e=0;e<8;e++)` 在、语法通过。
 
-### 3.4 ⚠️ tab2(EMPTY)与 tab3(TERM)功能重复
+### 3.4 ✅ tab1(EMPTY)与 tab2(TERM)功能重复 — 已修复(#19)
 
 - 现状 tab 标签:`0:MAIN SHELL, 1:EMPTY, 2:TERM, 3:MONITOR A, 4:MONITOR B`(渲染成中文后
   tab3 显示 TERM、tab2 显示 EMPTY)。
 - `shellSlotKinds = {0:"term",1:"term",2:"term",3:"appmonitor",4:"appmonitor"}` → tab1/2/3
-  全是普通终端,`focusShellTab` 对 1-4 都 `ipc.send("ttyspawn","term")`,**tab2 和 tab3 功能完全一样**。
+  全是普通终端,`focusShellTab` 对 1-4 都 `ipc.send("ttyspawn","term")`,**tab1 和 tab2 功能完全一样**。
 - 用户原话:「为啥第三tab显示的是term,第二tab就是empty这两个功能一模一样啊,要修复」。
-- **这是设计分叉,需问用户**(§6 #19):
-  - 选项 A:tab2/3 合并语义 —— 一个叫 EMPTY/空终端、一个留给某种特殊用途(如默认命令);
-  - 选项 B:tab2 改显示 MASTER/等,把 4/5 的 CLI 面板语义前移;
-  - 选项 C:保持功能相同但改标签文案,消除「EMPTY 但又是终端」的困惑。
+- **修复方案(用户已拍板:统一成普通终端,已完成并验证)**:tab1 静态标签 "EMPTY" → "TERM",
+  与 tab2 完全统一。三处独立锚点(均带上下文唯一):`t` 映射表 `1:"EMPTY"→"TERM"`、HTML
+  `shell_tab1` 的 `<p>EMPTY</p>→<p>TERM</p>`、onclose 终端关闭后重置 `<p>EMPTY</p>→<p>TERM</p>`。
+  见 `patch-appimage.sh` 的 `TAB_MAP_* / TAB1_HTML_* / TAB1_CLOSE_*`。已从 pristine orig 重建
+  验证:`1:"TERM",2:"TERM"` 计数 1、残留 EMPTY 0、tab2 未误伤、语法通过。
+  (注:pristine orig 的 t 表是 `2:"CLAUDE"`,链上前序 TAB2_FB 先把它变 TERM,我的 TAB_MAP 锚点
+  才命中——所以必须跑完整链,不能单独重放。)
 
 ## §4 锁屏/屏保重设计(用户拍板的新思路,未做)
 
@@ -103,7 +106,7 @@
 |---|---|---|---|---|
 | #17 | 修 CliPanel 无限递归(RangeError) | ✅ 已完成并验证 | `focus()` 无会话时 no-op,不再回跳 `activate()` | `patch-appimage.sh` CLIRECUR_OLD→NEW |
 | #18 | extraTtys 动态分配,取消 8 槽上限 | ✅ 已完成并验证 | 8 槽扫完向 z+8…z+4096 滚动找空槽,不再报 max TTYs | `_boot.js` ALLOC_OLD→NEW |
-| #19 | 消除 EMPTY/TERM 重复 tab | ⏳ **设计分叉,先问用户**(见 §3.4) | 选项 A/B/C 见 §3.4 | `_renderer.js` shellSlotKinds / 标签 |
+| #19 | 消除 EMPTY/TERM 重复 tab | ✅ 已完成并验证 | 用户拍板统一成普通终端:tab1 EMPTY→TERM | `_renderer.js` TAB_MAP/TAB1_HTML/TAB1_CLOSE |
 | #20 | 锁屏/屏保改独立真实终端 | ⏳ 待做 | engage 新建 + unlock 销毁;锁屏框大小合适;不碰真终端 | `lockScreen.class.js` / SSVT_* 区域 |
 | #5 | 终端滚动修复(历史遗留) | ⏳ | — | — |
 | #9 | 终端文本选择+复制(历史遗留) | ⏳ | — | — |
@@ -118,8 +121,8 @@
 - #16 ✅ 写交接文档(本文)
 - #17 ✅ 修 CliPanel activate/focus 无限递归(已验证,待部署重启)
 - #18 ✅ extraTtys 动态分配,取消端口上限(已验证,待部署重启)
-- #19 ⏳ 解决 EMPTY/TERM 两个相同终端 tab(先问用户)
-- #20 ⏳ 锁屏/屏保改独立真实终端,解锁即销毁
+- #19 ✅ 统一 tab1/tab2 为普通终端(EMPTY→TERM)(已验证,待部署重启)
+- #20 ⏳ 锁屏/屏保改独立真实终端,解锁即销毁(下轮)
 - #5 / #9 历史遗留(滚动、选择复制)
 
 ## §7 安全与其它
