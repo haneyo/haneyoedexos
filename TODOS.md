@@ -73,4 +73,4 @@
 - 需要重启的修改:**先写交接文档 → 再推 GitHub → 最后才重启**,顺序不能反。
 - 从 pristine 基线 `/opt/edex/eDEX-UI.AppImage.orig-20260811` 构建。
 - `sk-f4427cf72b6a406b9d6606571abfd3cc/` 是用户 API 目录,在 .gitignore 里——永不提交/删除/外泄。
-- **API 非多模态:尽量不截图**(排查优先读代码/DOM/日志;确需图像时先试 OCR/文本提取)。
+- **不截图约定仅对非多模态 API 适用**(当前 deepseek 非多模态;若用多模态 API 则可截图)。排查优先读代码/DOM/日志/OCR 文本提取。
