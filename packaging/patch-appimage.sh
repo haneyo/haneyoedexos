@@ -285,6 +285,20 @@ const TAB1_HTML_NEW = '<li id="shell_tab1" onclick="window.focusShellTab(1);"><p
 const TAB1_CLOSE_OLD = 'document.getElementById("shell_tab"+e).innerHTML="<p>EMPTY</p>"';
 const TAB1_CLOSE_NEW = 'document.getElementById("shell_tab"+e).innerHTML="<p>TERM</p>"';
 
+// ---- #27:tab2 标签补 "#3 - " 前缀(用户:tab2 进程名不显示,永远 "TERM")----
+// 根因:_renderer.js 的 cover.tabLabel(y 函数)只对 tab0/tab1 拼进程名
+//   (0→"MAIN - o"、1→"#2 - o"),tab2 落到静态 t[2]="TERM";同时 rememberProc
+//   也只记 0/1(`0!==e&&1!==e||…`),tab2 的进程名根本没进 r[]。两处一起补:
+//   y 加 2===n?o?"#3 - "+o:t[n] 分支;rememberProc 放行 2。
+// 效果:tab2 有进程名时显示 "#3 - bash"(与 tab1 的 "#2 - bash" 递增一致),
+//   无进程名(未跑/关闭)回落到 "TERM"。tab0/tab1/tab3/tab4 行为不变。
+// 幂等:OLD 在 pristine _renderer.js 各恰好 1 处;替换后 NEW 含 OLD 吗?否——NEW 在 OLD
+//   中间插了新分支,重跑时 OLD 已不存在 → split 空转。
+const TAB2_LABEL_Y_OLD = 'y=(n,o)=>i?null!=e[n]?e[n]:"":0===n?o?"MAIN - "+o:t[n]:1===n?o?"#2 - "+o:t[n]:3===n||4===n?h[n]||t[n]:null!=t[n]?t[n]:""';
+const TAB2_LABEL_Y_NEW = 'y=(n,o)=>i?null!=e[n]?e[n]:"":0===n?o?"MAIN - "+o:t[n]:1===n?o?"#2 - "+o:t[n]:2===n?o?"#3 - "+o:t[n]:3===n||4===n?h[n]||t[n]:null!=t[n]?t[n]:""';
+const TAB2_REMEMBER_OLD = 'rememberProc:(e,t)=>{0!==e&&1!==e||(r[e]=t)}';
+const TAB2_REMEMBER_NEW = 'rememberProc:(e,t)=>{0!==e&&1!==e&&2!==e||(r[e]=t)}';
+
 // ---- Bug8:code 屏保/锁屏污染真终端 → 虚拟终端 ----
 // 屏保 code 模式原来把假代码写进 term[currentTerm],show 时还序列化 term[0] 存
 // preSaverTerm0;hide()/windDownCodeToLock 结束时对真终端 reset()+writelr("")。
@@ -623,6 +637,9 @@ const targets = [
       .split(TAB_MAP_OLD).join(TAB_MAP_NEW)
       .split(TAB1_HTML_OLD).join(TAB1_HTML_NEW)
       .split(TAB1_CLOSE_OLD).join(TAB1_CLOSE_NEW)
+      // #27:tab2 标签补 "#3 - " 前缀(根因见常量定义;y 函数与 rememberProc 两处)
+      .split(TAB2_LABEL_Y_OLD).join(TAB2_LABEL_Y_NEW)
+      .split(TAB2_REMEMBER_OLD).join(TAB2_REMEMBER_NEW)
       .split(SVT_OLD).join(SVT_NEW).split(I_OLD).join(I_NEW),
   },
   {
