@@ -1,9 +1,11 @@
 # ⏸️ 工作交接文档 — 重启后从这里继续
 
-> **最后更新**:2026-08-11 23:05(用户盒盖暂停,18fix 四个 Bug 根因已定位、方案已设计,未落地)
+> **最后更新**:2026-08-12(18fix 已构建部署、已推 GitHub,等待重启验证)
 
-> ⚠️ **18fix 进行中**:用户盒盖暂停几小时。**先读 `/home/edex/edex-ubuntu-work/FIX-RECORD-20260811-18fix.md`**——里面是四个 Bug(①sysinfo 重叠 ②code 锁屏框左上角+UI 消失 ③CLAUDE 终端无法滚动 ④回车时文件浏览器跳动)的完整根因+修复方案+落地步骤,补丁**还没写进 patch-appimage.sh、没构建、没部署**。按该文件 §4 继续。
-> **目的**:eDEX 重启会中断当前会话。重启后打开 Claude 先读本文件 + `ubuntu/README.md`,即可无缝续接。
+> ⚠️ **18fix 已部署待重启验收**:四个 Bug(①sysinfo 重叠 ②code 锁屏框左上角+UI 消失 ③CLAUDE 终端无法滚动 ④回车时文件浏览器跳动)+ ws 重连 Bug5 + SSVT 屏保虚拟终端,全部写进 `packaging/patch-appimage.sh` 并构建部署。
+> `/opt/edex/eDEX-UI.AppImage` = **18fix(sha1 `0fd54cdb…`,185088762B)**,当前运行实例仍是 17fix,**重启生效**。
+> 已按用户指示推 GitHub(`haneyo/haneyoedexos` master)。**重启前先问用户**;重启后按
+> `FIX-RECORD-20260811-18fix.md` §7 验证清单逐项验收,再做真机验证归档同步。
 > **目的**:eDEX 重启会中断当前会话。重启后打开 Claude 先读本文件 + `ubuntu/README.md`,即可无缝续接。
 
 ---

@@ -131,7 +131,7 @@ if(_edexMins>0){setTimeout(function _edexWatch(){
 // 键盘输入用全局 keydown 捕获,完全不动真终端 term[0];移除对 main_shell 等元素的 z-index
 // 提升与 focusShellTab(0)。teardown 时移除 keydown、销毁虚拟终端、移除临时 input。
 const LOCK1_OLD = 'const i=document.getElementById("mod_clock");i&&(this._origClockPos=i.style.position,i.style.position="relative",i.style.zIndex="3100");const o=document.getElementById("main_shell_title");o&&(this._origTitleZ=o.style.zIndex,o.style.zIndex="3100");const s=document.getElementById("main_shell");s&&(this._origShellClip=s.style.clipPath,this._origShellZ=s.style.zIndex,s.style.zIndex="3200",s.style.clipPath="none");const n=document.getElementById("main_shell_innercontainer");n&&(this._origInnerZ=n.style.zIndex,this._origInnerClip=n.style.clipPath,n.style.zIndex="3001",n.style.clipPath="polygon(0 0, calc(100% - 15px) 0, 100% 15px, 100% 100%, 15px 100%, 0 calc(100% - 15px))"),window.focusShellTab&&window.focusShellTab(0);const r=window.term[0];if(this._term=r,this._codeBuf="",r&&r.term&&(this._origTermWrite=r.term.write,this._rawWrite=r.term.write.bind(r.term),r.term.write=e=>{this.active&&this._suppressOutput||this._rawWrite(e)}),this._suppressOutput=!0,r)try{this._origSend=r.socket.send.bind(r.socket),r.socket.send=e=>this._termKey(e);try{const e=window.screensaver&&window.screensaver.preSaverTerm0;if(e&&"string"==typeof e&&e.length)this._savedTerm=e,this._serializeAddon=null,window.screensaver.preSaverTerm0=null;else if(this._savedTerm&&"string"==typeof this._savedTerm&&this._savedTerm.length)this._serializeAddon=null;else{const{SerializeAddon:e}=require("xterm-addon-serialize");this._serializeAddon=new e,r.term.loadAddon(this._serializeAddon),this._savedTerm=this._serializeAddon.serialize()}}catch(e){this._savedTerm=null,this._serializeAddon=null}this._boxAnimating=!0,this._drawLockBox(!0)}catch(e){}';
-const LOCK1_NEW = 'const r={term:null,socket:null,id:"__lockvirt"};if(this._term=r,this._codeBuf="",this._suppressOutput=!0)try{const T=require("xterm").Terminal;const src=window.term&&window.term[0]&&window.term[0].term;const th=window.theme&&window.theme.terminal||{};r.term=new T({cols:src?src.cols:80,rows:src?src.rows:24,fontFamily:th.fontFamily||"monospace",fontSize:th.fontSize||14,scrollback:0,disableStdin:!0,cursorBlink:!1,theme:{background:"#000000",foreground:th.foreground||"#33ffaa"}})}catch(e){r.term=null}if(r.term){try{const vc=document.createElement("div");vc.id="lock_virt_term",vc.style.cssText="position:absolute;inset:0;overflow:hidden;background:#000",t.appendChild(vc),r.term.open(vc);try{const F=require("xterm-addon-fit").FitAddon;r.term.loadAddon(new F),r.term.fit()}catch(e){}}catch(e){}this._rawWrite=r.term.write.bind(r.term),r.term.write=e=>this._rawWrite(e),this._boxAnimating=!0;try{this._drawLockBox(!0)}catch(e){}}try{const pi=document.createElement("input");pi.id="lock_pass_input",pi.type="text",pi.autocomplete="off",pi.inputMode="numeric",pi.style.cssText="position:fixed;left:-9999px;top:0;opacity:0",document.body.appendChild(pi),pi.focus(),this._keydownHandler=e=>{if(!this.active||this._boxAnimating)return;e.preventDefault(),e.stopPropagation();const k=e.key;if("Enter"===k)return this._codeSubmit();if("Backspace"===k||"Delete"===k)return this._codeBuf=this._codeBuf.slice(0,-1),this._codeRedraw();if(1===k.length&&k>=" ")this._codeBuf+=k,this._codeRedraw()},window.addEventListener("keydown",this._keydownHandler,!0)}catch(e){}';
+const LOCK1_NEW = 'const r={term:null,socket:null,id:"__lockvirt"};if(this._term=r,this._codeBuf="",this._suppressOutput=!0)try{const T=require("xterm").Terminal;r.term=new T({cols:120,rows:34,fontFamily:"monospace",fontSize:14,scrollback:0,disableStdin:!0,cursorBlink:!1,allowTransparency:!0,theme:{background:"rgba(0,0,0,0)",foreground:"#33ffaa"}})}catch(e){r.term=null}if(r.term){try{const vc=document.createElement("div");vc.id="lock_virt_term",vc.style.cssText="position:absolute;inset:0;overflow:hidden",t.appendChild(vc),r.term.open(vc);const _sz=()=>{try{const w=vc.clientWidth||window.innerWidth,h=vc.clientHeight||window.innerHeight,co=r.term._core;let cw=8,ch=17;try{const d=co._renderService&&co._renderService.dimensions;if(d&&d.css&&d.css.cell&&d.css.cell.width>0&&d.css.cell.height>0){cw=d.css.cell.width;ch=d.css.cell.height}}catch(_){}const c=Math.max(20,Math.floor(w/cw)),rr=Math.max(6,Math.floor(h/ch));if(c!==r.term.cols||rr!==r.term.rows)r.term.resize(c,rr)}catch(_){}};try{const F=require("xterm-addon-fit").FitAddon;r.term.loadAddon(new F),r.term.fit()}catch(e){}_sz();setTimeout(()=>{try{if(this.active&&r.term&&document.getElementById("lock_block")){_sz();this._boxAnimating=!1;try{this._drawLockBox(!1)}catch(e){};try{this._startLockAnim&&this._startLockAnim()}catch(e){}}}catch(e){}},150)}catch(e){}this._rawWrite=r.term.write.bind(r.term),r.term.write=e=>this._rawWrite(e)}try{const pi=document.createElement("input");pi.id="lock_pass_input",pi.type="text",pi.autocomplete="off",pi.inputMode="numeric",pi.style.cssText="position:fixed;left:-9999px;top:0;opacity:0",document.body.appendChild(pi),pi.focus(),this._keydownHandler=e=>{if(!this.active||this._boxAnimating)return;e.preventDefault(),e.stopPropagation();const k=e.key;if("Enter"===k)return this._codeSubmit();if("Backspace"===k||"Delete"===k)return this._codeBuf=this._codeBuf.slice(0,-1),this._codeRedraw();if(1===k.length&&k>=" ")this._codeBuf+=k,this._codeRedraw()},window.addEventListener("keydown",this._keydownHandler,!0)}catch(e){}';
 const LOCK2_NEW = '_teardownLock(e){if(this._keydownHandler){try{window.removeEventListener("keydown",this._keydownHandler,!0)}catch(e){}this._keydownHandler=null}try{const pi=document.getElementById("lock_pass_input");pi&&pi.remove()}catch(e){}try{const v=document.getElementById("lock_virt_term");v&&v.remove()}catch(e){}try{if(this._term&&this._term.term&&this._term.term!==(window.term&&window.term[0]&&window.term[0].term)){try{this._term.term.dispose()}catch(e){}}this._term.term=null}catch(e){}this.active=!1,';
 
 // ---- 修复 12:globe 累积状态 3-5 分钟无感重置(12fix 修正版)----
@@ -196,6 +196,8 @@ const AM_INITTAIL_OLD = 'this._statusTimer||(this._statusTimer=setInterval(()=>t
 const AM_INITTAIL_NEW = 'this._statusTimer||(this._statusTimer=setInterval(()=>this._fetchStatus(),3e3)),this._renderMenu(),t||setTimeout(()=>this.openAppList(),500)}';
 const AM_ADDR_OLD = 'this.menu.appendChild(e),this.apps.forEach(';
 const AM_ADDR_NEW = 'this.menu.appendChild(e),this._appendWaEntry(),this.apps.forEach(';
+const AM_LBL_OLD = 'this.runningApps=i,this.runningStates=s,o&&this.menu&&"none"!==this.menu.style.display&&(this._sortApps(),this._renderMenu(),this.menuFocusIdx>=0&&this._focusMenu(this.menuFocusIdx))';
+const AM_LBL_NEW = 'this.runningApps=i,this.runningStates=s,(()=>{try{const _rn=this.selected&&this.runningApps.has(this.selected.id)?this.selected.name:"",_first=[...this.runningApps].map(_id=>{const _a=this.apps.find(_x=>_x.id===_id);return _a?_a.name:null}).filter(Boolean)[0]||"";this.labelEl&&(this.labelEl.textContent=window.cover&&window.cover.isActive()?window.cover.fakeMonitorLabel(this.monitorId):_rn||_first||("a"===this.monitorId?"MONITOR A":"MONITOR B"))}catch(e){}})(),o&&this.menu&&"none"!==this.menu.style.display&&(this._sortApps(),this._renderMenu(),this.menuFocusIdx>=0&&this._focusMenu(this.menuFocusIdx))';
 const AM_METHODS_OLD = '}}module.exports={AppMonitorPanel};';
 const AM_METHODS_NEW = `}openAppList(){if(!this.menu)return;this._positionMenuDefault(),this.menu.style.display="block",this.menu.focus(),this._focusMenu(0)}_positionMenuDefault(){const e=this.container&&this.container.getBoundingClientRect?this.container.getBoundingClientRect():null;this.menu.style.left=Math.max(4,(e?e.left:40)+16)+"px",this.menu.style.top=Math.max(4,(e?e.top:40)+12)+"px"}manageWebapps(){this.refresh();const that=this,rows=(window.webapps&&window.webapps._customList&&window.webapps._customList()||[]).map(e=>'<div class="appmonitor_wa_row"><span class="appmonitor_wa_name">'+e.name+'</span><span class="appmonitor_wa_url">'+e.url+'</span><button type="button" class="appmonitor_wa_del">'+window.t("appmonitor.webapps.delete")+'</button></div>').join(""),id=new Modal({type:"custom",title:window.t("appmonitor.webapps.manage"),html:'<div class="appmonitor_wa_list">'+(rows||'<div class="appmonitor_wa_empty">'+window.t("appmonitor.webapps.empty")+"</div>")+"</div>",buttons:[{label:window.t("appmonitor.webapps.title"),action:"window.appmonitorWaModal&&window.appmonitorWaModal.close()"}]});that._waModalId=id,window.appmonitorWaModal=window.modals[id],setTimeout(()=>{document.querySelectorAll(".appmonitor_wa_del").forEach(t=>{t.onclick=()=>{const u=t.parentElement&&t.parentElement.querySelector(".appmonitor_wa_url");if(!u)return;window.webapps&&window.webapps.removeCustom(u.textContent),window.modals&&window.modals[that._waModalId]&&window.modals[that._waModalId].close(),that._notify(window.t("appmonitor.webapps.removed")),that.refresh()}})},50)}_appendWaEntry(){const e=document.createElement("div");e.className="webapp_menu_opt appmonitor_opt appmonitor_menu_wa",e.textContent=window.t("appmonitor.webapps.manage"),e.onclick=e=>{e.stopPropagation(),this.manageWebapps()},this.menu.appendChild(e)}}module.exports={AppMonitorPanel};`;
 const AM_ROW_OLD = '"settings.appMonitor.appImageDirs.help"),o("settings.cat.download"),';
@@ -226,6 +228,30 @@ const AM_CSS = `
 .appmonitor_wa_empty{opacity:.6;padding:12px;text-align:center}
 `;
 
+// ---- Bug8:code 屏保/锁屏污染真终端 → 虚拟终端 ----
+// 屏保 code 模式原来把假代码写进 term[currentTerm],show 时还序列化 term[0] 存
+// preSaverTerm0;hide()/windDownCodeToLock 结束时对真终端 reset()+writelr("")。
+// → 锁屏(Super+L → lockScreen.engage → screensaver.show)后解锁,真终端(CLAUDE 对话)
+// 被清空。修复:code 屏保改用独立虚拟终端 #screensaver_vt 覆盖层渲染假代码,
+// show/windDown/hide/resumeCode 一律不碰真终端;preSaverTerm0 序列化/恢复不再需要。
+// (lockScreen 侧 LOCK1_NEW 18fix 已用独立虚拟终端。)
+const SSVT_VAR_OLD = 'let C=null,x=null,T=0,A=[],$=null,M=!1,L=0;';
+const SSVT_VAR_NEW = 'let C=null,x=null,T=0,A=[],$=null,M=!1,L=0,Vt=null,Vo=null;';
+const SSVT_I_OLD = 'const I=()=>{let e=window.term&&window.term[window.currentTerm];if(e&&e.term&&"function"==typeof e.term.write&&(e.term.write(E()+"\\r\\n"),++S%10==0))try{const t=e.term._core&&e.term._core._renderService;t&&"function"==typeof t.clear&&t.clear(),e.term.refresh(0,e.term.rows-1)}catch(e){}}';
+const SSVT_I_NEW = 'const I=()=>{if(!Vt||!Vt.write)return;if(Vt.write(E()+"\\r\\n"),++S%10==0)try{const t=Vt._core&&Vt._core._renderService;t&&"function"==typeof t.clear&&t.clear(),Vt.refresh(0,Vt.rows-1)}catch(e){}}';
+const SSVT_SHOW_OLD = 'this.preSaverTerm0=null;try{const e=window.term&&window.term[0];if(e&&e.term){const{SerializeAddon:t}=require("xterm-addon-serialize"),n=new t;e.term.loadAddon(n),this.preSaverTerm0=n.serialize()}}catch(e){this.preSaverTerm0=null}t=setInterval(I,100)';
+const SSVT_SHOW_NEW = 'this.preSaverTerm0=null;this._mkSsvt(),t=setInterval(I,100)';
+const SSVT_HIDE_OLD = 'n){if(t){clearInterval(t),t=null;const e=window.term&&window.term[window.currentTerm];if(e&&e.term)try{"function"==typeof e.term.reset&&e.term.reset(),"function"==typeof e.writelr&&e.writelr("")}catch(e){}}';
+const SSVT_HIDE_NEW = 'n){if(t){clearInterval(t),t=null}this._rmSsvt();';
+const SSVT_HIDE2_OLD = 'if(C&&(M=!0),t){clearInterval(t),t=null;let e=window.term&&window.term[window.currentTerm];if(e&&e.term&&"function"==typeof e.term.write){b().forEach(t=>e.term.write(t+"\\r\\n"));let t=e.term.rows||24,n=0,o=setInterval(()=>{"function"==typeof e.term.write&&e.term.write("\\n"),n++,n>=t&&(clearInterval(o),"function"==typeof e.term.reset&&"function"==typeof e.writelr&&(e.term.reset(),e.writelr("")))},45)}}';
+const SSVT_HIDE2_NEW = 'if(C&&(M=!0),t){clearInterval(t),t=null;if(Vt&&Vt.write){b().forEach(x=>Vt.write(x+"\\r\\n"));let n=0,o=setInterval(()=>{if(Vt&&Vt.write)Vt.write("\\n"),n++,n>=24&&(clearInterval(o),this._rmSsvt())},45)}}';
+const SSVT_WIND_OLD = 'windDownCodeToLock(o){if(!e||n)return void(o&&o());n=!0,t&&(clearInterval(t),t=null);const s=window.term&&window.term[window.currentTerm];if(!s||!s.term||"function"!=typeof s.term.write)return n=!1,void(o&&o());b().forEach(e=>s.term.write(e+"\\r\\n"));let i=0;const r=setInterval(()=>{try{for(let e=0;e<4;e++)s.term.write("\\n")}catch(e){}++i>=30&&(clearInterval(r),clearTimeout(a),n=!1,o&&o())},32),a=setTimeout(()=>{n&&(clearInterval(r),n=!1,o&&o())},2500)}';
+const SSVT_WIND_NEW = 'windDownCodeToLock(o){if(!e||n)return void(o&&o());n=!0,t&&(clearInterval(t),t=null);if(!Vt||"function"!=typeof Vt.write)return n=!1,void(o&&o());b().forEach(x=>Vt.write(x+"\\r\\n"));let i=0;const r=setInterval(()=>{try{for(let x=0;x<4;x++)Vt&&Vt.write&&Vt.write("\\n")}catch(_){}++i>=30&&(clearInterval(r),clearTimeout(a),n=!1,o&&o())},32),a=setTimeout(()=>{n&&(clearInterval(r),n=!1,o&&o())},2500)}';
+const SSVT_RESUME_OLD = 'resumeCode(){e||"code"!==window.settings.screensaverStyle||(e=!0,document.body.classList.add("screensaver_on"),window.cursorTrap&&window.cursorTrap.hide(),window.cover&&!window.cover.isActive()&&window.cover.set(!0),k=!0,d.clear(),n=!1,_=[],t||(t=setInterval(I,100)))}';
+const SSVT_RESUME_NEW = 'resumeCode(){e||"code"!==window.settings.screensaverStyle||(e=!0,document.body.classList.add("screensaver_on"),window.cursorTrap&&window.cursorTrap.hide(),window.cover&&!window.cover.isActive()&&window.cover.set(!0),k=!0,d.clear(),n=!1,_=[],this._mkSsvt(),t||(t=setInterval(I,100)))},' +
+  '_mkSsvt(){try{this._rmSsvt()}catch(_){}let d=null;try{d=document.createElement("div"),d.id="screensaver_vt",d.style.cssText="position:fixed;inset:0;z-index:2500;background:#05080d;overflow:hidden;",document.body.appendChild(d);const T=require("xterm").Terminal;Vt=new T({cols:120,rows:34,fontFamily:"monospace",fontSize:14,scrollback:0,disableStdin:!0,cursorBlink:!1,allowTransparency:!0,theme:{background:"#05080d",foreground:"#33ffaa"}}),Vt.open(d);const sz=()=>{try{const w=d.clientWidth||window.innerWidth,h=d.clientHeight||window.innerHeight,c=Math.max(20,Math.floor(w/8)),r=Math.max(6,Math.floor(h/17));if(c!==Vt.cols||r!==Vt.rows)Vt.resize(c,r)}catch(_){}};sz();try{const F=require("xterm-addon-fit").FitAddon;Vt.loadAddon(new F),Vt.fit()}catch(_){}Vo=d}catch(_){try{Vt&&Vt.dispose&&Vt.dispose()}catch(__){Vt=null}Vt=null,Vo=null}return Vt},' +
+  '_rmSsvt(){try{if(Vt){try{Vt.dispose()}catch(_){}Vt=null}}catch(_){Vt=null}try{if(Vo){try{Vo.remove()}catch(_){}Vo=null}}catch(_){Vo=null}}';
+
 
 const targets = [
   {
@@ -244,15 +270,22 @@ const targets = [
       .join('let d=new Terminal({role:"server",shell:a,params:l,login:c,cwd:tty.tty._cwd||e.cwd,env:p,port:i,noBootCR:!!s})'),
   },
   {
-    name: 'terminal.class.js (enableMouseEvents + alt-screen wheel 放行 + #9 完成音效)',
+    name: 'terminal.class.js (alt-screen 历史滚动 + ws 断线重连 + #9 完成音效)',
     path: ['classes', 'terminal.class.js'],
     expectIn: 'scrollback:1500,',
     expectOut: 'this._doneT=setTimeout',
-    // 终端滚动修复:Claude Code 等 TUI 用 alt-screen buffer,滚轮事件被 eDEX 的 capture
-    // handler preventDefault+scrollLines 吞掉(alt buffer 无 scrollback,scrollLines 无效)。
-    // 1) xterm 开 enableMouseEvents:TUI 应用自会发 DECSET 请求鼠标跟踪,滚轮才以 SGR 发给
-    //    pty(Claude Code/Ink 响应滚轮);bash 等不请求鼠标跟踪,不受影响。
-    // 2) wheel handler 检测到 alt buffer 时直接 return(不 preventDefault),让事件到 xterm。
+    // Bug3 alt-screen 历史滚动:Claude Code 等 TUI 用 alt-screen buffer,该 buffer 无
+    // scrollback,xterm scrollLines 无效 → 滚轮"不能滚动"。修复:写包装器拦截 xterm.write,
+    // 当活动 buffer 是 alt 时,每 250ms 用 SerializeAddon 序列化一帧,存进 _altHist
+    // (unshift 最新在前,上限 400 帧,最多可回看约 100 秒)。滚轮向上进入历史查看
+    // (reset+写帧),继续上滚看更旧,下滚回更新,滚到最新/最旧自动回到实时。应用退出
+    // alt 模式时自动解除暂停,避免界面冻结。
+    // Bug5 断线重连:挂起(合盖)期间主进程 node-pty / WebSocket server 可能被系统冻结,
+    // 恢复后 ws 已死,renderer 的 socket.send 静默失败 → "页面在但无法输入"。修复:客户端
+    // 抽出 _wsConn() 并拦截 onclose → 1.5s 后自动重连(每次重建 AttachAddon 并 dispose 旧的,
+    // 消息监听在 _wsConn 内,重连后重新挂上);服务端 verifyClient 放开单客户端限制 +
+    // 新连接到来时关掉旧客户端。resumeFromSuspend 调 reconnectNow() 主动重连。
+    // 重连时先做 DOM 存活性检查(term.element 已不在 body → tab 已关,不重连,防僵尸连接)。
     // claude 启动修复:新终端连接建立时 server 会给 pty 写一个裸 \r(为了刷新 bash 提示符)。
     // 但 claude 的 shell 是 claude-launcher.js(目录选择器),\r → select() → cursor=-1 →
     // 立即 launch(claude) → "选 cd 路径"和"启动 claude"同时发生。
@@ -261,13 +294,21 @@ const targets = [
     // 且用户至少输入过一次,避免启动时空响)。_lastOut 由每条输出刷新,新输出重置定时器。
     transform: c => c
       .split('scrollback:1500,').join('scrollback:1500,enableMouseEvents:!0,')
+      .split('this.port=e.port||3e3,this.cwd=""')
+      .join('this.port=e.port||3e3,this.cwd="",this._altHist=[],this._altHistIdx=0,this._altLast="",this._altPaused=!1,this._altLastT=0,this._serializeA=null')
+      .split('let a=new r;this.term.loadAddon(a),this.term.attachCustomKeyEventHandler')
+      .join('let a=new r;this.term.loadAddon(a),this._ow=this.term.write.bind(this.term),this.term.write=d=>{try{const b=this.term.buffer&&this.term.buffer.active;if(this._altPaused&&(!b||"alt"!==b.type))this._altPaused=!1;if(this._altPaused)return;if(b&&"alt"===b.type){const tt=Date.now();if(tt-this._altLastT>250){this._altLastT=tt;if(!this._serializeA){const{SerializeAddon:SA}=require("xterm-addon-serialize");this._serializeA=new SA;try{this.term.loadAddon(this._serializeA)}catch(e){}}const ss=this._serializeA?this._serializeA.serialize():"",pv=this._altHist[0];if(ss&&ss!==pv){this._altLast=ss,this._altHist.unshift(ss),this._altHist.length>400&&this._altHist.pop(),this._altHistIdx=0}}}}catch(e){}this._ow(d)},this.term.attachCustomKeyEventHandler')
       .split('m.addEventListener("wheel",e=>{e.preventDefault(),e.stopPropagation();const t=Number(window.settings.terminalScrollSensitivity)')
-      .join('m.addEventListener("wheel",e=>{const _b=this.term&&this.term.buffer&&this.term.buffer.active;if(_b&&"alt"===_b.type){return}e.preventDefault(),e.stopPropagation();const t=Number(window.settings.terminalScrollSensitivity)')
+      .join('m.addEventListener("wheel",e=>{const _b=this.term&&this.term.buffer&&this.term.buffer.active;if(_b&&"alt"===_b.type){e.preventDefault(),e.stopPropagation();const _d=e.deltaY;if(_d<0){if(this._altPaused){if(this._altHistIdx<this._altHist.length-1)this._altHistIdx++;else this._altPaused=!1,this._altHistIdx=0,this.term.reset(),this._altLast&&this._ow(this._altLast)}else this._altHist.length&&(this._altPaused=!0,this._altHistIdx=Math.min(1,this._altHist.length-1));if(this._altPaused){const h=this._altHist[this._altHistIdx];h&&(this.term.reset(),this._ow(h))}}else if(_d>0&&this._altPaused){if(this._altHistIdx>0)this._altHistIdx--;else this._altPaused=!1,this._altHistIdx=0,this.term.reset(),this._altLast&&this._ow(this._altLast)}return}e.preventDefault(),e.stopPropagation();const t=Number(window.settings.terminalScrollSensitivity)')
       .split('this._disableCWDtracking=!1,').join('this._disableCWDtracking=!1,this._noBootCR=!!e.noBootCR,')
       .split('try{this.tty.write("\\r")}catch(e){}}').join('try{this._noBootCR||this.tty.write("\\r")}catch(e){}}')
+      .split('this.socket=new WebSocket("ws://"+d+":"+w),this.socket.onopen=()=>{let e=new t(this.socket);this.term.loadAddon(e),this.fit();try{this.term.focus()}catch(e){}},this.socket.onerror=e=>{throw JSON.stringify(e)},this.socket.onclose=e=>{this.onclose&&this.onclose(e)},this.lastSoundFX=Date.now(),this.socket.addEventListener("message",e=>{let t=Date.now();if(t-this.lastSoundFX>30&&(window.audioManager.stdout.play(),this.lastSoundFX=t),t-this.lastRefit>1e4&&this.fit(),!window.settings.experimentalGlobeFeatures)return;let i=e.data.match(/((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/g);null!==i&&i.length>=1&&(i=i.filter((e,t,i)=>i.indexOf(e)===t),i.forEach(e=>{window.mods.globe.addTemporaryConnectedMarker(e)}))})')
+      .join('this._closing=!1,this._rcT=null,this._attachAddon=null,this.reconnectNow=()=>{try{this._rcT&&(clearTimeout(this._rcT),this._rcT=null),this._wsConn&&this._wsConn()}catch(e){}},this._wsConn=()=>{this.socket=new WebSocket("ws://"+d+":"+w),this.socket.onopen=()=>{try{this._attachAddon&&this._attachAddon.dispose()}catch(e){};try{this._attachAddon=new t(this.socket)}catch(e){this._attachAddon=null}try{this.term.loadAddon(this._attachAddon)}catch(e){}this.fit();try{this.term.focus()}catch(e){}},this.socket.onerror=()=>{try{this.socket.close()}catch(e){}},this.socket.onclose=e=>{this.onclose&&this.onclose(e);if(this._closing)return;try{if(!(this.term&&this.term.element&&document.body.contains(this.term.element)))return}catch(e){return}this._rcT&&clearTimeout(this._rcT),this._rcT=setTimeout(()=>{try{this._wsConn()}catch(e){}},1500)},this.socket.addEventListener("message",e=>{let t=Date.now();if(t-this.lastSoundFX>30&&(window.audioManager.stdout.play(),this.lastSoundFX=t),t-this.lastRefit>1e4&&this.fit(),!window.settings.experimentalGlobeFeatures)return;let i=e.data.match(/((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/g);null!==i&&i.length>=1&&(i=i.filter((e,t,i)=>i.indexOf(e)===t),i.forEach(e=>{window.mods.globe.addTemporaryConnectedMarker(e)}))})},this.lastSoundFX=Date.now(),this._wsConn()')
       .split('this.socket.addEventListener("message",e=>{let t=Date.now();if(t-this.lastSoundFX>30&&(window.audioManager.stdout.play(),this.lastSoundFX=t),')
       .join('this.socket.addEventListener("message",e=>{let t=Date.now();if(t-this.lastSoundFX>30&&(window.audioManager.stdout.play(),this.lastSoundFX=t),this._doneT&&clearTimeout(this._doneT),this._lastOut=Date.now(),this._doneT=setTimeout(()=>{this._doneT=null;if(this._userIn&&Date.now()-this._lastOut>=1500)try{window.audioManager&&window.audioManager.info&&window.audioManager.info.play()}catch(_){}},1500),')
-      .split('this.write=e=>{this.socket.send(e)}').join('this.write=e=>{this._userIn=!0;this.socket.send(e)}'),
+      .split('this.write=e=>{this.socket.send(e)}').join('this.write=e=>{this._userIn=!0;this.socket.send(e)}')
+      .split('this.wss=new this.Websocket({port:this.port,clientTracking:!0,verifyClient:e=>!(this.wss.clients.length>=1)})').join('this.wss=new this.Websocket({port:this.port,clientTracking:!0,verifyClient:()=>!0})')
+      .split('this.wss.on("connection",e=>{this.onopened(this.tty.pid)').join('this.wss.on("connection",e=>{try{this.wss.clients.forEach(c=>{try{c!==e&&c.close()}catch(_){}})}catch(_){}this.onopened(this.tty.pid)'),
   },
   {
     name: 'lockScreen.class.js (code 锁屏用独立虚拟终端)',
@@ -325,6 +366,22 @@ const targets = [
     transform: c => c.split('(t.length?').join('(t.forEach?'),
   },
   {
+    name: 'filesystem.class.js (Bug4 同目录重复读取静默刷新)',
+    path: ['classes', 'filesystem.class.js'],
+    expectIn: "this.filesContainer.innerHTML='<div class=\"fs_loading\"><div class=\"fs_loading_ring\"></div><div class=\"fs_loading_text\">LOADING</div></div>'",
+    expectOut: 'this._fsSig=',
+    // Bug4 文件浏览器闪烁:对"正在显示的目录"再次 readFS(Enter 同一项 / 刷新)时,
+    // 每次都会闪 LOADING 再全量重渲染。修复:1) 开头算 _silent(目标 == 当前 dirpath 且
+    // 已有列表);_silent 时跳过 LOADING 显示(静默刷新)。2) 读取完成、渲染前算 _sig
+    // (name:type:size 指纹),若 _silent 且指纹与上次一致 → 内容没变,直接返回不重渲染。
+    // 避免闪一次还白刷屏。首次进入或跨目录时不 silent,行为不变。
+    transform: c => c
+      .split("this.filesContainer.innerHTML='<div class=\"fs_loading\"><div class=\"fs_loading_ring\"></div><div class=\"fs_loading_text\">LOADING</div></div>'")
+      .join("this._silent=e===this.dirpath&&!!this.cwd&&this.cwd.length||(this.filesContainer.innerHTML='<div class=\"fs_loading\"><div class=\"fs_loading_ring\"></div><div class=\"fs_loading_text\">LOADING</div></div>',!1)")
+      .split('this.dirpath=t,this.render(this.cwd),this._reading=!1')
+      .join('(this._sig=this.cwd.map(x=>x.name+":"+x.type+":"+(x.size||0)).join("|"),this._silent&&this._sig===this._fsSig?this._reading=!1:(this._fsSig=this._sig,this.dirpath=t,this.render(this.cwd),this._reading=!1))'),
+  },
+  {
     name: 'modal.css (weather popup font)',
     path: ['assets', 'css', 'modal.css'],
     expectIn: 'div.modal_popup .mod_wx_now b{font-family:var(--font_mono),monospace',
@@ -369,12 +426,18 @@ const targets = [
     // 3) 锁屏误触发修复 A:resumeFromSuspend/pm:resume 只恢复 UI,不再锁屏。全屏其它应用
     //    (如 Firefox)会让 Electron 窗口被 occlude → visibilitychange→visible →
     //    resumeFromSuspend → 无条件 lockScreen.engage() → 一回 eDEX 就锁屏(闲置几秒也锁)。
-    // 4) 锁屏误触发修复 B:系统 suspend 事件不再自动锁屏(锁屏只由 屏幕超时/电源菜单/win+L 触发)。
-    //    顺带挂 system-idle 监听:主进程每秒推系统级空闲秒数,供 idle 检测(修复 C)使用。
+    // 4) 锁屏误触发修复 B:原实现把 pm:suspend 的锁屏改成了空函数(17fix),导致开盖恢复后
+    //    不再锁屏(Bug6)。powerMonitor suspend 只在真实休眠前触发(Firefox 遮挡走的是
+    //    visibilitychange,不经过 powerMonitor),所以恢复原锁屏 handler 安全:合盖休眠前
+    //    锁定,开盖必须先输密码。顺带挂 system-idle 监听:主进程每秒推系统级空闲秒数,
+    //    供 idle 检测(修复 C)使用。
     // 5) 锁屏误触发修复 C:idle 检测改用系统级空闲秒数。原来只算 eDEX 窗口自身 DOM 事件
     //    停更时长,焦点在其它窗口(全屏 Firefox)时误判闲置 → 误触发屏保/锁屏。
     // 6) 修复 13:光标策略 —— UI 常显;仅锁屏/屏保激活时闲置自动隐藏(见 CURSOR1_NEW)。
     // 7) 修复 14:SSH 开关(#4)—— 新增设置分区、window.ssh 对象、打开设置时的监听(见 SSH_* 常量)。
+    // 8) 修复 18(Bug8):code 屏保改用虚拟终端 #screensaver_vt 渲染假代码,不写 term[currentTerm]、
+    //    不再 preSaverTerm0 序列化、hide/windDown 不 reset 真终端(见 SSVT_* 常量)。
+    //    解锁后 CLAUDE 等真终端对话不再被清空。
     transform: c => c
       .split(CURSOR1_OLD).join(CURSOR1_NEW)
       .split('(23*s/100)').join('(21*s/100)')
@@ -382,14 +445,23 @@ const targets = [
       .join('document.addEventListener("visibilitychange",()=>{"visible"===document.visibilityState&&resumeFromSuspend()})'+APPEND)
       .split('window.cursorTrap&&window.cursorTrap.show(),window.lockScreen&&!window.lockScreen.active&&!1!==window.settings.lockOnIdle&&String(window.settings.lockCode||"").length>0&&window.lockScreen.engage(),Object.keys(window.term||{})')
       .join('window.cursorTrap&&window.cursorTrap.show(),Object.keys(window.term||{})')
+      .split('Object.keys(window.term||{}).forEach(e=>{const t=window.term[e];t&&t.term&&"function"==typeof t.fit&&t.fit()})')
+      .join('Object.keys(window.term||{}).forEach(e=>{const t=window.term[e];t&&t.term&&"function"==typeof t.fit&&t.fit(),t&&"function"==typeof t.reconnectNow&&t.reconnectNow()})')
       .split('ipc.on("pm:suspend",()=>{try{window.lockScreen&&!window.lockScreen.active&&window.settings&&String(window.settings.lockCode||"").length>0&&!1!==window.settings.lockOnIdle&&window.lockScreen.engage()}catch(e){try{console.error("pm:suspend handler failed:",e&&e.stack||e)}catch(e){}}})')
-      .join('ipc.on("pm:suspend",()=>{}),ipc.on("system-idle",(e,s)=>{try{window._sysIdleSec=Number(s)||0}catch(_){}})')
+      .join('ipc.on("pm:suspend",()=>{try{window.lockScreen&&!window.lockScreen.active&&window.settings&&String(window.settings.lockCode||"").length>0&&!1!==window.settings.lockOnIdle&&window.lockScreen.engage()}catch(e){try{console.error("pm:suspend handler failed:",e&&e.stack||e)}catch(e){}}}),ipc.on("system-idle",(e,s)=>{try{window._sysIdleSec=Number(s)||0}catch(_){}})')
       .split('const e=Date.now()-lastActivity,t=window.lockScreen')
       .join('const e=1e3*(window._sysIdleSec>=0?window._sysIdleSec:Math.round((Date.now()-lastActivity)/1e3)),t=window.lockScreen')
       .split(SSH_SEC_ANCHOR).join(SSH_SEC_NEW)
       .split(SSH_OBJ_ANCHOR).join(SSH_OBJ_NEW)
       .split(AM_ROW_OLD).join(AM_ROW_NEW)
-      .split(SSH_WIRE_ANCHOR).join(SSH_WIRE_NEW),
+      .split(SSH_WIRE_ANCHOR).join(SSH_WIRE_NEW)
+      .split(SSVT_VAR_OLD).join(SSVT_VAR_NEW)
+      .split(SSVT_I_OLD).join(SSVT_I_NEW)
+      .split(SSVT_SHOW_OLD).join(SSVT_SHOW_NEW)
+      .split(SSVT_HIDE_OLD).join(SSVT_HIDE_NEW)
+      .split(SSVT_HIDE2_OLD).join(SSVT_HIDE2_NEW)
+      .split(SSVT_WIND_OLD).join(SSVT_WIND_NEW)
+      .split(SSVT_RESUME_OLD).join(SSVT_RESUME_NEW),
   },
   {
     name: 'appmonitorPanel.class.js (#3 apps 态:默认应用列表,不含 Firefox,加 WEBAPPS 管理)',
@@ -399,11 +471,16 @@ const targets = [
     // tab4/5 应用列表:1) native 过滤掉系统应用(只留 appimage:/custom:/demo:);
     //   2) init 不再回退选第一个 native(Firefox),无已保存选择时 500ms 后自动弹出应用菜单;
     //   3) 菜单 "+ ADD APP" 下加 WEBAPPS 管理入口;4) 新增 openAppList/manageWebapps 等方法。
+    // Bug7 TAB 标签:每次 _fetchStatus 刷新 runningApps/runningStates 后,把 labelEl 文本
+    // 校正为当前状态——已选且在跑 → 该应用名;否则第一个正在运行的应用名;都没有 →
+    // 默认 "MONITOR A"/"MONITOR B"(用户要求,不要长标签)。init 从 localStorage 恢复的
+    // 旧选择(Firefox)即使被 select() 写了名字,下一次 _fetchStatus(≤3s)也会校正回来。
     transform: c => c
       .split(AM_FILTER_OLD).join(AM_FILTER_NEW)
       .split(AM_SEL_OLD).join(AM_SEL_NEW)
       .split(AM_INITTAIL_OLD).join(AM_INITTAIL_NEW)
       .split(AM_ADDR_OLD).join(AM_ADDR_NEW)
+      .split(AM_LBL_OLD).join(AM_LBL_NEW)
       .split(AM_METHODS_OLD).join(AM_METHODS_NEW),
   },
   {
@@ -436,9 +513,13 @@ const targets = [
     // #17 用户反馈左上 LOAD/UPTIME/TYPE/POWER 的 POWER 字母 r 有一半被裁掉。
     // 根因:flex 容器 justify-content:space-between + 子项 min-width:auto,总宽超出时
     // 末列溢出被裁。改为四列 flex:1 1 0;min-width:0(等宽均分,永不溢出),并收紧水平内边距。
+    // #18 用户反馈 UPTIME 的 E 与 TYPE 的 T 重叠:等宽列下 6 字符 UPTIME(字号 12px+字距 1px)
+    // ≈43px 仍挤。进一步缩小字号 1.111vh→1.0vh、字距 .092vh→.04vh、列 padding .25vh→.1vh。
     transform: c => c
+      .split('div#mod_sysinfo{position:relative;display:flex;flex-direction:row;align-items:center;justify-content:space-between;height:5.556vh;border-top:.092vh solid rgba(var(--color_r),var(--color_g),var(--color_b),.3);font-size:1.111vh;font-family:var(--font_main_light);letter-spacing:.092vh}')
+      .join('div#mod_sysinfo{position:relative;display:flex;flex-direction:row;align-items:center;justify-content:space-between;height:5.556vh;border-top:.092vh solid rgba(var(--color_r),var(--color_g),var(--color_b),.3);font-size:1.0vh;font-family:var(--font_main_light);letter-spacing:.04vh}')
       .split('div#mod_sysinfo div{height:100%;box-sizing:border-box;padding:.925vh .46vh;display:flex;flex-direction:column;align-items:flex-start;justify-content:space-around}')
-      .join('div#mod_sysinfo div{height:100%;box-sizing:border-box;padding:.925vh .25vh;flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:flex-start;justify-content:space-around}'),
+      .join('div#mod_sysinfo div{height:100%;box-sizing:border-box;padding:.925vh .1vh;flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:flex-start;justify-content:space-around}'),
   },
   {
     name: '_i18n.js (SSH 设置文案 + appmonitor Webapps 文案)',

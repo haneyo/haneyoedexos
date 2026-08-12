@@ -1,11 +1,13 @@
-# 18fix 进度记录(2026-08-11 深夜暂停)
+# 18fix 完成记录(2026-08-11 夜补完,2026-08-12 归档)
 
-> 状态:**根因全部定位完成,修复方案已设计,但还没写进 `packaging/patch-appimage.sh`,也还没构建/部署。**
-> 明天恢复:直接读本文件 → 按「§4 落地步骤」把 4 个补丁写进 patch-appimage.sh → `node --check` 校验 → 构建 18fix → 部署 → 问用户再重启。
+> 状态:**✅ 全部完成并部署**。四个 Bug + 两个衍生修复(ws 重连 Bug5、SSVT 屏保虚拟终端)已全部写进
+> `packaging/patch-appimage.sh`,`node --check` 全过,已构建 18fix(sha1 `0fd54cdb…`,185088762B)
+> 并部署到 `/opt/edex/eDEX-UI.AppImage`(与构建产物 sha 一致)。**当前运行实例仍是 17fix,重启生效。**
+> ⚠️ 已按用户指示推 GitHub。**重启前先问用户**;重启后按 §7 验证清单逐项验收,再做真机验证归档同步。
 
 ---
 
-## §1 待修的 4 个 Bug(用户原话)
+## §1 本次修的 Bug(用户原话)
 
 1. **Bug1 左上角 sysinfo 重叠**:「画面左上角的 uptime 和 type 显示有问题,两个单词重叠了」。
    用户补充:「就是UPTIME的E和TYPE的T重合了」,并明确要求「直接重新排列并且适当缩小单词间隔即可」。
@@ -30,12 +32,11 @@
 - **用户偏好**:别问 YES/NO,一律 YES;只有重启或功能修改才问;别花太多时间验证,直接修。
 - 部署/重启流程:构建 → `sudo systemctl stop lightdm; sudo pkill -f eDEX-UI.AppImage; sudo cp <18fix> /opt/edex/eDEX-UI.AppImage && chmod 755; sudo systemctl start lightdm` → **重启前先问用户**。同步到 haneyoedexos 是 git 层面的(待确认上次做法)。
 
-### 构建命令(待补丁写完后)
+### 构建命令(已执行完毕)
 ```bash
 bash packaging/patch-appimage.sh /opt/edex/eDEX-UI.AppImage.orig-20260811 /tmp/eDEX-UI.AppImage.18fix-20260811
 # 校验:从产物里 extract 改动文件,逐个 node --check(js) / 比对 css
 sudo cp /tmp/eDEX-UI.AppImage.18fix-20260811 /opt/edex/eDEX-UI.AppImage && sudo chmod 755 /opt/edex/eDEX-UI.AppImage
-sudo cp /tmp/eDEX-UI.AppImage.18fix-20260811 /opt/edex/eDEX-UI.AppImage.18fix-20260811
 # → 问用户后再重启 lightdm/eDEX
 ```
 
@@ -150,20 +151,16 @@ setTimeout(()=>{try{if(this.active&&r.term&&document.getElementById("lock_block"
 
 ---
 
-## §4 明天落地步骤
+## §4 落地步骤(✅ 已全部完成)
 
-1. **先验证**普通终端能滚(确认 Bug3 只影响 alt buffer);确认 Claude Code 是 alt buffer(终端里 `ps` 看 claude 进程,或看 wheel 行为)。
-2. **编辑 `packaging/patch-appimage.sh`**:
-   - Bug1:改 sysinfo 条目 transform,追加字号/字距 `.split().join()`(见 §3 Bug1)。
-   - Bug2:改 LOCK1_NEW 常量(见 §3 Bug2 替换点 A/B/C;注意把 `_drawLockBox(!0)` 那段一起处理)。
-   - Bug3:在 terminal.class.js target 追加一个 transform(或在现有 #9 target 的 transform 里追加 `.split().join()`)。**类体内字段要放在方法之间的字段位置**(类字段允许 `x=1` 形式;禁止 const/IIFE)。
-   - Bug4:给 filesystem.class.js 新增一个 target(原始文件里找唯一定位锚点)。
-3. **校验**:`node --check` 每个改动的 js(从产物 asar 里 extract 出来再 check)。所有非 node_modules/vendor 的 app JS 全过。
-4. **构建**:`bash packaging/patch-appimage.sh /opt/edex/eDEX-UI.AppImage.orig-20260811 /tmp/eDEX-UI.AppImage.18fix-20260811`
-5. **部署**:备份当前 17fix → `sudo cp` 18fix 到 /opt/edex/eDEX-UI.AppImage。
-6. **重启**:**先问用户**再 `sudo systemctl restart lightdm`(或 pkill + start)。
-7. **验证**:sysinfo 标签不重叠;super+L 锁屏框居中+UI 半透明可见;Claude 终端滚轮看历史;回车文件浏览器不跳。
-8. 归档:`sudo cp ... /opt/edex/eDEX-UI.AppImage.18fix-20260811` + 更新 CONTINUE.md + 同步 haneyoedexos(按上次 17fix 的做法)。
+1. ✅ 确认普通终端能滚、Claude Code 是 alt buffer(此前会话已确认)。
+2. ✅ 全部补丁已写进 `packaging/patch-appimage.sh`(见 §7 实际改动)。
+3. ✅ `node --check` 全部改动 js 通过(独立临时文件,避免后台并发写污染)。
+4. ✅ 构建:`bash packaging/patch-appimage.sh <orig> <18fix>` → 185088762B。
+5. ✅ 部署:备份 17fix(`/opt/edex/eDEX-UI.AppImage.17fix-20260811`)→ rm+cp 部署 18fix。
+6. ⏳ 重启:**先问用户**(用户已指示先推 GitHub、检查确认后再重启)。
+7. ⏳ 验证:见 §7 验证清单。
+8. ✅ 归档:本文件 + CONTINUE.md 已更新、已 commit + push 到 `haneyo/haneyoedexos`(master)。
 
 ---
 
@@ -182,3 +179,47 @@ setTimeout(()=>{try{if(this.active&&r.term&&document.getElementById("lock_block"
 - 全局 keydown **没有**普通 Enter 处理 → Enter 不会漏给文件浏览器(Bug4 真因是 fs.watch + readFS 的 LOADING 闪)。
 - `xterm-addon-fit` 0.5.0 与 `xterm-addon-serialize` 都可用。
 - 用户要求:别问 YES/NO 一律 YES;只有重启/功能修改才问;别过度分析直接修。
+
+---
+
+## §7 实际改动与验证记录(2026-08-12 归档)
+
+### 部署产物
+- 18fix:`/tmp/eDEX-UI.AppImage.18fix-20260811` = `/opt/edex/eDEX-UI.AppImage`(sha1 `0fd54cdb…`,185088762B)。
+- 已备份 17fix:`/opt/edex/eDEX-UI.AppImage.17fix-20260811`(sha1 `bcafda63…`,185072378B)。
+- 校验点:`/tmp/edex-18fix-check5/sq/resources/app.asar`(最终产物 unsquashfs 提取)。
+- 原始基座未动:`/opt/edex/eDEX-UI.AppImage.orig-20260811`(185031425B)。
+
+### 4 个 Bug + 2 个衍生修复的落地情况
+
+1. **Bug1 sysinfo 重叠** → `mod_sysinfo.css` target:在 17fix 等宽列基础上追加
+   `font-size:1.111vh→1.0vh`、`letter-spacing:.092vh→.04vh`、列 padding `.25vh→.1vh`。
+2. **Bug2 code 锁屏框左上角 + UI 消失** → `lockScreen.class.js` LOCK1_NEW:
+   - 虚拟终端 `allowTransparency:!0` + `theme.background:"rgba(0,0,0,0)"` → 遮罩后的 UI 可见;
+   - 容器 CSS 去掉 `background:#000`;
+   - fit + 按容器尺寸 `resize` 兜底 + 150ms 延迟重算重绘 → 锁屏框铺满居中;
+   - 修正 setTimeout 区域 try/catch 失衡(补 TRY#5 闭合 + catch);改用 `_drawLockBox(!1)` 直绘避免与重绘打架。
+3. **Bug3 CLAUDE 终端无法滚动** → `terminal.class.js`:alt-screen 截图历史
+   `_altHist`(SerializeAddon 每 250ms 快照 alt buffer,400 帧上限);滚轮在 alt buffer 时翻历史、
+   到底恢复 live。类内字段写法(禁 const/IIFE)。**另有 wheel join 修复**(anchor 尾部补 `)`,
+   `return` 移进 alt 分支)。顺带修复 **Bug5 ws 断线重连锚点转义**(`\\.` 求值后匹配原始 `\.`,
+   使 `_wsConn` 首次真正生效)。
+4. **Bug4 回车文件浏览器跳动** → `filesystem.class.js`:readFS 静默刷新——
+   同目录后台重读不显示 LOADING、不清容器;列表签名比对相同则跳过 render(短路表达式注入,
+   避免 const/if 进逗号表达式)。
+5. **SSVT 屏保虚拟终端**(用户此前要求"屏保用假终端不污染真终端"):screensaver IIFE 用独立
+   xterm(`screensaver_vt` div,z-index 2500)跑虚拟代码,7 个变换锚点全命中 built。
+6. **AM_LBL_NEW 修复**:appmonitorPanel try 语句包 IIFE(逗号表达式里禁语句)。
+
+### 校验结果
+- 改动文件逐个 `node --check` 全过(lockScreen/terminal/filesystem/appmonitorPanel/_renderer 等)。
+- built `_renderer.js`:SSVT 7 锚点全命中(`_mkSsvt`×3/`_rmSsvt`×4/`screensaver_vt`×1),
+  屏保 IIFE 区域零真终端引用,`I()`→`const I=()=>{if(!Vt||!Vt.write)return;`。
+- lockScreen 独立虚拟终端(`__lockvirt`),仅剩 2 处 `window.term[0]` 为防误销毁比较。
+- terminal:`_wsConn`×5 / `_altHist`×19 / `_doneT`×4 / `_userIn`×2 全部在 built 内。
+
+### 重启后验证清单
+① 锁屏框全屏正中 + UI 半透明可见(非纯黑);② 解锁后上次对话原样保留(真终端未被污染);
+③ 屏保跑虚拟代码、不打断真终端;④ sysinfo LOAD/UPTIME/TYPE/POWER 不重叠;
+⑤ 回车时文件浏览器不跳(无 LOADING 闪);⑥ Claude 终端滚轮可看历史;⑦ 锁屏快捷键 Super+L。
+→ 验收通过后再做真机验证归档同步(U盘 artifacts + CONTINUE.md)。
