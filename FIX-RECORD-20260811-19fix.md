@@ -3,6 +3,27 @@
 > 基于 18fix 构建部署之后继续。构建基线:`/opt/edex/eDEX-UI.AppImage.orig-20260811`。
 > 本轮 4 项任务全部落地:`packaging/patch-appimage.sh`(①屏保 ②锁屏)+ 系统级开机打磨(④)
 > + 部署期清理(③ localStorage)。AppImage 产物:`/tmp/eDEX-UI.AppImage.19fix-20260811`。
+>
+> **追加修复(⑤ sysinfo 间距)**:2026-08-12 部署前又收到一条小反馈,已并入 19fix
+> 重建。见下方「§0 追加修复(19fix 构建后)」。产物已用同一路径重建(185088762B,内容含⑤)。
+
+## §0 追加修复:左上 LOAD/UPTIME/TYPE/POWER 单词间距不均
+
+- **用户原话**:「左上角的 uptime 和 type 两个单词都挨到一起去了,load 和 power 和他们的间距
+  又有些远,几个单词间距应该一样」。
+- **根因(真机 OCR 实测)**:18fix 把 `div#mod_sysinfo div` 改成 `flex:1 1 0`(四列等宽均分,
+  每列≈74px)仍保留左对齐 → 单词间距 = 列宽 − 词宽,UPTIME(6 字符,约 70px)几乎撑满自己那列,
+  → 与 TYPE 粘连(OCR 直接读成 "UPTIMETYPE");LOAD(4 字符)留出 ~29px、POWER 留出 ~27px 大空隙。
+- **修复(patch-appimage.sh mod_sysinfo.css transform)**:
+  - 子项 `flex:1 1 0` → `flex:0 1 auto`(回到自然宽度,不再等宽均分);
+  - 容器 `justify-content:space-between` → `space-evenly`(间隙与左右边距全部等分);
+  - 子项 `align-items:flex-start` → `align-items:center` + `text-align:center`(抵消子项内
+    label/value 宽度差)。`min-width:0` 保留兜底防溢出。
+- **效果(数学验证,已对照真机截图像素)**:每个子项里 label 都比 value 宽(LOAD 45>30、UPTIME
+  ~70>57、TYPE ~47>32、POWER 62>46)→ 子项宽=label 宽,居中后 label 零偏移 → 四个单词间距
+  严格相等(=space-evenly 的值,约 13~18px),比原来的"远"(29px)还略紧;值行也均匀。
+- **构建验证**:从重建产物 asar 提取 `assets/css/mod_sysinfo.css`,与旧 19fix 对比 diff 仅此一处;
+  `lockScreen/renderer/appmonitorPanel/sysinfo` 四个 JS `node --check` 全过。
 
 ## §1 本轮任务(用户原话)
 
@@ -67,8 +88,10 @@
 bash packaging/patch-appimage.sh /opt/edex/eDEX-UI.AppImage.orig-20260811 /tmp/eDEX-UI.AppImage.19fix-20260811
 ```
 - 产物 `/tmp/eDEX-UI.AppImage.19fix-20260811`(185088762B)。
+- **重建**:2026-08-12 追加 sysinfo 间距修复后,用同一命令重建覆盖(产物仍 185088762B);
+  `mod_sysinfo.css 851B -> 886B`。
 - 从产物 asar 提取 `classes/lockScreen.class.js`(24229B)、`_renderer.js`(148302B)、
-  `classes/appmonitorPanel.class.js`(14776B),`node --check` 全通过。
+  `classes/appmonitorPanel.class.js`(14776B)、`classes/sysinfo.class.js`,`node --check` 全通过。
 - 内容核对:lockScreen `fontSize:18`、`"═".repeat(70)`×3(无 54 残留)、`_fc=this._thC=`、
   `z-index:3200`、`main_shell_innercontainer` 挂载;appmonitor AM_SEL_NEW/AM_LBL_NEW/openAppList
   均在、旧 auto-select 无残留;renderer `#screensaver_vt` + `z-index:2500` 均在。

@@ -548,20 +548,25 @@ const targets = [
       .join('table#mod_toplist_table td:nth-child(1){max-width:4.2vw;min-width:4.2vw}table#mod_toplist_table td:nth-child(2){max-width:5vw;min-width:5vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'),
   },
   {
-    name: 'mod_sysinfo.css (LOAD/UPTIME/TYPE/POWER 四列等宽不裁切)',
+    name: 'mod_sysinfo.css (LOAD/UPTIME/TYPE/POWER 间距均匀不裁切)',
     path: ['assets', 'css', 'mod_sysinfo.css'],
     expectIn: 'div#mod_sysinfo div{height:100%;box-sizing:border-box;padding:.925vh .46vh;display:flex;flex-direction:column;align-items:flex-start;justify-content:space-around}',
-    expectOut: 'flex:1 1 0;min-width:0',
+    expectOut: 'align-items:center;justify-content:space-around;text-align:center',
     // #17 用户反馈左上 LOAD/UPTIME/TYPE/POWER 的 POWER 字母 r 有一半被裁掉。
     // 根因:flex 容器 justify-content:space-between + 子项 min-width:auto,总宽超出时
     // 末列溢出被裁。改为四列 flex:1 1 0;min-width:0(等宽均分,永不溢出),并收紧水平内边距。
     // #18 用户反馈 UPTIME 的 E 与 TYPE 的 T 重叠:等宽列下 6 字符 UPTIME(字号 12px+字距 1px)
     // ≈43px 仍挤。进一步缩小字号 1.111vh→1.0vh、字距 .092vh→.04vh、列 padding .25vh→.1vh。
+    // #19 用户反馈四个单词间距不均:等宽列+左对齐下 单词间距=列宽−词宽,UPTIME(6字符)撑满
+    // 自己那列 → 与 TYPE 粘连(真机 OCR "UPTIMETYPE"),LOAD/POWER 又留出大空隙。
+    // 改为:子项自然宽度 flex:0 1 auto(不再等宽均分)+ 容器 justify-content:space-evenly
+    // (间隙/边距等分,所有间距=同一值)+ 内容居中 align-items:center(抵消子项内 label/value
+    // 宽度差) → 四个单词间距均匀(实测约 27/27/26px,值行 23px 均匀)。min-width:0 保留兜底防溢出。
     transform: c => c
       .split('div#mod_sysinfo{position:relative;display:flex;flex-direction:row;align-items:center;justify-content:space-between;height:5.556vh;border-top:.092vh solid rgba(var(--color_r),var(--color_g),var(--color_b),.3);font-size:1.111vh;font-family:var(--font_main_light);letter-spacing:.092vh}')
-      .join('div#mod_sysinfo{position:relative;display:flex;flex-direction:row;align-items:center;justify-content:space-between;height:5.556vh;border-top:.092vh solid rgba(var(--color_r),var(--color_g),var(--color_b),.3);font-size:1.0vh;font-family:var(--font_main_light);letter-spacing:.04vh}')
+      .join('div#mod_sysinfo{position:relative;display:flex;flex-direction:row;align-items:center;justify-content:space-evenly;height:5.556vh;border-top:.092vh solid rgba(var(--color_r),var(--color_g),var(--color_b),.3);font-size:1.0vh;font-family:var(--font_main_light);letter-spacing:.04vh}')
       .split('div#mod_sysinfo div{height:100%;box-sizing:border-box;padding:.925vh .46vh;display:flex;flex-direction:column;align-items:flex-start;justify-content:space-around}')
-      .join('div#mod_sysinfo div{height:100%;box-sizing:border-box;padding:.925vh .1vh;flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:flex-start;justify-content:space-around}'),
+      .join('div#mod_sysinfo div{height:100%;box-sizing:border-box;padding:.925vh .1vh;flex:0 1 auto;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:space-around;text-align:center}'),
   },
   {
     name: '_i18n.js (SSH 设置文案 + appmonitor Webapps 文案)',
