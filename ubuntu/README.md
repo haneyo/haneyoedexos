@@ -14,28 +14,21 @@
 - 🆕 **#182 开机终端两行**:一开机终端就有两行,疑似解锁时按 Enter 多打了一行。
 - 🆕 **#183 开机过渡**:黑屏 + 原生鼠标光标 → 白屏一下 → 才进 eDEX UI。logo 部分用户已取消,白屏/原生光标过渡仍待处理(不动开机动画)。
 
-## v2.3.11 之后要做:Phase C 真机验证(ThinkPad E580)
+## 活动待办
 
-以下修复代码已完成并随 v2.3.11 ISO 发布,**尚未在真机验证**:
+> ⚠️ **活动待办已统一合并到根目录 [`TODOS.md`](../TODOS.md)**(唯一权威)。
+> 本文件仅保留历史背景与实测记录;下面这些已不再单独跟踪:
+> Ubuntu 侧仅剩 **#174 用户名显示**、**#183 开机过渡**;其余 #11/#128/#139/#140/#145/#163/
+> #173/#175/#182 已由用户确认去掉(见 TODOS.md §C)。
 
-- [x] **熄屏 DPMS**(#181,`fac0e21`):闲置超时后 `xset dpms force off` 真关屏,鼠标一动 `force on`。✅ 机制实测通过:`force off` 在 `-dpms` 下仍生效(DPMSInfo=OFF)。端到端触发受本机 `screenOffIdle=18000s` 限制,需调小阈值目测(见 `ubuntu/PhaseC-findings-2026-08-11.md`)。
-- [ ] **app monitor 填满**(`402a22b`):Xvfb 1600×800(2:1)+ openbox 自动最大化/去装饰(`/tmp/edex-monitor-openbox.xml`)。**🆕 已确认 bug**:backend.js 用 `openbox --config`(非法参数,应 `--config-file`)→ openbox 秒退、无 WM、窗口不最大化。手动用 `--config-file` 后 Firefox 完美最大化 1600×800 无黑边。修复在 App 侧 src(`appmonitor/backend.js`)。(详见 `ubuntu/PhaseC-findings-2026-08-11.md`)
-- [x] **Firefox 真显示**:官方 tarball(`/opt/firefox/firefox`)在虚拟显示器内可开,`MOZ_DISABLE_CONTENT_SANDBOX` 生效。✅ 已验证(:102 内 Firefox 窗口已映射,env 正确)。
-- [ ] **用户名显示安装时填的名字**(#174):`getDisplayName` 优先 GECOS realname。验证:Welcome back 显示安装时"你的名字",不是 `edex`。🆕 根因已确认:getDisplayName 自缓存 `settings.username="edex"`(首启由登录名写入并缓存),会话账号 edex GECOS 为空,GECOS 分支永远用不上。修复方向:firstRun 向导加显示名步骤 / OS 侧 chfn 写 GECOS + 清缓存(见 `ubuntu/PhaseC-findings-2026-08-11.md`)。
-- [ ] **电池呼吸光效**(#173):充电时 `battery_fill` 1.2s 呼吸(`battery_charge_pulse`)。验证:插电 → 时钟左上角电量图标呼吸;不插电 → 静态。
-- [ ] **开机动画默认开启**(#175):种子 `nointro:false` + `_boot.js:94` 默认 false。验证:开机先播动画,不是直接进 UI。settings 已确认 `nointro:false`,待重启确认。
+### 历史背景(2026-08-11,Phase C 真机验证)**
 
-## 未完成功能任务(Linux 侧)
-
-| # | 任务 | 状态 | 备注 |
-|---|------|------|------|
-| #11 | 开机 GRUB 报错 `file '/boot/' not found` | 待办 | 引导结构问题 |
-| #128 | 新 ISO 安装器崩溃(subiquity `load_autoinstall_data`) | 进行中 | 安装流程 |
-| #139 | 笔记本电量不显示:upower + sysfs 兜底 | 进行中 | 真机电池读数 |
-| #140 | 电源键按下显示电源菜单而非直接关机 | 进行中 | openbox 键绑定 + 菜单 |
-| #144 | 中文输入无候选框(盲打) | ✅ 已修(2026-08-11,backend 不再抢 fcitx5 dbus name) | 根因:backend.js 虚拟屏 `fcitx5 --replace` 顶掉主屏 :0 实例;已删该 spawn,部署 10 修复版 |
-| #145 | Show disks 显示未挂载 U 盘 + 点击挂载 | 进行中 | udisks2 |
-| #163 | 解锁后光标消失:区分应用 vs 触摸板 | 待办 | |
+- 熄屏 DPMS(#181,`fac0e21`)机制已实测通过;端到端触发受 `screenOffIdle=18000s` 限制。
+- app monitor 填满(`402a22b`):Xvfb 1600×800 + openbox 最大化/去装饰;🆕 已确认 bug:
+  backend.js 用 `openbox --config`(非法,应 `--config-file`)→ openbox 秒退无 WM。
+  修复在 App 侧 src(`appmonitor/backend.js`),已入补丁链,待真机验证。
+- Firefox 真显示:官方 tarball 在虚拟显示器内可开,`MOZ_DISABLE_CONTENT_SANDBOX` 生效,已验证。
+- 中文输入无候选框(#144):backend 不再抢 fcitx5 dbus name,已修(2026-08-11)。
 
 ## 已取消 / 不要动
 

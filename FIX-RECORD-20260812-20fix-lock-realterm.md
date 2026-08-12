@@ -99,11 +99,8 @@ sudo systemctl start lightdm
 
 ## §3 遗留待办(本轮之前)
 
-| # | 任务 | 状态 | 说明 |
-|---|---|---|---|
-| #5 | 终端滚动修复(历史遗留) | ⏳ | — |
-| #4 | app monitor 填满:backend.js openbox `--config→--config-file` | ⏳ | 补丁已在链内,appMonitor 默认禁用未真机验证 |
-| #5-ubuntu | Ubuntu 侧待办清单跟踪(#11/#128/#139/#140/#145/#163/#174/#182/#183/#173/#175) | ⏳ | 待跟踪 |
+> ⚠️ **待办已统一合并到根目录 [`TODOS.md`](../TODOS.md)(唯一权威)**,本文件不再单独维护。
+> 剩余历史遗留:eDEX 侧 #2 终端滚动、#4 appmonitor openbox;Ubuntu 侧仅 #174 用户名、#183 开机过渡。
 
 ## §4 铁律与安全
 
@@ -116,13 +113,10 @@ sudo systemctl start lightdm
 
 ## §5 任务清单(TaskList 对应)
 
-- #1 ✅ #20 锁屏/屏保改独立真实终端(已实现、构建验证、提交推送;**部署待重启**)
+> ⚠️ **待办唯一权威 = 根目录 [`TODOS.md`](../TODOS.md)**(已合并 ubuntu/README.md 的旧清单)。
+> 本节仅保留本轮(20fix)已完成的对照。
+
+- #20 ✅ 锁屏/屏保改独立真实终端(已实现、构建验证、提交推送;**部署待重启**)
 - #6 ✅ 21fix TAB5 Browser w3m 配默认主页(已合并进 20fix 产物)
-- #7 ⏳ 下一轮:内置 BTOP(进 app 列表)
-- #8 ⏳ 下一轮:内置 AXEL,替换设置里 UGET 菜单(URL/线程默认6/目录/进度/暂停恢复,CLI 可视化)
-- #9 ⏳ 下一轮:CLASH 设置增强(节点/测速/全局规则直连/规则,CLI 可视化)
-- #10 ⏳ 下一轮:内置 FASTFETCH(不进列表)
-- #11 ⏳ 下一轮:确保内置 FFMPEG(不进列表)
-- #12 ⏳ 下一轮:超负荷时 CPU型号 / MEMORY USING / NETWORK UP·DOWN 文字红光闪烁(勿刺眼)
-- #2/#4/#5 ⏳ 历史遗留(#5 滚动、appmonitor openbox、Ubuntu 待办)
-  (#9 终端选择+复制已由用户确认可用,已从清单移除)
+- #9 ✅ 终端选择+复制(用户确认可用,已移除)
+- 下一轮(BTOP/AXEL/CLASH/FASTFETCH/FFMPEG/超负荷闪烁)+ 历史遗留 → 见 TODOS.md
