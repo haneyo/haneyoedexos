@@ -46,6 +46,12 @@ src/node_modules
 # macOS
 .DS_Store
 
+# Local Claude config (machine-specific)
+.claude/
+
+# Secrets / API keys (never commit)
+sk-*/
+
 # Build artifacts
 *.AppImage
 eDEX-OS-*.iso
