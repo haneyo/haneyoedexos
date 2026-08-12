@@ -36,7 +36,9 @@
 
 | # | 内容 | 何时 |
 |---|---|---|
-| #24 | CODE 屏保假代码每 10 行整屏清屏(ESC[2J ESC[H)导致"跑到一半不见了从头跑" → 去掉清屏,改为自然上滚 | 2026-08-12,见 FIX-RECORD-20260812-24fix-ssaver-scroll.md,待重启部署 |
+| #24 | CODE 屏保假代码每 10 行整屏清屏(ESC[2J ESC[H)导致"跑到一半不见了从头跑" → 去掉清屏,改为自然上滚 | 2026-08-12,见 FIX-RECORD-20260812-24fix-ssaver-scroll.md,**已并入 25fix 产物待重启部署** |
+| #25 | 打开终端自带两行/像多按回车:连接时无条件写 boot `\r`(canonical ICRNL 空行提交) → 改延迟条件回退(1200ms 无输出且无输入才补发) | 2026-08-12,见 FIX-RECORD-20260812-25fix-term-bootcr-lockdim.md,待重启部署 |
+| #26 | CODE 锁屏时钟/锁屏框被暗化(仅键盘不暗):恢复旧版 z-index 提升,时钟与锁屏框抬到暗化层(z3000)之上 | 2026-08-12,见 FIX-RECORD-20260812-25fix-term-bootcr-lockdim.md,待重启部署 |
 | #23 | 周期性 widget 重置后左右列消失 → 重建后补 reveal(animationPlayState=running) | 2026-08-12,见 FIX-RECORD-20260812-23fix-widget-reset.md,已部署 |
 | #22 | CODE 屏保/锁屏渲染修复:cat pty 改 `stty raw -echo`(消除 `^[` 乱码/双行/空行)+ 覆盖层不透明背景(遮住真终端) | 2026-08-12,见 FIX-RECORD-20260812-22fix-lock-garble.md,已部署 |
 | #20 | 锁屏/屏保改独立真实终端(engage ttyspawn 新建 cat pty,unlock/dismiss 销毁) | 2026-08-12,commit 7f2faa3,已部署 |
@@ -62,7 +64,6 @@
 | #163 | 解锁后光标消失(区分应用 vs 触摸板) | 不再跟踪 |
 | #173 | 电池充电呼吸光效 | 不再跟踪 |
 | #175 | 开机动画默认开启 | 不再跟踪 |
-| #182 | 开机终端自带两行 | 不再跟踪 |
 
 ---
 
