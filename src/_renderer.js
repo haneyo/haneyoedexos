@@ -1146,8 +1146,8 @@ async function initUI() {
             <li id="shell_tab0" onclick="window.focusShellTab(0);" class="active"><p>MAIN SHELL</p></li>
             <li id="shell_tab1" onclick="window.focusShellTab(1);"><p>EMPTY</p></li>
             <li id="shell_tab2" onclick="window.focusShellTab(2);"><p>CLAUDE</p></li>
-            <li id="shell_tab3" onclick="window.focusShellTab(3);"><p><span id="shell_tab3_label">MONITOR A</span> <span class="webapp_chevron" title="Switch app" onclick="event.stopPropagation();window.appmonitorA.toggleMenu(event);">${Icons.chevronDown}</span></p></li>
-            <li id="shell_tab4" onclick="window.focusShellTab(4);"><p><span id="shell_tab4_label">MONITOR B</span> <span class="webapp_chevron" title="Switch app" onclick="event.stopPropagation();window.appmonitorB.toggleMenu(event);">${Icons.chevronDown}</span></p></li>
+            <li id="shell_tab3" onclick="window.focusShellTab(3);"><p><span id="shell_tab3_label">APP</span> <span class="webapp_chevron" title="Switch app" onclick="event.stopPropagation();window.appmonitorA.toggleMenu(event);">${Icons.chevronDown}</span></p></li>
+            <li id="shell_tab4" onclick="window.focusShellTab(4);"><p>${(window.settings.appMonitor||{}).showGui?'<button class="appmonitor_fs_tab" title="Fullscreen" onclick="event.stopPropagation();window.appmonitorB.fullscreenButton()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2 2h20L2 22z"/></svg></button>':''}<span id="shell_tab4_label">APP</span> <span class="webapp_chevron" title="Switch app" onclick="event.stopPropagation();window.appmonitorB.toggleMenu(event);">${Icons.chevronDown}</span></p></li>
         </ul>
         <div id="main_shell_innercontainer">
             <pre id="terminal0" class="active"></pre>
@@ -1675,11 +1675,14 @@ async function initUI() {
         container: miniAudioEl
     });
 
-    // Tabs 4 & 5 (MONITOR A/B) are CLI panels: command-line apps with a UI
-    // (claude, browsh, aerc, htop, btop) run in a real terminal session. The
-    // AppMonitorPanel (virtual display / noVNC) is retired; the appmonitor
-    // backend server still runs to list GUI apps and launch them fullscreen
-    // from the file browser's APPS button. Webapps discovery stays.
+    // Tabs 4 & 5 are CLI panels by default: command-line apps with a UI
+    // (claude, browsh, aerc, htop, btop) run in a real terminal session, and
+    // both tabs read "APP". When the experimental GUI-app mode
+    // (settings.appMonitor.showGui) is enabled, tab 5 becomes the
+    // AppMonitorPanel virtual-display entry ("GUI APPS") and shows the hollow
+    // fullscreen triangle. The appmonitor backend server always runs (Xvfb is
+    // lazy-started), so toggling the setting just needs a restart. Webapps
+    // discovery stays.
     window.webapps = new Webapps();
     window.appmonitorApi = {
         config: () => ipc.invoke("appmonitor:config"),
@@ -1694,7 +1697,9 @@ async function initUI() {
         exitFullscreen: () => ipc.invoke("appmonitor:exit-fullscreen")
     };
     window.appmonitorA = new CliPanel({ parentId: "appmonitor_a_slot", monitorId: "a", labelId: "shell_tab3_label" });
-    window.appmonitorB = new CliPanel({ parentId: "appmonitor_b_slot", monitorId: "b", labelId: "shell_tab4_label" });
+    window.appmonitorB = (window.settings.appMonitor || {}).showGui
+        ? new AppMonitorPanel({ parentId: "appmonitor_b_slot", monitorId: "b", labelId: "shell_tab4_label" })
+        : new CliPanel({ parentId: "appmonitor_b_slot", monitorId: "b", labelId: "shell_tab4_label" });
 
     // WiFi connect panel (Linux + NetworkManager via nmcli).
     window.wifiApi = {
@@ -2183,6 +2188,35 @@ async function initUI() {
         }
     };
 
+    // "显示GUI应用" experimental toggle (virtual-display GUI apps on tab 5).
+    // Off by default: tabs 4 & 5 are both CLI apps. The backend server always
+    // runs (Xvfb is lazy-started), so flipping this just records intent — the
+    // routing is decided at boot, hence the "restart to take effect" toast.
+    window.showGui = {
+        apply() {
+            const el = document.getElementById("settingsEditor-showGui");
+            if (!el) return;
+            const on = el.value === "true";
+            window.settings.appMonitor = window.settings.appMonitor || {};
+            window.settings.appMonitor.showGui = on;
+            try { fs.writeFileSync(settingsFile, JSON.stringify(window.settings, "", 4)); } catch (e) {}
+            this._notify("重启后生效");
+        },
+        _notify(m) {
+            let _t = document.getElementById("edex_toast");
+            if (!_t) {
+                _t = document.createElement("div");
+                _t.id = "edex_toast";
+                _t.className = "browser_toast";
+                document.body.appendChild(_t);
+            }
+            _t.textContent = m;
+            _t.classList.add("show");
+            clearTimeout(this._notifyTimer);
+            this._notifyTimer = setTimeout(() => _t.classList.remove("show"), 2200);
+        }
+    };
+
     // GitHub self-update of the eDEX-UI AppImage (eDEX-OS install). Downloads
     // the new AppImage from a release asset, verifies its sha256 and atomically
     // replaces /opt/edex/eDEX-UI.AppImage in the main process, then relaunches.
@@ -2625,6 +2659,12 @@ window.openSettings = async () => {
         ].join("") },
         { id: "apps", titleKey: "settings.cat.apps", html: () => [
             section("settings.cat.apps"),
+            settingsRow("settings.appMonitor.showGui",
+                `<select id="settingsEditor-showGui" onchange="window.showGui.apply()">
+                    <option>${!!((window.settings.appMonitor || {}).showGui)}</option>
+                    <option>${!((window.settings.appMonitor || {}).showGui)}</option>
+                </select>`,
+                "settings.appMonitor.showGui.help"),
             settingsRow("settings.appSort", `<select id="settingsEditor-appSort">
                 <option value="name-asc" ${window.settings.appSort === "name-asc" ? "selected" : ""}>${t("settings.appSort.nameAsc")}</option>
                 <option value="name-desc" ${window.settings.appSort === "name-desc" ? "selected" : ""}>${t("settings.appSort.nameDesc")}</option>
@@ -3812,9 +3852,12 @@ window.writeSettingsFile = () => {
         model: document.getElementById("settingsEditor-claude-model").value,
         haikuModel: document.getElementById("settingsEditor-claude-haikuModel").value
     };
-    // appMonitor config is not editable in the settings UI anymore: the
-    // backend server always runs (it powers the file-browser APPS button) and
-    // picks up its defaults / stored values from _boot.js on startup.
+    // appMonitor is not rebuilt from the form here: the backend server always
+    // runs (it powers tab 5's experimental GUI-app entry) and picks up its
+    // defaults / stored values from _boot.js on startup. The one UI-editable
+    // flag, showGui, is applied immediately by window.showGui.apply() — it
+    // mutates window.settings and writes the file itself, so the MERGE spread
+    // above carries it through a Save unchanged.
     // #8 AXEL: top-level keys (same style as downloadDir), NOT a
     // settings.download namespace — that would collide with the
     // browser-download save path the main process reads.

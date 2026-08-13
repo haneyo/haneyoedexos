@@ -1,6 +1,7 @@
-// AppMonitorPanel — a "virtual monitor" (terminal tab 4 / 5) that displays an
-// installed app inside the sci-fi frame, selected from a dropdown on the tab
-// label (the same interaction the webapp panel used).
+// AppMonitorPanel — the GUI-app "virtual display" entry (terminal tab 5, only
+// when settings.appMonitor.showGui is on). Displays an installed app inside the
+// sci-fi frame, selected from a dropdown on the tab label (the same interaction
+// the webapp panel used). Tab 5's fullscreen triangle calls fullscreenButton().
 //
 //   kind "native" → the <webview> loads the themed noVNC client page, which
 //                    streams a nested X display running the app (mock RFB on
@@ -10,6 +11,16 @@
 // The dropdown reuses the .webapp_menu styling, is keyboard-navigable
 // (↑/↓ + Enter + Esc, see memory ui-keyboard-operable), and offers ADD APP to
 // register an AppImage path / command / web URL.
+
+// ADD APP icon-picker callback (see _openAddModal): writes the chosen icon id
+// into the hidden field and reflects it on the picker button. Kept as a window
+// helper so the modal's inline onclick stays short.
+window._ampPickIcon = (id) => {
+    const h = document.getElementById("appmonitor_add_icon");
+    if (h) h.value = id || "";
+    const b = document.getElementById("appmonitor_add_icon_btn");
+    if (b) b.textContent = id ? ("已选: " + id) : "Choose icon…";
+};
 
 class AppMonitorPanel {
     _dbg(msg) {
@@ -72,7 +83,7 @@ class AppMonitorPanel {
         if (this.labelEl && !start) {
             this.labelEl.textContent = (window.cover && window.cover.isActive())
                 ? window.cover.fakeMonitorLabel(this.monitorId)
-                : (this.monitorId === "a" ? "MONITOR A" : "MONITOR B");
+                : "GUI APPS";
         }
         if (start) this.select(start);
         await this._fetchStatus();
@@ -295,11 +306,15 @@ class AppMonitorPanel {
                 dotSlot.appendChild(dot);
             }
             opt.appendChild(dotSlot);
-            // Icon column (fixed width so names line up); apps without an icon
-            // get a generic placeholder glyph.
+            // Icon column (fixed width so names line up). Resolution order:
+            // shared icon-library id → inline SVG; otherwise a .desktop icon
+            // path → <img>; otherwise a generic placeholder glyph.
             const iconSlot = document.createElement("span");
             iconSlot.className = "appmonitor_icon_slot";
-            if (app.icon) {
+            const libIcon = window.iconLibrary && window.iconLibrary.get(app.icon);
+            if (libIcon) {
+                iconSlot.innerHTML = libIcon;
+            } else if (app.icon) {
                 const img = document.createElement("img");
                 img.src = app.icon;
                 iconSlot.appendChild(img);
@@ -464,16 +479,17 @@ class AppMonitorPanel {
     _openAddModal() {
         new Modal({
             type: "custom",
-            title: "ADD APP — MONITOR " + this.monitorId.toUpperCase(),
+            title: "ADD APP",
             html: `
                 <div class="appmonitor_add">
-                    <label>TYPE</label>
-                    <select id="appmonitor_add_type"><option>native</option><option>web</option></select>
                     <label>NAME</label>
                     <input type="text" id="appmonitor_add_name" placeholder="App name">
-                    <label>VALUE</label>
+                    <label>PATH / COMMAND</label>
                     <input type="text" id="appmonitor_add_value"
-                           placeholder="AppImage path / command / https:// URL">
+                           placeholder="AppImage path / command">
+                    <label>ICON</label>
+                    <button type="button" id="appmonitor_add_icon_btn" class="settings_net_btn" onclick="window.iconLibrary&&window.iconLibrary.pickerModal(window._ampPickIcon)">Choose icon…</button>
+                    <input type="hidden" id="appmonitor_add_icon" value="">
                 </div>`,
             buttons: [{ label: "Add", action: `window.appmonitor${this.monitorId === "a" ? "A" : "B"}.submitAdd()` }]
         });
@@ -482,20 +498,17 @@ class AppMonitorPanel {
     submitAdd() {
         const name = document.getElementById("appmonitor_add_name");
         const value = document.getElementById("appmonitor_add_value");
-        const type = document.getElementById("appmonitor_add_type");
+        const iconEl = document.getElementById("appmonitor_add_icon");
         if (!name || !value || !name.value.trim() || !value.value.trim()) {
             this._notify("Name and value are required");
             return;
         }
         const n = name.value.trim(), v = value.value.trim();
-        if (type && type.value === "web" && /^https?:\/\//i.test(v)) {
-            if (window.webapps) { window.webapps.addCustom(n, v); }
-        } else {
-            window.appmonitorApi.addNative({ name: n, value: v }).then(r => {
-                if (!r || !r.ok) { this._notify("Could not add \"" + n + "\""); return; }
-                this._notify("Added \"" + n + "\"");
-            });
-        }
+        const icon = (iconEl && iconEl.value) ? iconEl.value : null;
+        window.appmonitorApi.addNative({ name: n, value: v, icon: icon }).then(r => {
+            if (!r || !r.ok) { this._notify("Could not add \"" + n + "\""); return; }
+            this._notify("Added \"" + n + "\"");
+        });
         this.refresh();
         this._closeModal("appmonitor_add");
     }
