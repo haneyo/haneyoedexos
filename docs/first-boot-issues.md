@@ -217,7 +217,7 @@ fcitx5-diagnose | head -60; pgrep -a fcitx5
   1. `31671387468`(commit `30cfdee`,无 OSS 镜像)→ success,artifact `eDEX-OS-main.iso`(GitHub artifact,90 天有效)。
   2. `31672511456`(commit `8c56100`,新增 OSS 镜像)→ 传阿里云 `edex-os/2.3.11-test/eDEX-OS-2.3.11-test.iso` + `edex-os/latest/eDEX-OS-latest.iso`。
 - **workflow 改动**(`8c56100`):`build-iso.yml` 增加 `oss_version` 输入 + "Publish ISO to Aliyun OSS" 步骤(从 `release.yml` 移植,ossutil v2 + `-f` 覆盖修复,ALIYUN_OSS_* secrets 未配则跳过;echo 公开 URL 进 run log)。之前手动构建的 ISO 只有 GitHub artifact,没阿里云链接。
-- **烘焙输入预检(SSH 对笔记本 asar,待用户回发)**:确认 v2.3.11 release AppImage 里 `resumeFromSuspend`≥1(renderer 目标 expectIn 在,不会静默跳过)、`case"COPY":return window.term`≥1(COPY join 会生效)、`settingsDlOpen`≥1(uget 在)、`settingsSshEnabled`≥1(旧补丁已烘)、`axelFmtSpeed`=0、`value.slice(e.selectionStart,e.selectionEnd)`=0。
+- **烘焙输入预检(SSH 对笔记本 asar,已通过)**:v2.3.11 release AppImage 实测:`resumeFromSuspend`=12(renderer 目标 expectIn 在,不会静默跳过)、`case"COPY":return window.term`=3(COPY join 会生效)、`settingsDlOpen`=6(uget 在)、`settingsSshEnabled`=8(旧补丁已烘,幂等 no-op)、`axelFmtSpeed`=0(守卫 false→注入)、`value.slice(e.selectionStart,e.selectionEnd)`=0(#188 未打过)。六条全中,e2e 场景 1 前提在真实烘焙输入上成立。
 - **重装验收清单(待用户刷机后)**:#8 设置→apps→下载 加任务看进度/速度/剩余+暂停/恢复/删除;#9 设置→网络→clash 模式切换/代理组切节点/测速出 ms/规则列表;#188 文件重命名复制→贴设置输入框 一次成功。
 
 
