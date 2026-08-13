@@ -211,4 +211,13 @@ fcitx5-diagnose | head -60; pgrep -a fcitx5
 - 决策:不再对笔记本已装 AppImage 注入诊断插桩(FSLOG/POLL)——真机确认笔记本的 #188 patch **从未跑过**(asar 无 COPY 修复标记也无插桩标记,设置仍是 uget/旧 clash),与其继续 patch 陈旧 AppImage,不如**重烧含 #8/#9 + #188 COPY 修复的新 ISO 一次到位**(task #26)。插桩段已从 `patch-appimage.sh` 拆净(`grep` 无 edex-focus/FSLOG/POLL),`build-iso.sh` 烘焙时跑的是干净版,ISO 不含诊断代码。
 - 幂等:renderer target 的 expectOut 换成 COPY 修复特征串 `value.slice(e.selectionStart,e.selectionEnd)`(pristine 无此串);因已打 #8/#9 的部署版会被判为"需打"而整链重跑,把 #8/#9 各 join 目标按 `c.includes('axelFmtSpeed')` 守卫(有标记→no-op,无标记→注入),防 axelFmtSpeed 二次声明。e2e-188 三场景(pristine / 27fix 旧版 / 已打 #8/#9)拆插桩后重验:**全部输出逐字节一致(md5 52902e8b),COPY 修复恰好 1 处,插桩 0 残留**,node --check 全过。待新 ISO 装验。
 
+**新 ISO 构建(2026-08-13,build-iso 两次 + OSS 镜像步骤已进 workflow)**:
+- **AppImage 源 = `latest-release`(v2.3.11)**:查证 `release.yml` 发布时已对 AppImage 跑过 patch-appimage.sh → release 自带全部旧修复(SSH 开关/电池/天气/Enter/焦点),只缺 #8/#9/#188。烘焙时新补丁对 release AppImage:renderer expectOut 缺失 → transform 运行 → 注入 #8/#9(守卫 false)+ COPY;旧修复的 join 锚点已在 → 幂等 no-op。ISO 版本 == release 版本(2.3.11)→ 装机后在线更新不回退。**不选 `source` 的原因**:src 缺 patch-only 修复(SSH 开关、电池 21 宽等),且 src 版 renderer 会因自带 COPY 标记而让 renderer 目标跳过,导致 ISO 缺这些修复。
+- **两次构建**:
+  1. `31671387468`(commit `30cfdee`,无 OSS 镜像)→ success,artifact `eDEX-OS-main.iso`(GitHub artifact,90 天有效)。
+  2. `31672511456`(commit `8c56100`,新增 OSS 镜像)→ 传阿里云 `edex-os/2.3.11-test/eDEX-OS-2.3.11-test.iso` + `edex-os/latest/eDEX-OS-latest.iso`。
+- **workflow 改动**(`8c56100`):`build-iso.yml` 增加 `oss_version` 输入 + "Publish ISO to Aliyun OSS" 步骤(从 `release.yml` 移植,ossutil v2 + `-f` 覆盖修复,ALIYUN_OSS_* secrets 未配则跳过;echo 公开 URL 进 run log)。之前手动构建的 ISO 只有 GitHub artifact,没阿里云链接。
+- **烘焙输入预检(SSH 对笔记本 asar,待用户回发)**:确认 v2.3.11 release AppImage 里 `resumeFromSuspend`≥1(renderer 目标 expectIn 在,不会静默跳过)、`case"COPY":return window.term`≥1(COPY join 会生效)、`settingsDlOpen`≥1(uget 在)、`settingsSshEnabled`≥1(旧补丁已烘)、`axelFmtSpeed`=0、`value.slice(e.selectionStart,e.selectionEnd)`=0。
+- **重装验收清单(待用户刷机后)**:#8 设置→apps→下载 加任务看进度/速度/剩余+暂停/恢复/删除;#9 设置→网络→clash 模式切换/代理组切节点/测速出 ms/规则列表;#188 文件重命名复制→贴设置输入框 一次成功。
+
 
