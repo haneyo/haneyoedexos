@@ -3989,9 +3989,24 @@ function uiLocked() {
 window.useAppShortcut = action => {
     if (uiLocked()) return false;
     switch(action) {
-        case "COPY":
+        case "COPY": {
+            // A focused modal field (file-browser rename, settings editor, ...)
+            // wins over the terminal: copy ITS selected text. Mirrors the PASTE
+            // guard below — without it, Ctrl+Shift+C inside an input runs the
+            // terminal copy and the input's selection never reaches the
+            // clipboard ("I have to copy several times before paste works").
+            const ae = document.activeElement;
+            const inModal = ae && ae.closest && ae.closest(".modal_popup");
+            const editable = inModal && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA");
+            if (editable && ae.selectionStart != null && ae.selectionEnd > ae.selectionStart) {
+                try {
+                    remote.clipboard.writeText(ae.value.slice(ae.selectionStart, ae.selectionEnd));
+                    return true;
+                } catch (err) {}
+            }
             window.term[window.currentTerm].clipboard.copy();
             return true;
+        }
         case "PASTE": {
             // A focused modal field (e.g. the file browser's doc editor) wins
             // over the terminal: paste the clipboard into it instead. Guards
