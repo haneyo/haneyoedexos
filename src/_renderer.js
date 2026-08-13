@@ -1146,8 +1146,8 @@ async function initUI() {
             <li id="shell_tab0" onclick="window.focusShellTab(0);" class="active"><p>MAIN SHELL</p></li>
             <li id="shell_tab1" onclick="window.focusShellTab(1);"><p>EMPTY</p></li>
             <li id="shell_tab2" onclick="window.focusShellTab(2);"><p>CLAUDE</p></li>
-            <li id="shell_tab3" onclick="window.focusShellTab(3);"><button class="appmonitor_fs_tab" title="Fullscreen" onclick="event.stopPropagation();window.appmonitorA.fullscreenButton()"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M1 1h22L1 23z"/></svg></button><p><span id="shell_tab3_label">MONITOR A</span> <span class="webapp_chevron" title="Switch app" onclick="event.stopPropagation();window.appmonitorA.toggleMenu(event);">${Icons.chevronDown}</span></p></li>
-            <li id="shell_tab4" onclick="window.focusShellTab(4);"><button class="appmonitor_fs_tab" title="Fullscreen" onclick="event.stopPropagation();window.appmonitorB.fullscreenButton()"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M1 1h22L1 23z"/></svg></button><p><span id="shell_tab4_label">MONITOR B</span> <span class="webapp_chevron" title="Switch app" onclick="event.stopPropagation();window.appmonitorB.toggleMenu(event);">${Icons.chevronDown}</span></p></li>
+            <li id="shell_tab3" onclick="window.focusShellTab(3);"><p><span id="shell_tab3_label">MONITOR A</span> <span class="webapp_chevron" title="Switch app" onclick="event.stopPropagation();window.appmonitorA.toggleMenu(event);">${Icons.chevronDown}</span></p></li>
+            <li id="shell_tab4" onclick="window.focusShellTab(4);"><p><span id="shell_tab4_label">MONITOR B</span> <span class="webapp_chevron" title="Switch app" onclick="event.stopPropagation();window.appmonitorB.toggleMenu(event);">${Icons.chevronDown}</span></p></li>
         </ul>
         <div id="main_shell_innercontainer">
             <pre id="terminal0" class="active"></pre>
@@ -1164,7 +1164,7 @@ async function initUI() {
         })
     };
     window.currentTerm = 0;
-    // Slot kinds: 0-2 are terminals, 3/4 are the two virtual app monitors
+    // Slot kinds: 0-2 are terminals, 3/4 are the two CLI panels
     // (MONITOR A / MONITOR B). Everything below that reads window.term[] is
     // made safe for slots 3/4 via a terminal-shaped shim.
     window.shellSlotKinds = { 0: "term", 1: "term", 2: "term", 3: "appmonitor", 4: "appmonitor" };
@@ -1675,10 +1675,11 @@ async function initUI() {
         container: miniAudioEl
     });
 
-    // Virtual app monitors (tabs 4 & 5): each shows an installed app — native
-    // Linux app streamed through a nested X display via noVNC, or a web app
-    // loaded directly. Webapps discovery stays for the web-app section of the
-    // app list; the old multi-tab browser / webapp panel are retired.
+    // Tabs 4 & 5 (MONITOR A/B) are CLI panels: command-line apps with a UI
+    // (claude, browsh, aerc, htop, btop) run in a real terminal session. The
+    // AppMonitorPanel (virtual display / noVNC) is retired; the appmonitor
+    // backend server still runs to list GUI apps and launch them fullscreen
+    // from the file browser's APPS button. Webapps discovery stays.
     window.webapps = new Webapps();
     window.appmonitorApi = {
         config: () => ipc.invoke("appmonitor:config"),
@@ -1692,8 +1693,8 @@ async function initUI() {
         fullscreen: (monitorId, appId) => ipc.invoke("appmonitor:fullscreen", { monitorId, appId }),
         exitFullscreen: () => ipc.invoke("appmonitor:exit-fullscreen")
     };
-    window.appmonitorA = new AppMonitorPanel({ parentId: "appmonitor_a_slot", monitorId: "a", labelId: "shell_tab3_label" });
-    window.appmonitorB = new AppMonitorPanel({ parentId: "appmonitor_b_slot", monitorId: "b", labelId: "shell_tab4_label" });
+    window.appmonitorA = new CliPanel({ parentId: "appmonitor_a_slot", monitorId: "a", labelId: "shell_tab3_label" });
+    window.appmonitorB = new CliPanel({ parentId: "appmonitor_b_slot", monitorId: "b", labelId: "shell_tab4_label" });
 
     // WiFi connect panel (Linux + NetworkManager via nmcli).
     window.wifiApi = {
@@ -2156,6 +2157,32 @@ async function initUI() {
         }
     };
 
+    // SSH server toggle (#4, redesigned): a single on/off switch living in the
+    // network settings category. Applies through a background command via sysCmd
+    // (like file moves), so it never shows in a terminal tab. eDEX has
+    // passwordless sudo, so `enable --now` / `disable --now` is enough — no
+    // main-process involvement, and the state survives reboots. Off by default.
+    window.ssh = {
+        refreshStatus() {
+            window.sysCmd.run("sudo -n systemctl is-active ssh").then(r => {
+                const el = document.getElementById("settingsSshEnabled");
+                if (el) el.value = r.ok && (r.out || "").trim() === "active" ? "1" : "0";
+            }).catch(() => {});
+        },
+        applyEnabled() {
+            const el = document.getElementById("settingsSshEnabled");
+            if (!el) return;
+            const action = el.value === "1" ? "enable --now" : "disable --now";
+            // Ubuntu 24.04 socket-activates sshd via ssh.socket: `disable --now
+            // ssh` alone stops ssh.service but the socket keeps re-triggering it,
+            // so the toggle must stop/enable the socket too — both units, both
+            // directions.
+            window.sysCmd.run("sudo -n systemctl " + action + " ssh ssh.socket")
+                .then(() => this.refreshStatus())
+                .catch(() => {});
+        }
+    };
+
     // GitHub self-update of the eDEX-UI AppImage (eDEX-OS install). Downloads
     // the new AppImage from a release asset, verifies its sha256 and atomically
     // replaces /opt/edex/eDEX-UI.AppImage in the main process, then relaunches.
@@ -2614,17 +2641,6 @@ window.openSettings = async () => {
                 <option>${window.settings.fsListView}</option>
                 <option>${!window.settings.fsListView}</option>
             </select>`),
-            section("settings.section.appMonitor"),
-            settingsRow("settings.appMonitor.enabled", `<select id="settingsEditor-appMonitor-enabled">
-                <option>${(window.settings.appMonitor || {}).enabled !== false}</option>
-                <option>${(window.settings.appMonitor || {}).enabled === false}</option>
-            </select>`, "settings.appMonitor.enabled.help"),
-            settingsRow("settings.appMonitor.mock", `<select id="settingsEditor-appMonitor-mock">
-                <option value="auto" ${(window.settings.appMonitor || {}).mock == null ? "selected" : ""}>${t("settings.appMonitor.mock.auto")}</option>
-                <option value="true" ${(window.settings.appMonitor || {}).mock === true ? "selected" : ""}>${t("settings.appMonitor.mock.mock")}</option>
-                <option value="false" ${(window.settings.appMonitor || {}).mock === false ? "selected" : ""}>${t("settings.appMonitor.mock.real")}</option>
-            </select>`, "settings.appMonitor.mock.help"),
-            settingsRow("settings.appMonitor.appImageDirs", `<input type="text" id="settingsEditor-appMonitor-appImageDirs" value="${(window.settings.appMonitor || {}).appImageDirs || ''}">`, "settings.appMonitor.appImageDirs.help"),
             section("settings.cat.download"),
             settingsRow("settings.download.dir",
                 `<div class="settings_net_pw"><input type="text" id="settingsDlDir" placeholder="~/Downloads"></div>`),
@@ -2677,6 +2693,8 @@ window.openSettings = async () => {
                 settingsRow("settings.network.btStatus", `<span id="settingsNetBtStatus" class="settings_net_status">–</span>`),
                 settingsRow("settings.network.btDevices", `<div id="settingsNetBtList" class="settings_net_list" augmented-ui="bl-clip tr-clip exe"></div>
                     <div class="settings_net_actions"><button type="button" id="settingsNetBtScan" class="settings_net_btn">${t("settings.network.btScan")}</button></div>`, "settings.network.btDevices.help"),
+                section("settings.cat.ssh"),
+                settingsRow("settings.ssh.enabled", netOnOff("settingsSshEnabled", false), "settings.ssh.enabled.help"),
             ].join("");
         } },
         { id: "clash", titleKey: "settings.cat.clash", html: () => {
@@ -2921,6 +2939,11 @@ window.openSettings = async () => {
         const clashMode = document.getElementById("settingsClashMode");
         if (clashMode) clashMode.addEventListener("change", () => window.clash.setMode());
         if (window.clash) window.clash.refreshStatus();
+        // SSH toggle (in the network category): live apply + sync the switch to
+        // the real service state (off by default on fresh installs).
+        const sshEnabled = document.getElementById("settingsSshEnabled");
+        if (sshEnabled) sshEnabled.addEventListener("change", () => window.ssh.applyEnabled());
+        if (window.ssh) window.ssh.refreshStatus();
         // Updates category bindings: app check/update, apt system update,
         // mihomo check/update — then pull all the statuses once.
         const bindUpd = (id, fn) => {
@@ -3789,13 +3812,9 @@ window.writeSettingsFile = () => {
         model: document.getElementById("settingsEditor-claude-model").value,
         haikuModel: document.getElementById("settingsEditor-claude-haikuModel").value
     };
-    s.appMonitor = {
-        enabled: (document.getElementById("settingsEditor-appMonitor-enabled").value === "true"),
-        mock: document.getElementById("settingsEditor-appMonitor-mock").value === "auto"
-            ? null
-            : (document.getElementById("settingsEditor-appMonitor-mock").value === "true"),
-        appImageDirs: document.getElementById("settingsEditor-appMonitor-appImageDirs").value
-    };
+    // appMonitor config is not editable in the settings UI anymore: the
+    // backend server always runs (it powers the file-browser APPS button) and
+    // picks up its defaults / stored values from _boot.js on startup.
     // #8 AXEL: top-level keys (same style as downloadDir), NOT a
     // settings.download namespace — that would collide with the
     // browser-download save path the main process reads.
@@ -5098,6 +5117,14 @@ setInterval(() => {
     // a bare desktop). The lock screen appears on dismiss (bumpActivity) when
     // a passcode is configured.
     if (idleMs >= screensaverIdle) {
+        // A stray modal (auto update notice, settings) left open would cover
+        // the screensaver animation and pin the display awake forever. Close
+        // every open modal first (same idiom as sysCmd.startScreensaver), then
+        // let the animation take over.
+        const ks = Object.keys(window.modals);
+        for (let i = 0; i < ks.length; i++) {
+            try { window.modals[ks[i]].close(); } catch (e) {}
+        }
         window.screensaver.show();
     } else if (!screenOffEl() && idleMs >= screenOffIdle) {
         showScreenOff();

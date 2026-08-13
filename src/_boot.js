@@ -390,7 +390,10 @@ function nextFreePort(base) {
 
 async function startAppMonitor(settings, cleanEnv) {
     const am = settings.appMonitor || {};
-    if (am.enabled === false) { global.appMonitor = null; return; }
+    // The appmonitor backend always runs: tabs 4/5 are CLI panels now, but the
+    // file-browser APPS button still needs native-apps listing + real-display
+    // fullscreen launch from this server. It binds 127.0.0.1 only and starts
+    // no Xvfb until a monitor is explicitly launched.
     const isMock = (typeof am.mock === "boolean") ? am.mock : (process.platform !== "linux");
     const httpPort = await nextFreePort(am.httpPort || 6080);
     const wsPort = await nextFreePort(am.wsPort || 6081);
@@ -1850,12 +1853,13 @@ app.on('ready', async () => {
         });
     } catch (e) { signale.warn("Could not register lock hotkey: " + (e && e.message)); }
 
-    // Support for more terminals, used for creating tabs (currently limited to 4 extra terms)
+    // Support for more terminals, used for creating tabs (8-slot fast pool;
+    // the MONITOR A/B CLI panels can each hold a session on top of the tabs).
     extraTtys = {};
     let basePort = settings.port || 3000;
     basePort = Number(basePort) + 2;
 
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 8; i++) {
         extraTtys[basePort+i] = null;
     }
 
@@ -1873,14 +1877,19 @@ app.on('ready', async () => {
             e.sender.send("ttyspawn-reply", "ERROR: max number of ttys reached");
         } else {
             signale.pending(`Creating new TTY process on port ${port}`);
-            // The 3rd tab is the dedicated Claude Code tab: the renderer asks
-            // for it with arg "claude". Fall back to the normal shell if the
-            // claude CLI is not installed.
-            const useClaude = (arg === "claude" && claudeShell);
+            // Two spawn forms:
+            //  * "claude" (string) — the legacy Claude tab, routed through the
+            //    sci-fi workspace picker (falls back to the normal shell when
+            //    the claude CLI is not installed);
+            //  * { cli: [cmd, ...args] } — the MONITOR A/B CLI panels run an
+            //    arbitrary command-line app (claude, browsh, aerc, htop, btop);
+            //    a "claude" first element still goes through the picker.
+            const cliArg = (typeof arg === "object" && arg !== null && Array.isArray(arg.cli)) ? arg.cli : null;
             let shell = settings.shell;
             let params = settings.shellArgs || '';
             let login = true;
             let env = cleanEnv;
+            const useClaude = cliArg ? (cliArg[0] === "claude" && claudeShell) : (arg === "claude" && claudeShell);
             if (useClaude) {
                 // Launch the sci-fi workspace picker instead of claude directly:
                 // the user picks a working directory, then the picker spawns
@@ -1892,6 +1901,12 @@ app.on('ready', async () => {
                     CLAUDE_BIN: claudeShell,
                     START_DIR: tty.tty._cwd || settings.cwd
                 });
+                login = false;
+            } else if (cliArg) {
+                // Arbitrary CLI app: run the command directly in the pty.
+                shell = cliArg[0];
+                params = cliArg.slice(1);
+                env = Object.assign({}, cleanEnv, { START_DIR: tty.tty._cwd || settings.cwd });
                 login = false;
             }
             let term = new Terminal({
