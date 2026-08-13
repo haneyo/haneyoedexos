@@ -1,4 +1,4 @@
-// CliPanel — "MONITOR A / B" (terminal tabs 4 & 5) run CLI apps with a TUI.
+// CliPanel — "APP / CLI APPS" (terminal tabs 4 & 5) run CLI apps with a TUI.
 //
 // Instead of the retired virtual-display app monitor (AppMonitorPanel), these
 // tabs launch command-line apps that have their own user interface (claude,
@@ -7,19 +7,19 @@
 // `ipcRenderer.send("ttyspawn", { cli: [cmd, ...args] })`; the main process
 // replies with a port and this side attaches a client-side Terminal to it.
 //
+// By default both tab 4 and tab 5 are CliPanel and read "APP". When the
+// experimental GUI-app mode (settings.appMonitor.showGui) is on, tab 5 becomes
+// an AppMonitorPanel and this panel (tab 4) reads "CLI APPS".
+//
 // Origin: packaging/patch-appimage.sh (CLI_PANEL_CLASS). Behavior is kept
 // byte-equivalent so the patch-injected copy and this source stay
 // interchangeable. The AppMonitorPanel-style menu (chevron on the tab label)
-// is reused: arrow keys + Enter to launch, Esc to close.
+// is reused: arrow keys + Enter to launch, Esc to close. Entry icons come from
+// the shared window.iconLibrary set (see iconLibrary.class.js).
 const _cliIpc = require("electron").ipcRenderer;
 
-const _cliIcons = {
-    ai: '<svg class="appmonitor_icon_ph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>',
-    browser: '<svg class="appmonitor_icon_ph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
-    monitor: '<svg class="appmonitor_icon_ph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
-    mail: '<svg class="appmonitor_icon_ph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>',
-    terminal: '<svg class="appmonitor_icon_ph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>'
-};
+// Entry icons come from window.iconLibrary (shared set, see iconLibrary.class.js).
+// Custom entries store an icon id; unknown / missing ids fall back to "terminal".
 
 window.cliApps = [
     { id: "claude", name: "Claude", cmd: ["claude"], icon: "ai" },
@@ -34,9 +34,19 @@ try {
     const _u = JSON.parse(localStorage.getItem("edex_cli_apps") || "[]");
     if (Array.isArray(_u)) _u.forEach(_a => {
         if (_a && _a.cmd && _a.cmd[0] && !window.cliApps.some(_x => _x.id === _a.id))
-            window.cliApps.push({ id: _a.id, name: _a.name || _a.cmd[0], cmd: _a.cmd });
+            window.cliApps.push({ id: _a.id, name: _a.name || _a.cmd[0], cmd: _a.cmd, icon: _a.icon || null });
     });
 } catch (e) {}
+
+// ADD APP icon-picker callback: writes the chosen id into the hidden field and
+// reflects it on the picker button. Kept as a window helper so the modal's
+// inline onclick stays short (no nested-quote escaping).
+window._cliPickIcon = (id) => {
+    const h = document.getElementById("cli_add_icon");
+    if (h) h.value = id || "";
+    const b = document.getElementById("cli_add_icon_btn");
+    if (b) b.textContent = id ? ("已选: " + id) : "选择图标…";
+};
 
 (function () {
     try {
@@ -77,7 +87,14 @@ class CliPanel {
             else if (e.key === "Enter") { e.preventDefault(); const _x = _o[_t.menuFocusIdx]; if (_x) _x.click(); }
             else if (e.key === "Escape") { e.preventDefault(); _t.closeMenu(); }
         });
-        if (this.labelEl) this.labelEl.textContent = "a" === this.monitorId ? "MONITOR A" : "MONITOR B";
+        if (this.labelEl) this.labelEl.textContent = this._label();
+    }
+
+    // Tab label: "APP" by default (both tabs are CLI apps); when the
+    // experimental GUI-app mode is on, this panel (tab 4) reads "CLI APPS" so
+    // it stays distinguishable from tab 5's AppMonitorPanel.
+    _label() {
+        return (window.settings.appMonitor || {}).showGui ? "CLI APPS" : "APP";
     }
 
     focus() {
@@ -148,7 +165,7 @@ class CliPanel {
             _opt.appendChild(_dot);
             const _ic = document.createElement("span");
             _ic.className = "appmonitor_icon_slot";
-            _ic.innerHTML = _cliIcons[_a.icon] || _cliIcons.terminal;
+            _ic.innerHTML = (window.iconLibrary && (window.iconLibrary.get(_a.icon) || window.iconLibrary.get("terminal"))) || "";
             _opt.appendChild(_ic);
             const _nm = document.createElement("span");
             _nm.className = "appmonitor_name";
@@ -222,7 +239,7 @@ class CliPanel {
                 try { if (_term.term && _term.term.dispose) _term.term.dispose(); } catch (_e) {}
                 if (_el.parentNode) _el.parentNode.removeChild(_el);
                 delete _t.sessions[_a.id];
-                if (_t.selected && _t.selected.id === _a.id && _t.labelEl) _t.labelEl.textContent = "a" === _t.monitorId ? "MONITOR A" : "MONITOR B";
+                if (_t.selected && _t.selected.id === _a.id && _t.labelEl) _t.labelEl.textContent = _t._label();
                 _t._renderMenu();
             };
             _s.starting = false;
@@ -234,7 +251,7 @@ class CliPanel {
     _abortSpawn(_a) {
         this._spawning = false;
         if (this.sessions[_a.id]) delete this.sessions[_a.id];
-        if (this.labelEl) this.labelEl.textContent = "a" === this.monitorId ? "MONITOR A" : "MONITOR B";
+        if (this.labelEl) this.labelEl.textContent = this._label();
         this._renderMenu();
     }
 
@@ -249,7 +266,7 @@ class CliPanel {
         }
         if (_s.el && _s.el.parentNode) _s.el.parentNode.removeChild(_s.el);
         delete this.sessions[_id];
-        if (this.selected && this.selected.id === _id && this.labelEl) this.labelEl.textContent = "a" === this.monitorId ? "MONITOR A" : "MONITOR B";
+        if (this.selected && this.selected.id === _id && this.labelEl) this.labelEl.textContent = this._label();
         this._renderMenu();
     }
 
@@ -260,24 +277,33 @@ class CliPanel {
         window.cliAddModal = new Modal({
             type: "custom",
             title: "ADD APP",
-            html: '<div class="appmonitor_add"><label>启动命令</label><input type="text" id="cli_add_cmd" placeholder="如 btop 或 ncmpcpp" style="width:100%"></div>',
+            html: '<div class="appmonitor_add">'
+                + '<label>名称</label><input type="text" id="cli_add_name" placeholder="如 ncmpcpp" style="width:100%">'
+                + '<label>启动命令</label><input type="text" id="cli_add_cmd" placeholder="如 btop 或 ncmpcpp" style="width:100%">'
+                + '<label>图标</label><button type="button" id="cli_add_icon_btn" class="settings_net_btn" onclick="window.iconLibrary&&window.iconLibrary.pickerModal(window._cliPickIcon)">选择图标…</button>'
+                + '<input type="hidden" id="cli_add_icon" value="">'
+                + '</div>',
             buttons: [{ label: "Add", action: "window.cliAddModal&&window.cliAddModal.close();window.appmonitor" + _pn + ".submitCliAdd()" }]
         });
     }
 
     submitCliAdd() {
+        const _nm = document.getElementById("cli_add_name");
         const _in = document.getElementById("cli_add_cmd");
+        const _icn = document.getElementById("cli_add_icon");
         if (!_in || !_in.value || !_in.value.trim()) { this._notify("请输入启动命令"); return; }
         const _c = _in.value.trim().split(/\s+/), _id = "cli_" + _c[0].replace(/[^a-zA-Z0-9_-]/g, "");
+        const _name = (_nm && _nm.value && _nm.value.trim()) ? _nm.value.trim() : _c[0];
+        const _icon = (_icn && _icn.value) ? _icn.value : null;
         let _u = [];
         try { _u = JSON.parse(localStorage.getItem("edex_cli_apps") || "[]"); } catch (_e) {}
         if (!Array.isArray(_u)) _u = [];
         if (!_u.some(_x => _x.id === _id)) {
-            _u.push({ id: _id, name: _c[0], cmd: _c });
+            _u.push({ id: _id, name: _name, cmd: _c, icon: _icon });
             try { localStorage.setItem("edex_cli_apps", JSON.stringify(_u)); } catch (_e) {}
-            window.cliApps.push({ id: _id, name: _c[0], cmd: _c });
+            window.cliApps.push({ id: _id, name: _name, cmd: _c, icon: _icon });
         }
-        this._notify("已添加 " + _c[0]);
+        this._notify("已添加 " + _name);
         this._renderMenu();
     }
 

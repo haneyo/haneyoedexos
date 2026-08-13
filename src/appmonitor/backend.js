@@ -214,6 +214,10 @@ function realBackend(deps) {
             if (running[m.id]) running[m.id].appId = appId;
             const env = Object.assign({}, process.env, {
                 DISPLAY: m.display,
+                // Pin HOME so GUI apps reuse the user's existing config dirs
+                // (e.g. Firefox's ~/.mozilla) instead of launching fresh every
+                // time — the server inherits a possibly-unset / root HOME.
+                HOME: process.env.HOME || os.homedir(),
                 // Fcitx5 input-method hooks so the app can type Chinese
                 GTK_IM_MODULE: "fcitx",
                 QT_IM_MODULE: "fcitx",
@@ -285,7 +289,13 @@ function realBackend(deps) {
             if (!cmd) return Promise.resolve({ ok: false, error: "cannot build command" });
             killTree(monitorId);           // stop the streamed preview instance
             exitFullscreenApp();           // clear any previous fullscreen app
-            const env = Object.assign({}, process.env, { DISPLAY: ":0", XCURSOR_THEME: "edex" });
+            // Same HOME pinning as launch(): native fullscreen must keep the
+            // user's config (Firefox profile etc.).
+            const env = Object.assign({}, process.env, {
+                DISPLAY: ":0",
+                XCURSOR_THEME: "edex",
+                HOME: process.env.HOME || os.homedir()
+            });
             if (isChromium(cmd.cmd)) env.ELECTRON_DISABLE_SANDBOX = "1";
             if (isFirefox(cmd.cmd)) {
                 env.MOZ_DISABLE_CONTENT_SANDBOX = "1";

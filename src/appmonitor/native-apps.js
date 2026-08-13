@@ -132,7 +132,7 @@ function listNativeApps(opts) {
         ? scanDesktopDirs().concat(scanAppImages(splitDirs(opts.appImageDirs)))
         : [];
     const custom = loadCustom(opts.userData).map(c => ({
-        id: "custom:" + c.name, name: c.name, exec: c.value, icon: null, custom: true,
+        id: "custom:" + c.name, name: c.name, exec: c.value, icon: c.icon || null, custom: true,
         installed: c.added || 0
     }));
     // User-supplied filter from settings (extra entries to hide), plus the
@@ -153,11 +153,14 @@ function listNativeApps(opts) {
 }
 
 function addNativeApp(opts, entry) {
-    // entry: { name, value }  (value = command or AppImage path or web URL)
+    // entry: { name, value, icon? }  (value = command or AppImage path or web URL)
     const list = loadCustom(opts.userData);
     if (!entry || !entry.name || !entry.value) return { ok: false, error: "missing name/value" };
     if (list.some(c => c.name === entry.name)) return { ok: false, error: "duplicate name" };
-    list.push({ name: entry.name, value: entry.value, added: Date.now() });
+    // icon is an iconLibrary id — keep only short, safe ids, drop anything else.
+    let icon = null;
+    if (typeof entry.icon === "string" && /^[a-z0-9_\-]{1,48}$/i.test(entry.icon)) icon = entry.icon;
+    list.push({ name: entry.name, value: entry.value, icon, added: Date.now() });
     saveCustom(opts.userData, list);
     return { ok: true };
 }

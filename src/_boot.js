@@ -135,7 +135,8 @@ if (!fs.existsSync(settingsFile)) {
             mock: null,                       // null = auto: mock on darwin, real on linux
             httpPort: 6080,
             wsPort: 6081,
-            appImageDirs: "~/Applications,~/AppImages"
+            appImageDirs: "~/Applications,~/AppImages",
+            showGui: false                    // experimental: tab 5 = GUI apps (virtual display)
         },
         clash: {
             enabled: false,                   // start the mihomo proxy daemon + system proxy at boot
@@ -390,10 +391,11 @@ function nextFreePort(base) {
 
 async function startAppMonitor(settings, cleanEnv) {
     const am = settings.appMonitor || {};
-    // The appmonitor backend always runs: tabs 4/5 are CLI panels now, but the
-    // file-browser APPS button still needs native-apps listing + real-display
-    // fullscreen launch from this server. It binds 127.0.0.1 only and starts
-    // no Xvfb until a monitor is explicitly launched.
+    // The appmonitor backend always runs: it powers tab 5's experimental
+    // GUI-app entry (native-apps listing, virtual display, real-display
+    // fullscreen) once settings.appMonitor.showGui is turned on. With it off,
+    // tabs 4/5 are CLI panels and the server's only cost is a 127.0.0.1 port —
+    // no Xvfb is started until a monitor is explicitly launched.
     const isMock = (typeof am.mock === "boolean") ? am.mock : (process.platform !== "linux");
     const httpPort = await nextFreePort(am.httpPort || 6080);
     const wsPort = await nextFreePort(am.wsPort || 6081);
