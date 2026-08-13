@@ -66,7 +66,7 @@ bash packaging/build-iso-local.sh            # 自动下载官方 ISO 并构建(
 packaging/
   build-iso.sh            # 核心 remaster 脚本(烘焙前自动对 AppImage 打补丁)
   build-iso-local.sh      # 本地一键构建
-  patch-appimage.sh       # 就地修复 eDEX AppImage 的多个 UI 问题:keyboard 回车报错 / 天气弹窗字体 / 电池图标对准(独立脚本,幂等)
+  patch-appimage.sh       # 就地修复 eDEX AppImage 的多个 UI 问题:keyboard 回车报错 / 天气弹窗字体 / 电池图标对准 / 应用列表菜单焦点环(独立脚本,幂等)
   autoinstall/            # Subiquity autoinstall(user-data / meta-data)
   install/install-edex.sh # 装机后的系统配置脚本
 ```
