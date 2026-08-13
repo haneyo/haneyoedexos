@@ -90,7 +90,7 @@ deb http://archive.ubuntu.com/ubuntu noble-updates main universe multiverse rest
 EOF
 # The GUI stack to bake in. Shared by the chroot and proot branches.
 APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
-    xvfb x11vnc novnc websockify dbus-x11 wmctrl xterm curl w3m \
+    xvfb x11vnc novnc websockify dbus-x11 wmctrl xterm curl \
     fonts-dejavu-core fonts-noto-cjk fontconfig libfuse2 \
     libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 libasound2t64 libgbm1 libdrm2 \
     libxkbcommon0 xdg-utils libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 \
@@ -183,6 +183,30 @@ Terminal=false
 Categories=Network;WebBrowser;
 DESK
 fi
+
+# Browsh terminal browser — the in-app Browser (CLI panel tab 4/5) runs `browsh`,
+# a TUI that renders real web pages by driving headless Firefox. It needs
+# Firefox in $PATH, which is exactly the /opt/firefox we bake in above, so link
+# it in. Browsh is a HARD requirement (the built-in browser is unusable without
+# it) — a failed download/install, or a missing Firefox runtime, FAILS the build
+# instead of shipping an ISO whose browser tab dies on launch.
+# (v1.8.2 is the last release with linux binaries; v1.8.3 ships an .xpi only.)
+echo "[edex] installing browsh (terminal browser) + linking firefox into PATH"
+BROWSH_VER="1.8.2"
+if ! curl -fsSL --retry 2 -o "$WORK/browsh.deb" \
+        "https://github.com/browsh-org/browsh/releases/download/v$BROWSH_VER/browsh_${BROWSH_VER}_linux_amd64.deb"; then
+    echo "[edex] ERROR: browsh download failed — cannot build an ISO without the browser"; exit 1
+fi
+if ! sudo dpkg -x "$WORK/browsh.deb" "$WORK/browsh-root"; then
+    echo "[edex] ERROR: browsh deb extract failed"; exit 1
+fi
+sudo install -Dm 755 "$WORK/browsh-root/usr/bin/browsh" "$WORK/rootfs/usr/local/bin/browsh" 2>/dev/null \
+    || { echo "[edex] ERROR: browsh binary not found in deb"; exit 1; }
+if [ ! -f "$WORK/rootfs/opt/firefox/firefox" ]; then
+    echo "[edex] ERROR: /opt/firefox/firefox missing — browsh needs Firefox as its render engine; cannot build an ISO without it"; exit 1
+fi
+sudo ln -sf /opt/firefox/firefox "$WORK/rootfs/usr/local/bin/firefox"
+echo "[edex] browsh $(ls -lh "$WORK/browsh-root/usr/bin/browsh" 2>/dev/null | awk '{print $5}') OK, firefox linked"
 
 # Bake in the mihomo proxy daemon (MetaCubeX/mihomo) + metacubexd dashboard +
 # geo databases so the built-in Clash proxy (#46) works fully offline at
