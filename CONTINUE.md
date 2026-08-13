@@ -1,19 +1,20 @@
 # ⏸️ 工作交接文档 — 重启后从这里继续
 
-> **最后更新**:2026-08-12(28fix 已构建待部署;本轮 #7/#10/#11/#12 已完成并推 GitHub)
+> **最后更新**:2026-08-13(#8 AXEL + #9 CLASH 增强已实现并注入 patch-appimage.sh,仿真全过,待笔记本实机验收)
 
-> ⚠️ **28fix 已构建未部署**:`/tmp/eDEX-UI.AppImage.28fix-20260812`(185096954B)已构建并全部验证
-> (node --check 通过;21 target 全命中;幂等 21/21 no-op)。从 pristine 基线
-> `/opt/edex/eDEX-UI.AppImage.orig-20260811` 重建,含全部历史修复 + 本轮 4 项:
-> ①**#7 BTOP** 进 tab4/5 CLI 面板 APP 列表(本机已装 btop 1.3.0)
-> ②**#12** 超负荷时 CPU型号 / MEMORY USING / NETWORK UP·DOWN 文字柔和红光闪烁
-> ③**#10 FASTFETCH** 2.67.0 + **#11 FFMPEG** 6.1.1(系统级已装,不依赖 AppImage,已生效)
-> **部署流程**:`sudo systemctl stop lightdm; sudo pkill -f eDEX-UI.AppImage;
-> sudo cp /tmp/eDEX-UI.AppImage.28fix-20260812 /opt/edex/eDEX-UI.AppImage && sudo chmod 755;
-> sudo systemctl start lightdm`。重启后验收:tab4/5 有 BTOP 可选;高负载时三处文字柔和红闪。
-> 详见 `FIX-RECORD-20260812-28fix-apps.md`(本轮完整记录)。
-> **剩余待办**:#8 AXEL(改 CLI 面板,不走已放弃的 appmonitor)、#9 CLASH 增强、#2 终端滚动、
-> A2 #174 用户名 / #183 开机过渡 → 唯一权威 [`TODOS.md`](TODOS.md)。
+> **当前状态(2026-08-13)**:
+> - ✅ **笔记本实机已到当前版**:用 `patch-appimage.sh`(当前 commit)从 27fix 桥接升级成功,
+>   app 列表出现 **aerc / browsh / btop + CLI 图标**,**菜单黄色焦点环已消除**(86fd954,
+>   `.appmonitor_menu:focus{outline:none}`)。替换运行中 AppImage 用 `rm -f` + `cp -a` 绕开 Text file busy。
+> - ✅ **输入法候选框 UI**(3.14)真机目测确认(黑底无边框+主题色);**开机 intro 音效**(3.16)重启后确认有声。
+> - ✅ **#2 终端滚动**已由用户关闭(PageUp/PageDown 可滚动)。
+> - ✅ **#8 AXEL + #9 CLASH 增强已实现**(src + patch 双写,见第 8 节):主进程 5 个 `axel:*` handler +
+>   `clash:ctrl` 透传;renderer 下载小节 + `window.axel` + clash 模式/代理组/规则;文案 zh+en 全键。
+>   `patch-appimage.sh` 已注入(boot 2 步 + renderer 9 步 + i18n revert/reapply),**端到端仿真全过**
+>   (node --check + vm eval + gating 标记 + i18n key 去重)。⚠️ **待笔记本验收**(见第 8 节验收步骤)。
+> - **ISO 装机验证待做**:`31659518697` 构建成功但未烧录装机(构建于焦点环修复之前,装机验证时
+>   ISO 内补丁比当前少一条,可装机后跑 `patch-appimage.sh` 补齐或重新构建)。
+> - **剩余待办**:A2 #174 用户名 / #183 开机过渡 + #8/#9 笔记本验收 → 唯一权威 [`TODOS.md`](TODOS.md)。
 > **目的**:eDEX 重启会中断当前会话。重启后打开 Claude 先读本文件 + `TODOS.md` + `ubuntu/README.md`,即可无缝续接。
 
 ---
@@ -441,3 +442,41 @@ sudo systemctl start lightdm
 2. 改完 `patch-appimage.sh` 后:用 `artifacts/eDEX-UI.AppImage.11fix-20260811` 重建 → 校验 → 部署,
    **不要**从损坏版上改。
 3. 每次新版本:U 盘 `artifacts/` 存一份 + 更新本文件 + `FIX-RECORD-20260811-12fix.md`。
+
+---
+
+## 8. #8 AXEL 下载管理器 + #9 CLASH 设置增强(2026-08-13 实现,待真机验收)
+
+### 交付形态
+- **src 双写**:功能本体在 `src/_boot.js` / `src/_renderer.js` / `src/_i18n.js`(ISO 全新构建用)。
+- **patch 注入**:`packaging/patch-appimage.sh` 同一份压缩态代码注入已部署 AppImage(笔记本重跑一次即生效,免重刷)。
+- `build-iso.sh` APTOPTS 已加 `axel`。
+
+### 功能
+- **#8 AXEL**:设置 → apps 分类 download 小节替换为 目录(`settingsDlDir`)+ 线程(`settingsDlThreads`,默认6)+ URL(`settingsDlUrl`)+ 开始下载 + 任务列表(`settingsDlTasks`,进度条/速度/剩余 + 暂停·恢复·删除)。主进程任务表 `axelTasks` + `axelBroadcast` 500ms 限流推 `axel-tick`;暂停 SIGSTOP / 恢复 SIGCONT / 删除先 SIGCONT 再 SIGKILL。
+- **#9 CLASH**:设置 clash 分类新增 代理模式 select(rule/global/direct)+ 代理组(节点下拉 + 测速)+ 规则只读列表 + 刷新按钮。走 Clash controller REST API(`clash:ctrl` 透传 handler,读 settings.json 的 controller/secret,Bearer auth,127.0.0.1)。
+
+### patch-appimage.sh 改动(本 target 三次换 expectOut)
+- `_boot.js`:`Array.isArray(o.cli)` → `'axel:list'`;transform 尾追加 2 步(前缀注入 `AXEL_BOOT_ANCHOR`/`CLASH_CTRL_ANCHOR`)。
+- `_renderer.js`:`_cliIcons` → `'settingsDlAdd'`;SSH wire 步骤改为 `.split(SSH_WIRE_NEW_OLD).join(SSH_WIRE_ANCHOR)`(revert),transform 尾追加 9 步(顺序约束:clash-methods 必须先于 axel-obj)。
+- `_i18n.js`:`"appmonitor.webapps.manage"` → `"settings.download.threads"`;transform 重写为 revert(全块态 + 现部署局部态)→ apply 全块。
+
+### 权威仿真(改 patch 前必跑)
+- 常量权威定义:`/tmp/edex-anchor-check/sim-new.js`(Mac 端)。
+- 端到端:提取 heredoc → `node /tmp/edex-anchor-check/e2e-test.js`(对 pristine/已部署态跑真实 transform,node --check + vm eval + gating + i18n key 去重)。
+- 已全过:boot 53497→58660B、renderer 143309→168662B、i18n 36053→38748B;关键 key 每语言恰好一次;旧 wire 回滚干净。
+
+### ⚠️ 笔记本验收(需用户中转 SSH)
+```bash
+# 笔记本(ThinkPad E580)
+sudo apt install -y axel
+# 把最新 patch-appimage.sh 同步到笔记本后:
+sudo bash packaging/patch-appimage.sh /opt/edex/eDEX-UI.AppImage
+sudo systemctl restart lightdm
+```
+验收点:设置 → apps 分类 download 加 URL 看进度/暂停/恢复/删除;clash 分类切模式 / 切代理组 / 测速出 ms / 规则列表,daemon 未启动时显示"控制接口无响应"。
+
+### ⚠️ 最高风险项(仿真测不到,需真机)
+1. **axel `-a` 在管道(非 tty)下是否渲染进度**未实测;若输出走 stderr 或无进度 → 需退 `-p` 纯百分比或 `script -q` 包伪 tty。
+2. **SIGSTOP 长时间暂停**可能被服务端断连,恢复后 axel 续传行为未实测。
+3. Clash controller API 字段名/含空格组名的 URL 编码/Bearer 认证需按实际 mihomo 响应校正。

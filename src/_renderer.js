@@ -1790,6 +1790,7 @@ async function initUI() {
                 if (cfg) cfg.textContent = st.configPath || "–";
                 const log = document.getElementById("settingsClashLog");
                 if (log && st.log && st.log.length) log.textContent = st.log.join("\n");
+                this.refreshCtrl();
             }).catch(() => {});
         },
         // Live application of the enabled toggle: starts/stops the daemon now
@@ -1849,7 +1850,90 @@ async function initUI() {
             // metacubexd serves /ui/ from the controller; fullscreen overlay
             // because the multi-tab browser was retired (see webViewFullscreen).
             window.webViewFullscreen.enter("http://" + ctrl + "/ui/", "persist:edex-browser");
-        }
+        },
+        // #9 Controller REST passthrough (clash:ctrl in main): mode switch,
+        // proxy-group node selection + delay test, read-only rules.
+        refreshCtrl() {
+            const st = this.status;
+            if (!st || !st.running || !st.controller) { this._clearGroups(); return; }
+            this.refreshMode(); this.refreshGroups(); this.refreshRules();
+        },
+        refreshMode() {
+            ipc.invoke("clash:ctrl", { method: "GET", path: "/configs" }).then(r => {
+                if (r && r.ok && r.data && r.data.mode) this.setModeValue(r.data.mode);
+            }).catch(() => {});
+        },
+        // 同步自定义下拉的可见值(setupSettingsDropdowns 闭包 setValue 外部不可达,
+        // 只能手动更新 hidden input + 按钮文本 + 激活项)。
+        setModeValue(mode) {
+            const el = document.getElementById("settingsClashMode");
+            if (!el) return;
+            el.value = mode;
+            const wrap = el.closest(".settings_dd");
+            if (wrap) {
+                const btn = wrap.querySelector(".mod_loc_btn");
+                const opt = wrap.querySelector(`.mod_loc_opt[data-value="${mode}"]`);
+                if (btn && opt) btn.textContent = opt.textContent;
+                wrap.querySelectorAll(".mod_loc_opt").forEach(d => d.classList.toggle("mod_loc_opt_active", d.dataset.value === mode));
+            }
+        },
+        setMode() {
+            const el = document.getElementById("settingsClashMode");
+            if (!el) return;
+            ipc.invoke("clash:ctrl", { method: "PATCH", path: "/configs", body: { mode: el.value } }).then(() => {});
+        },
+        refreshGroups() {
+            ipc.invoke("clash:ctrl", { method: "GET", path: "/proxies" }).then(r => {
+                const box = document.getElementById("settingsClashGroups");
+                if (!box) return;
+                if (!r || !r.ok || !r.data) { box.innerHTML = `<div class="settings_net_empty">${t("settings.clash.ctrlError")}</div>`; return; }
+                const proxies = r.data.proxies || {};
+                // 组名/节点名来自订阅文件(外部数据),插入 DOM 前转义。
+                const esc = window._escapeHtml;
+                const groups = Object.entries(proxies).filter(([k, v]) => v && ["Selector", "URLTest", "Fallback", "LoadBalance"].includes(v.type));
+                if (!groups.length) { box.innerHTML = `<div class="settings_net_empty">${t("settings.clash.groupsEmpty")}</div>`; return; }
+                box.innerHTML = groups.map(([name, g]) => {
+                    const opts = (g.all || []).map(n =>
+                        `<option value="${esc(n)}" ${n === g.now ? "selected" : ""}>${esc(n)}</option>`).join("");
+                    return `<div class="settings_net_row" style="flex-direction:column;align-items:stretch;cursor:default">
+                        <div style="display:flex;justify-content:space-between;align-items:center">
+                            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span>
+                            <span data-delay="${esc(name)}" class="settings_net_info">–</span>
+                        </div>
+                        <div style="display:flex;gap:1vh;align-items:center">
+                            <select class="clash_group_sel" data-group="${esc(name)}">${opts}</select>
+                            <button type="button" class="settings_net_btn settings_net_mini" data-test="${esc(name)}">${t("settings.clash.test")}</button>
+                        </div>
+                    </div>`;
+                }).join("");
+                box.querySelectorAll(".clash_group_sel").forEach(sel => sel.addEventListener("change", () => {
+                    ipc.invoke("clash:ctrl", { method: "PUT",
+                        path: "/proxies/" + encodeURIComponent(sel.dataset.group), body: { name: sel.value } }).then(() => {});
+                }));
+                box.querySelectorAll("[data-test]").forEach(btn => btn.addEventListener("click", () => {
+                    const span = box.querySelector(`[data-delay="${btn.dataset.test}"]`);
+                    if (span) span.textContent = t("settings.clash.testing");
+                    ipc.invoke("clash:ctrl", { method: "GET",
+                        path: "/proxies/" + encodeURIComponent(btn.dataset.test) + "/delay?url=https://www.gstatic.com/generate_204&timeout=3000" })
+                        .then(r => { if (span) span.textContent = (r && r.ok && r.data && r.data.delay)
+                            ? t("settings.clash.delay") + " " + r.data.delay + "ms"
+                            : t("settings.clash.delayFail"); })
+                        .catch(() => { if (span) span.textContent = t("settings.clash.delayFail"); });
+                }));
+            }).catch(() => {});
+        },
+        refreshRules() {
+            ipc.invoke("clash:ctrl", { method: "GET", path: "/rules" }).then(r => {
+                const pre = document.getElementById("settingsClashRules");
+                if (!pre) return;
+                const rules = (r && r.ok && r.data && r.data.rules) || [];
+                pre.textContent = rules.length ? rules.map(x => `${x.type}  ${x.payload || ""}  →  ${x.proxy}`).join("\n").slice(0, 6000) : t("settings.clash.rulesEmpty");
+            }).catch(() => {});
+        },
+        _clearGroups() {
+            const box = document.getElementById("settingsClashGroups");
+            if (box) box.innerHTML = "";
+        },
     };
     ipc.on("clash-log", (e, line) => {
         const log = document.getElementById("settingsClashLog");
@@ -1857,6 +1941,120 @@ async function initUI() {
         if (log.textContent === "–") log.textContent = "";
         log.textContent += (log.textContent ? "\n" : "") + line;
         log.scrollTop = log.scrollHeight;
+    });
+
+    // ---- #8 AXEL download manager (settings → apps → download) ----
+    const axelFmtSpeed = bps => {
+        const u = bps >= 1073741824 ? [bps / 1073741824, "GB/s"] : bps >= 1048576 ? [bps / 1048576, "MB/s"] : bps >= 1024 ? [bps / 1024, "KB/s"] : [bps, "B/s"];
+        return u[0].toFixed(1) + " " + u[1];
+    };
+    window.axel = {
+        tasks: [], _started: false,
+        refresh() {
+            ipc.invoke("axel:list").then(r => {
+                this.tasks = (r && r.tasks) || [];
+                this.render();
+            }).catch(() => {});
+        },
+        render() {
+            const box = document.getElementById("settingsDlTasks");
+            if (!box) return;
+            box.innerHTML = "";
+            if (!this.tasks.length) {
+                box.innerHTML = `<div class="settings_net_empty">${t("settings.download.noTasks")}</div>`;
+                return;
+            }
+            this.tasks.forEach(task => {
+                const row = document.createElement("div");
+                row.className = "settings_net_row";
+                row.style.flexDirection = "column"; row.style.alignItems = "stretch";
+                const pct = Math.max(0, Math.min(100, task.percent || 0));
+                const statusText = task.status === "done" ? t("settings.download.status.done")
+                    : task.status === "paused" ? t("settings.download.status.paused")
+                    : task.status === "error" ? (task.error || t("settings.download.status.error"))
+                    : t("settings.download.status.downloading");
+                row.innerHTML =
+                    `<div style="display:flex;justify-content:space-between;gap:1vh">
+                        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${window._escapeHtml(task.url)}">${window._escapeHtml(task.file)}</span>
+                        <span>${statusText} ${pct}%</span>
+                    </div>
+                    <div style="height:1.4vh;background:rgba(0,0,0,.4);border-radius:2px;overflow:hidden">
+                        <div style="width:${pct}%;height:100%;background:rgba(var(--color_r),var(--color_g),var(--color_b),.55)"></div>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;align-items:center">
+                        <span style="opacity:.8">${task.speed ? axelFmtSpeed(task.speed) : "–"} · ${task.eta ? t("settings.download.eta") + " " + task.eta : "–"}</span>
+                        <span style="display:flex;gap:1vh">
+                            <button type="button" class="settings_net_btn settings_net_mini" data-act="${task.paused ? "resume" : "pause"}">${t(task.paused ? "settings.download.resume" : "settings.download.pause")}</button>
+                            <button type="button" class="settings_net_btn settings_net_mini" data-act="remove">${t("settings.download.remove")}</button>
+                        </span>
+                    </div>`;
+                row.querySelectorAll("button").forEach(b =>
+                    b.addEventListener("click", () => this.act(task.id, b.dataset.act)));
+                box.appendChild(row);
+            });
+        },
+        act(id, act) {
+            const map = { pause: "axel:pause", resume: "axel:resume", remove: "axel:remove" };
+            ipc.invoke(map[act], { id }).then(() => this.refresh()).catch(() => {});
+        },
+        add() {
+            const urlEl = document.getElementById("settingsDlUrl");
+            const thEl = document.getElementById("settingsDlThreads");
+            const dirEl = document.getElementById("settingsDlDir");
+            const url = urlEl ? urlEl.value.trim() : "";
+            if (!/^https?:\/\//i.test(url)) { notify(t("settings.download.badUrl")); return; }
+            const dir = (dirEl ? dirEl.value.trim() : "") || undefined;
+            ipc.invoke("axel:add", { url, threads: (thEl ? thEl.value : 6), dir }).then(r => {
+                notify(r && r.ok ? t("settings.download.added") : t("settings.download.addFailed") + (r && r.error ? " — " + r.error : ""));
+                if (r && r.ok && urlEl) urlEl.value = "";
+                this.refresh();
+            }).catch(() => {});
+        },
+        // 只做初始刷新;实时进度靠主进程 axel-tick 就地更新(不重建 DOM,保留焦点)。
+        startPoll() {
+            if (this._started) return;
+            this._started = true;
+            this.refresh();
+        }
+    };
+    ipc.on("axel-tick", (e, snapshot) => {
+        if (!document.getElementById("settingsEditor") || !window.axel) return;
+        const snap = snapshot || [];
+        const box = document.getElementById("settingsDlTasks");
+        if (!box) return;
+        // 任务数变化(新增/删除)走全量 refresh;否则就地更新进度条/状态/速度,保留键盘焦点。
+        if (snap.length !== box.querySelectorAll(".settings_net_row").length) { window.axel.refresh(); return; }
+        window.axel.tasks = snap;
+        const rows = box.querySelectorAll(".settings_net_row");
+        snap.forEach((task, i) => {
+            const row = rows[i];
+            if (!row) return;
+            const pct = Math.max(0, Math.min(100, task.percent || 0));
+            const track = row.children[1];
+            const bar = track && track.children[0];
+            if (bar) bar.style.width = pct + "%";
+            const top = row.children[0];
+            const statusSpan = top && top.children[1];
+            if (statusSpan) {
+                const statusText = task.status === "done" ? t("settings.download.status.done")
+                    : task.status === "paused" ? t("settings.download.status.paused")
+                    : task.status === "error" ? (task.error || t("settings.download.status.error"))
+                    : t("settings.download.status.downloading");
+                statusSpan.textContent = statusText + " " + pct + "%";
+            }
+            const bottom = row.children[2];
+            const infoSpan = bottom && bottom.children[0];
+            if (infoSpan) {
+                infoSpan.textContent = (task.speed ? axelFmtSpeed(task.speed) : "–") + " · " + (task.eta ? t("settings.download.eta") + " " + task.eta : "–");
+            }
+            const btns = bottom && bottom.children[1];
+            const pauseBtn = btns && btns.children[0];
+            if (pauseBtn) {
+                const resume = task.paused;
+                pauseBtn.dataset.act = resume ? "resume" : "pause";
+                pauseBtn.textContent = t(resume ? "settings.download.resume" : "settings.download.pause");
+            }
+        });
     });
 
     // Updates category (#47): app self-update, apt system update + last-update,
@@ -2429,12 +2627,18 @@ window.openSettings = async () => {
             settingsRow("settings.appMonitor.appImageDirs", `<input type="text" id="settingsEditor-appMonitor-appImageDirs" value="${(window.settings.appMonitor || {}).appImageDirs || ''}">`, "settings.appMonitor.appImageDirs.help"),
             section("settings.cat.download"),
             settingsRow("settings.download.dir",
-                `<div class="settings_net_pw"><input type="text" id="settingsDlDir" placeholder="~/Downloads"></div>
-                <div class="settings_net_actions"><button type="button" id="settingsDlApply" class="settings_net_btn">${t("settings.download.apply")}</button></div>`),
-            settingsRow("settings.download.open",
-                `<button type="button" id="settingsDlOpen" class="settings_net_btn">${t("settings.download.open")}</button>`),
-            settingsRow("settings.download.note",
-                `<span class="settings_net_info">${t("settings.download.note")}</span>`),
+                `<div class="settings_net_pw"><input type="text" id="settingsDlDir" placeholder="~/Downloads"></div>`),
+            settingsRow("settings.download.threads",
+                `<div class="settings_net_pw"><input type="text" id="settingsDlThreads" inputmode="numeric" value="${(window.settings.downloadThreads || 6)}"></div>`,
+                "settings.download.threads.help"),
+            settingsRow("settings.download.url",
+                `<div class="settings_net_pw"><input type="text" id="settingsDlUrl" placeholder="https://…"></div>
+                <div class="settings_net_actions">
+                    <button type="button" id="settingsDlAdd" class="settings_net_btn">${t("settings.download.add")}</button>
+                    <button type="button" id="settingsDlApply" class="settings_net_btn">${t("settings.download.apply")}</button>
+                </div>`),
+            settingsRow("settings.download.tasks",
+                `<div id="settingsDlTasks" class="settings_net_list" augmented-ui="bl-clip tr-clip exe"></div>`),
         ].join("") },
         { id: "network", titleKey: "settings.cat.network", html: () => {
             const netOnOff = (id, on) => `<select id="${id}">
@@ -2488,6 +2692,11 @@ window.openSettings = async () => {
                 settingsRow("settings.clash.enabled", clashBool("settingsClashEnabled", !!((window.settings.clash || {}).enabled)), "settings.clash.enabled.help"),
                 settingsRow("settings.clash.status", `<span id="settingsClashStatus" class="settings_net_status">–</span>`),
                 settingsRow("settings.clash.port", `<span id="settingsClashPort" class="settings_net_info">–</span>`),
+                settingsRow("settings.clash.mode", `<select id="settingsClashMode">
+                    <option value="rule">${t("settings.clash.mode.rule")}</option>
+                    <option value="global">${t("settings.clash.mode.global")}</option>
+                    <option value="direct">${t("settings.clash.mode.direct")}</option>
+                </select>`, "settings.clash.mode.help"),
                 settingsRow("settings.clash.controller", `<input type="text" id="settingsClashController" value="${(window.settings.clash || {}).controller || '127.0.0.1:9090'}">`, "settings.clash.controller.help"),
                 settingsRow("settings.clash.secret", `<div class="settings_api_pw">
                     <input type="password" id="settingsClashSecret" autocomplete="off" value="${(window.settings.clash || {}).secret || ''}">
@@ -2499,6 +2708,11 @@ window.openSettings = async () => {
                         <button type="button" id="settingsClashStart" class="settings_net_btn">${t("settings.clash.start")}</button>
                         <button type="button" id="settingsClashStop" class="settings_net_btn">${t("settings.clash.stop")}</button>
                     </div>`, "settings.clash.subUrl.help"),
+                settingsRow("settings.clash.groups", `<div id="settingsClashGroups" class="settings_net_list" augmented-ui="bl-clip tr-clip exe"></div>
+                    <div class="settings_net_actions">
+                        <button type="button" id="settingsClashGroupsRefresh" class="settings_net_btn">${t("settings.clash.groupsRefresh")}</button>
+                    </div>`),
+                settingsRow("settings.clash.rules", `<pre id="settingsClashRules" class="settings_net_log">–</pre>`, "settings.clash.rules.help"),
                 settingsRow("settings.clash.configPath", `<span id="settingsClashConfigPath" class="settings_net_info">–</span>
                     <div class="settings_net_actions">
                         <button type="button" id="settingsClashOpenConfig" class="settings_net_btn">${t("settings.clash.openConfig")}</button>
@@ -2703,6 +2917,9 @@ window.openSettings = async () => {
         bindClash("settingsClashSubFetch", () => window.clash.fetchSub());
         bindClash("settingsClashOpenConfig", () => window.clash.openConfig());
         bindClash("settingsClashOpenDashboard", () => window.clash.openDashboard());
+        bindClash("settingsClashGroupsRefresh", () => { window.clash.refreshGroups(); window.clash.refreshRules(); });
+        const clashMode = document.getElementById("settingsClashMode");
+        if (clashMode) clashMode.addEventListener("change", () => window.clash.setMode());
         if (window.clash) window.clash.refreshStatus();
         // Updates category bindings: app check/update, apt system update,
         // mihomo check/update — then pull all the statuses once.
@@ -3310,25 +3527,10 @@ window.populatePowerControls = () => {
                              : t("settings.download.failed") + (r && r.error ? " — " + r.error : ""));
         }).catch(() => {});
     });
-    const dlOpen = document.getElementById("settingsDlOpen");
-    if (dlOpen) dlOpen.addEventListener("click", () => {
-        // Launch uGet in the app-monitor display (tab 4/5), like clicking it in
-        // the app list. Match by name so the exact .desktop Name casing doesn't
-        // matter; if uGet isn't installed the toast says so.
-        const launchUget = list => {
-            const apps = Array.isArray(list) ? list : (list && list.apps) || [];
-            const ug = apps.find(a => a && a.name && /uget/i.test(a.name));
-            if (!ug || !window.appmonitorApi) { notify(t("settings.download.ugetMissing")); return; }
-            window.appmonitorApi.launch("a", ug.id).then(r => {
-                notify(r && r.ok ? t("settings.download.ugetLaunched") : t("settings.download.launchFailed"));
-            }).catch(() => notify(t("settings.download.launchFailed")));
-        };
-        if (window.appmonitorApi) {
-            window.appmonitorApi.nativeList().then(launchUget).catch(() => notify(t("settings.download.ugetMissing")));
-        } else {
-            notify(t("settings.download.ugetMissing"));
-        }
-    });
+    // #8 AXEL: start-download button + kick off the live task list.
+    const dlAdd = document.getElementById("settingsDlAdd");
+    if (dlAdd) dlAdd.addEventListener("click", () => window.axel.add());
+    if (window.axel) window.axel.startPoll();
 
     // ---- System sources (apt mirrors) (#130) ----
     // Built-in presets + a free-form custom URL. Lives in the 通用 section, so
@@ -3594,6 +3796,13 @@ window.writeSettingsFile = () => {
             : (document.getElementById("settingsEditor-appMonitor-mock").value === "true"),
         appImageDirs: document.getElementById("settingsEditor-appMonitor-appImageDirs").value
     };
+    // #8 AXEL: top-level keys (same style as downloadDir), NOT a
+    // settings.download namespace — that would collide with the
+    // browser-download save path the main process reads.
+    const _dlDirEl = document.getElementById("settingsDlDir");
+    const _dlThreadsEl = document.getElementById("settingsDlThreads");
+    if (_dlDirEl) s.downloadDir = _dlDirEl.value.trim();
+    if (_dlThreadsEl) s.downloadThreads = Math.max(1, Math.min(32, parseInt(_dlThreadsEl.value, 10) || 6));
     s.clash = {
         enabled: (document.getElementById("settingsClashEnabled").value === "true"),
         // No form control for port — the mixed port is fixed by the seeded
