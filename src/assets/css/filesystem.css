@@ -611,6 +611,45 @@ button#fs_cd_btn:hover {
     background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
 }
 
+/* "APPS" button - sits just above CD; opens the apps:// virtual folder and
+   launches a GUI app fullscreen on the real display (not a virtual display). */
+button#fs_app_btn {
+    position: absolute;
+    right: 0.5vw;
+    bottom: 2.8vh; /* above the CD button */
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.12);
+    border: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.45);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 0.95vh;
+    letter-spacing: 0.12vh;
+    padding: 0.3vh 0.7vh;
+    cursor: pointer;
+    z-index: 3;
+    transition: background .2s;
+}
+button#fs_app_btn:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+}
+
+/* apps:// virtual folder rows. They're direct children of #fs_disp_container,
+   so they inherit the standard folder-grid layout (icon + name); only the
+   hover / keyboard-focus highlight is ours. */
+div.fs_disp_fs-app {
+    cursor: pointer;
+    transition: background .15s;
+}
+div.fs_disp_fs-app:hover,
+div.fs_disp_fs-app.active {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.28);
+}
+div.fs_disp_fs-app.fs_app_add {
+    opacity: 0.6;
+}
+div.fs_disp_fs-app.fs_app_add > h3 {
+    font-style: italic;
+}
+
 div#fs_space_bar > h3 {
     width: 25%;
     margin: 0;

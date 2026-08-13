@@ -86,7 +86,7 @@ function mockBackend(deps) {
 
 /* ---- real (Linux only) ---------------------------------------------------- */
 function realBackend(deps) {
-    const { spawn } = require("child_process");
+    const { spawn, spawnSync } = require("child_process");
     const fs = require("fs");
     const os = require("os");
     const path = require("path");
@@ -285,7 +285,7 @@ function realBackend(deps) {
             if (!cmd) return Promise.resolve({ ok: false, error: "cannot build command" });
             killTree(monitorId);           // stop the streamed preview instance
             exitFullscreenApp();           // clear any previous fullscreen app
-            const env = Object.assign({}, process.env, { DISPLAY: ":0" });
+            const env = Object.assign({}, process.env, { DISPLAY: ":0", XCURSOR_THEME: "edex" });
             if (isChromium(cmd.cmd)) env.ELECTRON_DISABLE_SANDBOX = "1";
             if (isFirefox(cmd.cmd)) {
                 env.MOZ_DISABLE_CONTENT_SANDBOX = "1";
@@ -294,9 +294,34 @@ function realBackend(deps) {
             const child = spawn(cmd.cmd, cmd.args, { env, stdio: "ignore" });
             child.on("error", e => console.error("[appmonitor] fullscreen spawn:", e.message));
             fullscreenPid = child.pid;
-            setTimeout(() => {
-                try { spawn("wmctrl", ["-r", ":ACTIVE:", "-b", "add,fullscreen"], { env, stdio: "ignore" }); } catch (e) {}
-            }, 1500);
+            // Fullscreen the app's OWN window. wmctrl -r :ACTIVE: is useless here —
+            // eDEX keeps keyboard focus, so :ACTIVE: is eDEX, and the launched app
+            // stays behind it. Find the app's window by _NET_WM_PID (wmctrl -l -p)
+            // and target it by id (wmctrl -i -a/-r). Poll: cold starts (Firefox)
+            // can take seconds to map a window; give up if the launch was
+            // superseded or exited (fullscreenPid cleared).
+            let attempts = 0;
+            const raiseAppWindow = () => {
+                if (!fullscreenPid || fullscreenPid !== child.pid) return;
+                attempts++;
+                let winId = null;
+                try {
+                    const out = spawnSync("wmctrl", ["-l", "-p"], { env, encoding: "utf8" }).stdout || "";
+                    out.split("\n").some(line => {
+                        const f = line.trim().split(/\s+/);
+                        if (f.length >= 4 && f[2] === String(child.pid)) { winId = f[0]; return true; }
+                        return false;
+                    });
+                } catch (e) {}
+                if (winId) {
+                    try { spawn("wmctrl", ["-i", "-a", winId], { env, stdio: "ignore" }); } catch (e) {}
+                    try { spawn("wmctrl", ["-i", "-r", winId, "-b", "add,fullscreen"], { env, stdio: "ignore" }); } catch (e) {}
+                    try { spawn("wmctrl", ["-i", "-r", winId, "-b", "add,above"], { env, stdio: "ignore" }); } catch (e) {}
+                } else if (attempts < 40) {
+                    setTimeout(raiseAppWindow, 500);
+                }
+            };
+            setTimeout(raiseAppWindow, 800);
             return Promise.resolve({ ok: true, app: app.name, native: true });
         },
         exitFullscreen() { exitFullscreenApp(); return Promise.resolve({ ok: true }); },

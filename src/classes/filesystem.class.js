@@ -83,6 +83,7 @@ class FilesystemDisplay {
                 <h1>EXIT DISPLAY</h1>
                 <h3>Calculating available space...</h3><progress value="100" max="100"></progress>
                 <button id="fs_cd_btn" title="cd to current directory in the current terminal" onclick="window.fsDisp.cdToTerminal()">CD</button>
+                <button id="fs_app_btn" title="Browse GUI apps as a folder and launch one fullscreen" onclick="window.fsDisp.showAppsFolder()">APPS</button>
             </div>`;
         this.filesContainer = document.getElementById("fs_disp_container");
         this.space_bar = {
@@ -252,8 +253,117 @@ class FilesystemDisplay {
         // cd the current terminal tab to the directory currently shown in the
         // browser (used by the "CD" button in the bottom-right corner).
         this.cdToTerminal = () => {
-            if (!this.dirpath) return;
+            // The apps:// view is a virtual folder — nothing to cd to in the shell.
+            if (!this.dirpath || this.dirpath === "apps://") return;
             window.term[window.currentTerm].writelr(`cd "${this.dirpath.replace(/"/g, '\\"')}"`);
+        };
+
+        // ---- "APPS" button (bottom-right, just above CD) ----
+        // Opens a virtual "apps://" folder inside the file browser listing the
+        // installed GUI apps (scanned from .desktop files, AppImages and custom
+        // entries by the appmonitor backend server, which always runs). Clicking
+        // an app launches it fullscreen on the REAL display (:0) — not a virtual
+        // display. The folder behaves like any other: a GO UP row returns to the
+        // previous directory, Arrow keys + Enter launch, Esc goes back.
+
+        this.edexIcons.app = {
+            width: 24, height: 24,
+            svg: '<path d="M5 3h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm10 0h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM5 13h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2zm10 0h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2z"/>'
+        };
+        this._appsIdx = 0;
+        this._appsReturnTo = this.dirpath || "/";
+        this._appsList = [];
+        this._appsKey = e => {
+            if (this.dirpath !== "apps://" || !this._fsHovered) return;
+            const rows = this.filesContainer.querySelectorAll(".fs_disp_fs-app");
+            if (!rows.length) return;
+            if (e.key === "ArrowDown" || e.key === "ArrowRight") { e.preventDefault(); e.stopPropagation(); this._appsFocus(this._appsIdx + 1); }
+            else if (e.key === "ArrowUp" || e.key === "ArrowLeft") { e.preventDefault(); e.stopPropagation(); this._appsFocus(this._appsIdx - 1); }
+            else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); const r = rows[this._appsIdx]; if (r) r.click(); }
+            else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); this.readFS(this._appsReturnTo); }
+        };
+        document.addEventListener("keydown", this._appsKey, true);
+        this._appsFocus = i => {
+            const rows = this.filesContainer.querySelectorAll(".fs_disp_fs-app");
+            if (!rows.length) return;
+            i = Math.max(0, Math.min(i, rows.length - 1));
+            this._appsIdx = i;
+            rows.forEach((x, j) => x.classList.toggle("active", j === i));
+            const el = rows[i]; if (el) el.scrollIntoView({ block: "nearest" });
+        };
+
+        this.showAppsFolder = async () => {
+            const prev = this.dirpath;
+            if (prev && prev !== "apps://") this._appsReturnTo = prev;
+            this.dirpath = "apps://";
+            this._reading = false;
+            let apps = [];
+            try { const r = await window.appmonitorApi.nativeList(); if (r && Array.isArray(r.apps)) apps = r.apps; } catch (e) {}
+            this._appsList = apps;
+            this._renderAppsView();
+        };
+
+        this._renderAppsView = () => {
+            const title = document.getElementById("fs_disp_title_dir");
+            if (title) title.innerText = "APPS";
+            this.filesContainer.setAttribute("class", "");
+            const esc = s => String(s == null ? "" : s).replace(/</g, "&lt;");
+            const up = this.icons.up, app = this.edexIcons.app;
+            let html = `<div class="fs_disp_up" onclick="window.fsDisp.readFS(window.fsDisp._appsReturnTo)">
+                            <svg viewBox="0 0 ${up.width} ${up.height}" fill="${this.iconcolor}">${up.svg}</svg>
+                            <h3>..</h3><h4>up</h4><h4>--</h4><h4>--</h4>
+                        </div>`;
+            const apps = this._appsList || [];
+            if (!apps.length) {
+                html += `<p class="fs_trash_none" style="grid-column:1/-1">No GUI apps found — is the app backend running?</p>`;
+            }
+            apps.forEach((a, i) => {
+                html += `<div class="fs_disp_fs-app" data-i="${i}" onclick="window.fsDisp.launchFsApp(${i})">
+                            <svg viewBox="0 0 ${app.width} ${app.height}" fill="${this.iconcolor}">${app.svg}</svg>
+                            <h3>${esc(a.name || "?")}</h3><h4>app</h4><h4>--</h4><h4>--</h4>
+                        </div>`;
+            });
+            html += `<div class="fs_disp_fs-app fs_app_add" onclick="window.fsDisp.addFsApp()">
+                        <svg viewBox="0 0 ${app.width} ${app.height}" fill="${this.iconcolor}">${app.svg}</svg>
+                        <h3>+ ADD APP</h3><h4>add a custom launcher</h4><h4>--</h4><h4>--</h4>
+                    </div>`;
+            this.filesContainer.innerHTML = html;
+            if (this._appsIdx >= (apps.length || 0)) this._appsIdx = 0;
+            this._appsFocus(this._appsIdx);
+        };
+
+        this.launchFsApp = async i => {
+            const a = (this._appsList || [])[i];
+            if (!a) return;
+            let err = null;
+            try {
+                const r = await window.appmonitorApi.fullscreen("a", a.id);
+                if (r && !r.ok) err = String(r.error || "unknown error");
+            } catch (e) { err = String(e && e.message || e); }
+            if (err) new Modal({ type: "info", title: "Could not launch fullscreen", message: err });
+        };
+
+        this.addFsApp = () => {
+            new Modal({
+                type: "custom",
+                title: "ADD GUI APP",
+                html: '<div class="appmonitor_add"><label>Name</label><input type="text" id="fs_add_name" placeholder="Firefox" style="width:100%"><label>Command / Path / AppImage</label><input type="text" id="fs_add_value" placeholder="/path/to/App.AppImage or firefox" style="width:100%"></div>',
+                buttons: [{ label: "Add", action: "window.fsDisp.submitFsAdd()" }]
+            });
+        };
+
+        this.submitFsAdd = async () => {
+            const name = document.getElementById("fs_add_name");
+            const value = document.getElementById("fs_add_value");
+            if (!name || !value || !name.value.trim() || !value.value.trim()) return;
+            let err = null;
+            try {
+                const r = await window.appmonitorApi.addNative({ name: name.value.trim(), value: value.value.trim() });
+                if (r && !r.ok) err = String(r.error || "unknown error");
+            } catch (e) { err = String(e && e.message || e); }
+            const m = window.modals && Object.keys(window.modals); if (m && m.length) window.modals[m.pop()].close();
+            if (err) new Modal({ type: "info", title: "Could not add app", message: err });
+            else this.showAppsFolder(); // refresh the folder view
         };
 
         // ---- File selection + right-click operations (via shell commands) ----
@@ -1024,13 +1134,14 @@ class FilesystemDisplay {
                 return false;
             }
             if (this._reading) return false;
-            // Virtual views (trash / network) are rendered specially, not read
-            // as real directories.
-            if (dir === "trash://" || dir === "network://") {
+            // Virtual views (trash / network / apps) are rendered specially,
+            // not read as real directories.
+            if (dir === "trash://" || dir === "network://" || dir === "apps://") {
                 this.dirpath = dir;
                 this._reading = false;
                 if (dir === "trash://") this._renderTrashView();
-                else this._renderNetworkView();
+                else if (dir === "network://") this._renderNetworkView();
+                else this._renderAppsView();
                 return false;
             }
             this._reading = true;
