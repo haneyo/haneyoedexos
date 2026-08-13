@@ -193,6 +193,20 @@ const SSH_WIRE_NEW = "window.clash&&window.clash.refreshStatus();const _se=docum
 // 值内含 \\n(字面反斜杠-n)与 `${...}`(字面量),经 JSON.stringify 转义,运行时解出逐字节一致。
 const AXEL_BOOT_ANCHOR = "ipc.handle(\"dl:getDir\",";
 const AXEL_BOOT_NEW = "// ---- #8 AXEL download manager ----\nconst axelTasks=new Map();let axelSeq=0;\nconst axelSnapshot=()=>Array.from(axelTasks.entries()).map(([id,t])=>({id:id,url:t.url,dir:t.dir,file:t.file,threads:t.threads,status:t.status,percent:t.percent||0,speed:t.speed||0,eta:t.eta||\"\",paused:!!t.paused,error:t.error||null}));\nconst axelBroadcast=()=>{const t=Date.now();if(t-axelBroadcast._last<500)return;axelBroadcast._last=t;try{if(win&&!win.isDestroyed())win.webContents.send(\"axel-tick\",axelSnapshot())}catch(e){}};\nconst AXEL_PROG_RE=/\\[\\s*(\\d{1,3})%\\][^\\[]*\\[\\s*([0-9.,]+)\\s*([KMGT]?B)\\/s\\][^\\[]*\\[\\s*(\\d{1,2}):(\\d{2})(?::(\\d{2}))?\\s*\\]/;\nconst axelSpeedUnit={B:1,KB:1024,MB:1048576,GB:1073741824};\nconst axelParse=(task,chunk)=>{const s=String(chunk).split(/\\r|\\n/).map(x=>x.trim()).filter(Boolean);const last=s.length?s[s.length-1]:\"\";if(!last)return;const m=last.match(AXEL_PROG_RE);if(!m)return;task.percent=Math.min(100,Number(m[1]));task.speed=Number(m[2].replace(\",\",\".\"))*(axelSpeedUnit[m[3]]||1024);task.eta=m[6]?m[4]+\":\"+m[5]+\":\"+m[6]:m[4]+\":\"+m[5];if(\"paused\"!==task.status)task.status=\"downloading\";axelBroadcast()};\nconst axelSpawn=task=>{const{spawn}=require(\"child_process\");try{fs.mkdirSync(task.dir,{recursive:true})}catch(e){}task.status=\"downloading\";task.percent=0;task.speed=0;task.eta=\"\";task.error=null;const proc=spawn(\"axel\",[\"-a\",\"-n\",String(task.threads),\"-o\",task.dir,task.url],{env:Object.assign({},process.env,{LC_ALL:\"C\",LANG:\"C\"}),stdio:[\"ignore\",\"pipe\",\"pipe\"]});task.proc=proc;proc.stdout.on(\"data\",d=>axelParse(task,d));proc.stderr.on(\"data\",d=>axelParse(task,d));proc.on(\"close\",code=>{task.proc=null;if(task.paused)return;task.status=0===code?\"done\":\"error\";0!==code&&(task.error=\"exit \"+code);axelBroadcast()});proc.on(\"error\",e=>{task.status=\"error\";task.error=e.message;axelBroadcast()})};\nipc.handle(\"axel:add\",(e,{url,threads,dir}={})=>new Promise(resolve=>{const u=String(url||\"\").trim();if(!/^https?:\\/\\//i.test(u))return resolve({ok:false,error:\"BAD_URL\"});const th=Math.max(1,Math.min(32,parseInt(threads,10)||6));let d=\"\";if(dir&&String(dir).trim())d=String(dir).trim();else{try{const s=JSON.parse(fs.readFileSync(settingsFile,\"utf8\"));d=(s&&s.downloadDir)||electron.app.getPath(\"downloads\")}catch(e){d=electron.app.getPath(\"downloads\")}}const file=decodeURIComponent(String(u).split(\"?\")[0].split(\"/\").pop())||\"download\";const task={id:\"a\"+(++axelSeq),url:u,threads:th,dir:d,file:file,proc:null,paused:false,status:\"downloading\",percent:0,speed:0,eta:\"\",error:null};axelTasks.set(task.id,task);axelSpawn(task);resolve({ok:true,task:axelSnapshot().find(x=>x.id===task.id)})}));\nipc.handle(\"axel:list\",()=>({ok:true,tasks:axelSnapshot()}));\nipc.handle(\"axel:pause\",(e,{id}={})=>{const t=axelTasks.get(id);if(!t||!t.proc)return{ok:false,error:\"NOT_FOUND\"};try{t.proc.kill(\"SIGSTOP\")}catch(e){}t.paused=true;t.status=\"paused\";axelBroadcast();return{ok:true}});\nipc.handle(\"axel:resume\",(e,{id}={})=>{const t=axelTasks.get(id);if(!t||!t.proc)return{ok:false,error:\"NOT_FOUND\"};try{t.proc.kill(\"SIGCONT\")}catch(e){}t.paused=false;t.status=\"downloading\";axelBroadcast();return{ok:true}});\nipc.handle(\"axel:remove\",(e,{id}={})=>{const t=axelTasks.get(id);if(!t)return{ok:false,error:\"NOT_FOUND\"};if(t.proc)try{t.proc.kill(\"SIGCONT\"),t.proc.kill(\"SIGKILL\")}catch(e){}axelTasks.delete(id);axelBroadcast();return{ok:true}});\n";
+// ---- #188 设置输入框:复制输入框感知 + 焦点丢失插桩 ----
+// 用户报:从文件浏览器重命名复制文字贴到设置输入框(如 Claude API key)时,光标频繁丢焦点,
+// 输一个字母后必须再点输入框;复制好几次才能粘贴成功。静态排查已排除全部应用层夺焦路径,
+// 但发现两个真实点:
+//   A) useAppShortcut("COPY") 无条件走终端复制 —— 在 modal 输入框里按 Ctrl+Shift+C 复制的
+//      是终端选区,输入框选区进不了剪贴板(PASTE 已做输入框感知,COPY 没有,不对称)。
+//   B) 剩余"输入后丢焦点"机制不在应用代码,需真机插桩(/tmp/edex-focus.log)抓 DOM/OS 两级
+//      focus 变化 + 5s IME 轮询打点来定位。诊断完后删除插桩段。
+const FS_COPY_OLD = "case\"COPY\":return window.term[window.currentTerm].clipboard.copy(),!0;case\"PASTE\":{";
+const FS_COPY_NEW = "case\"COPY\":{const e=document.activeElement,t=e&&e.closest&&e.closest(\".modal_popup\")&&(\"INPUT\"===e.tagName||\"TEXTAREA\"===e.tagName);if(t&&null!=e.selectionStart&&e.selectionEnd>e.selectionStart)try{return remote.clipboard.writeText(e.value.slice(e.selectionStart,e.selectionEnd)),!0}catch(e2){}return window.term[window.currentTerm].clipboard.copy(),!0}case\"PASTE\":{";
+const FS_SETTINGS_ANCHOR = "window._settingsOpenLang=window.settings.language";
+const FSLOG_JS = "window._fsLog=[],window._fsTag=function(e){return e?e.tagName+(e.id?\"#\"+e.id:\"\")+(e.className&&\"string\"==typeof e.className?\".\"+e.className.split(/\\s+/).slice(0,1).join(\".\"):\"\"):\"null\"},window._fsFlush=function(){try{require(\"fs\").writeFileSync(\"/tmp/edex-focus.log\",window._fsLog.join(\"\\n\")+\"\\n\")}catch(e){}},window._fsPush=function(v,t){if(!document.getElementById(\"settingsEditor\"))return;var n=new Date(Date.now()).toISOString().slice(11,23);window._fsLog.push(n+\" \"+v+\" active=\"+window._fsTag(document.activeElement)+\" target=\"+window._fsTag(t)),window._fsLog.length>600&&window._fsLog.splice(0,200),window._fsFlush()},window._fsMarkPoll=function(){if(document.getElementById(\"settingsEditor\")){try{var n=new Date(Date.now()).toISOString().slice(11,23);window._fsLog.push(n+\" poll\"),window._fsLog.length>600&&window._fsLog.splice(0,200),window._fsFlush()}catch(e){}}},window._fsArmed||(window._fsArmed=!0,document.addEventListener(\"focusin\",function(e){window._fsPush(\"focusin\",e.target)},!0),document.addEventListener(\"focusout\",function(e){window._fsPush(\"focusout\",e.target)},!0),window.addEventListener(\"blur\",function(){window._fsPush(\"windowBlur\",null)}),window.addEventListener(\"focus\",function(){window._fsPush(\"windowFocus\",null)}));";
+const POLL_OLD = "refresh(){try{require(\"child_process\").exec(\"fcitx5-remote -n";
+const POLL_NEW = "refresh(){window._fsMarkPoll&&window._fsMarkPoll();try{require(\"child_process\").exec(\"fcitx5-remote -n";
 const CLASH_CTRL_ANCHOR = "ipc.handle(\"clash:status\",";
 const CLASH_CTRL_NEW = "// ---- #9 Clash controller REST passthrough ----\nipc.handle(\"clash:ctrl\",(e,{method,path,body}={})=>new Promise(resolve=>{let cfg={controller:\"127.0.0.1:9090\",secret:\"\"};try{const s=JSON.parse(fs.readFileSync(settingsFile,\"utf8\"));cfg=Object.assign(cfg,(s&&s.clash)||{})}catch(e){}if(!cfg.controller)return resolve({ok:false,error:\"NO_CONTROLLER\"});const addr=String(cfg.controller).replace(/^https?:\\/\\//,\"\"),port=Number(addr.split(\":\")[1])||9090;const payload=null==body?null:JSON.stringify(body);const h=Object.assign({},payload?{\"Content-Type\":\"application/json\",\"Content-Length\":payload.length}:{},cfg.secret?{Authorization:\"Bearer \"+cfg.secret}:{});const req=http.request({host:\"127.0.0.1\",port:port,method:method||\"GET\",path:path||\"/\",headers:h},res=>{let data=\"\";res.on(\"data\",ch=>data+=ch);res.on(\"end\",()=>{try{resolve({ok:true,data:JSON.parse(data||\"null\")})}catch(e){resolve({ok:true,data:data||null})}})});req.on(\"error\",()=>resolve({ok:false,error:\"NO_RESPONSE\"}));req.setTimeout(8000,()=>{try{req.destroy()}catch(e){}resolve({ok:false,error:\"NO_RESPONSE\"})});if(payload)req.write(payload);req.end()}));\n";
 const DL_OLD = "o(\"settings.cat.download\"),n(\"settings.download.dir\",`<div class=\"settings_net_pw\"><input type=\"text\" id=\"settingsDlDir\" placeholder=\"~/Downloads\"></div>\\n                <div class=\"settings_net_actions\"><button type=\"button\" id=\"settingsDlApply\" class=\"settings_net_btn\">${t(\"settings.download.apply\")}</button></div>`),n(\"settings.download.open\",`<button type=\"button\" id=\"settingsDlOpen\" class=\"settings_net_btn\">${t(\"settings.download.open\")}</button>`),n(\"settings.download.note\",`<span class=\"settings_net_info\">${t(\"settings.download.note\")}</span>`)";
@@ -619,7 +633,9 @@ const targets = [
     // 部署版上同样命中 → 整 target 误判"already patched"跳过,桥接(CLI_PANEL_CLASS_27)
     // 根本没机会执行。改用当前版专属标记 _cliIcons(仅 f649c0c 起的版本才有):
     //   27fix/原始 → 无 → transform 跑 → 桥接+apply 升级;current → 有 → 跳过(幂等)。
-    expectOut: 'settingsDlAdd',
+    // #188 再换一次:新增 复制输入框感知 + 焦点插桩(FS_* / FSLOG_JS / POLL_*),标记换成
+    // 插桩的路径特征串,保证已打 #8/#9(含 settingsDlAdd)的部署版也会执行本次追加。
+    expectOut: 'edex-focus.log',
     // 合并成一个 target:多个 _renderer.js target 会相互覆盖,必须合并。
     // 1) 电池图标对准:外框 rect x=1 w=25(rx=2,圆角从 x=24 开始),发光条 x=3 w=23*s/100。
     //    满电时条右端到 x=26 插进右圆角、条整体右偏 1 单位。改 21:条右端恰止于 x=24。
@@ -696,15 +712,23 @@ const targets = [
       .split(TAB2_LABEL_Y_OLD).join(TAB2_LABEL_Y_NEW)
       .split(TAB2_REMEMBER_OLD).join(TAB2_REMEMBER_NEW)
       .split(SVT_OLD).join(SVT_NEW).split(I_OLD).join(I_NEW)
-      // #8 AXEL + #9 CLASH 增强注入(顺序约束:clash-methods 必须先于 axel-obj;wire 已在上方 revert,此处新 apply)
-      .split(CLASH_OBJ_CLOSE_OLD).join(CLASH_OBJ_CLOSE_NEW)
-      .split(IPCON_CLASHLOG).join(AXEL_OBJ_NEW + IPCON_CLASHLOG)
-      .split(DL_OLD).join(DL_NEW)
-      .split(CLASH_MODE_ANCHOR).join(CLASH_MODE_ROW)
-      .split(CLASH_GROUPS_ANCHOR).join(CLASH_GROUPS_ROWS)
-      .split(REFRESH_CTRL_OLD).join(REFRESH_CTRL_NEW)
-      .split(WSF_OLD).join(WSF_NEW)
-      .split(SSH_WIRE_ANCHOR).join(SSH_WIRE_NEW),
+      // #8 AXEL + #9 CLASH 增强注入(顺序约束:clash-methods 必须先于 axel-obj;wire 已在上方 revert,此处新 apply)。
+      // 幂等:目标级 expectOut 换成 #188 标记(edex-focus.log)后,已打 #8/#9 的部署版会被判为"需打"而整链重跑;
+      // 若直接注入,axelFmtSpeed 等会二次声明(renderer 挂掉)。故每个 join 目标按 c.includes('axelFmtSpeed')
+      // 守卫:已含标记(= 已打 #8/#9)→ 原地 join 回旧锚点(no-op);无标记(pristine / 27fix 旧版)→ 注入新代码。
+      .split(CLASH_OBJ_CLOSE_OLD).join(c.includes('axelFmtSpeed') ? CLASH_OBJ_CLOSE_OLD : CLASH_OBJ_CLOSE_NEW)
+      .split(IPCON_CLASHLOG).join(c.includes('axelFmtSpeed') ? IPCON_CLASHLOG : AXEL_OBJ_NEW + IPCON_CLASHLOG)
+      .split(DL_OLD).join(c.includes('axelFmtSpeed') ? DL_OLD : DL_NEW)
+      .split(CLASH_MODE_ANCHOR).join(c.includes('axelFmtSpeed') ? CLASH_MODE_ANCHOR : CLASH_MODE_ROW)
+      .split(CLASH_GROUPS_ANCHOR).join(c.includes('axelFmtSpeed') ? CLASH_GROUPS_ANCHOR : CLASH_GROUPS_ROWS)
+      .split(REFRESH_CTRL_OLD).join(c.includes('axelFmtSpeed') ? REFRESH_CTRL_OLD : REFRESH_CTRL_NEW)
+      .split(WSF_OLD).join(c.includes('axelFmtSpeed') ? WSF_OLD : WSF_NEW)
+      .split(SSH_WIRE_ANCHOR).join(c.includes('axelFmtSpeed') ? SSH_WIRE_ANCHOR : SSH_WIRE_NEW)
+      // #188:复制输入框感知(锚点被消费,重跑不再叠加)+ 焦点插桩(注入前缀不消费锚点,但
+      // 块内含 _fsArmed 幂等守卫,重复注入也安全)+ 5s IME 轮询打点(锚点被消费)。
+      .split(FS_COPY_OLD).join(FS_COPY_NEW)
+      .split(FS_SETTINGS_ANCHOR).join(FSLOG_JS + FS_SETTINGS_ANCHOR)
+      .split(POLL_OLD).join(POLL_NEW),
   },
   {
     name: 'appmonitorPanel.class.js (#3 apps 态:默认应用列表,不含 Firefox,加 WEBAPPS 管理)',
