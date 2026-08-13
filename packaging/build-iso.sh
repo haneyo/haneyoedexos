@@ -98,6 +98,7 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     linux-firmware network-manager wpasupplicant bluez rfkill upower \
     pulseaudio rtkit alsa-utils \
     uget aria2 btop ffmpeg axel \
+    openssh-server \
     aerc less \
     flatpak xdg-desktop-portal xdg-desktop-portal-gtk \
     playerctl \

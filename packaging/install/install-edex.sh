@@ -34,10 +34,17 @@ export XMODIFIERS=@im=fcitx
 # scanning from here on; the WIFI button in eDEX drives nmcli.
 rfkill unblock all 2>/dev/null || true
 nmcli radio wifi on 2>/dev/null || true
-# Turn on the keyboard backlight: many ThinkPads boot with it off.
-if [ -d /sys/class/leds/tpacpi::kbd_backlight ]; then
-    echo 2 > /sys/class/leds/tpacpi::kbd_backlight/brightness 2>/dev/null || true
-fi
+# Turn on the keyboard backlight: many laptops boot with it off. The sysfs node
+# is root-owned (leds subsystem), so a plain echo from the display user silently
+# fails — use passwordless sudo (like edex-brightness.sh), with a direct write as
+# fallback. Match any kbd-led name (ThinkPad tpacpi::/thinkpad::, generic kbd_)
+# and use the device max so "on" means fully lit, not a fixed guess.
+for LED in /sys/class/leds/*kbd*backlight /sys/class/leds/*kbd*led; do
+    [ -f "$LED/brightness" ] || continue
+    MAX=$(cat "$LED/max_brightness" 2>/dev/null || echo 2)
+    echo "$MAX" | sudo -n tee "$LED/brightness" >/dev/null 2>&1 \
+        || echo "$MAX" > "$LED/brightness" 2>/dev/null || true
+done
 # Black the X root window + use the eDEX cursor theme for the gap between the
 # lightdm greeter closing and the eDEX window mapping — this is the "white flash
 # with the default arrow" seen on real hardware at boot. Once eDEX is up it
@@ -492,6 +499,19 @@ update-initramfs -u >/tmp/edex-update-initramfs.log 2>&1 \
 update-grub >/tmp/edex-update-grub.log 2>&1 \
     || { echo "[edex] WARN: update-grub failed"; tail -20 /tmp/edex-update-grub.log; }
 
+echo "[edex] lightdm system user"
+# lightdm needs its own system user for the greeter/autologin to work; when it's
+# missing (apt installed lightdm without it, or the image was built before this
+# block existed) lightdm silently fails to start and the system drops to a text
+# console. Create it defensively — uid/gid are assigned automatically.
+if ! getent passwd lightdm >/dev/null 2>&1; then
+    groupadd --system lightdm 2>/dev/null || true
+    useradd --system --gid lightdm --home-dir /var/lib/lightdm \
+        --shell /usr/sbin/nologin --comment "Light Display Manager" lightdm 2>/dev/null || true
+    mkdir -p /var/lib/lightdm
+    chown lightdm:lightdm /var/lib/lightdm 2>/dev/null || true
+fi
+
 echo "[edex] lightdm autologin"
 mkdir -p /etc/lightdm/lightdm.conf.d
 # CRITICAL: this file must sort AFTER the lightdm-autologin-greeter package's own
@@ -510,6 +530,14 @@ user-session=edex
 greeter-session=lightdm-autologin-greeter
 autologin-user-timeout=0
 CONF
+# Guard against a 0-byte write (older installs hit this when $U was empty under
+# set -u): a 0-byte conf.d file makes lightdm fall back to the package placeholder
+# and the system boots to a text console instead of eDEX. Fail the install loudly
+# rather than ship a bricked boot.
+if [ ! -s /etc/lightdm/lightdm.conf.d/zz-edex-autologin.conf ]; then
+    echo "[edex] FATAL: zz-edex-autologin.conf is empty/missing (autologin would break)" >&2
+    exit 1
+fi
 
 echo "[edex] creating the ~/Applications folder (drop .AppImage files here)"
 mkdir -p "/home/$U/Applications"
@@ -559,6 +587,24 @@ chown -R "$U":"$U" /opt/firefox /usr/local/lib/node_modules /usr/local/bin 2>/de
 echo "[edex] passwordless sudo for $U (single-user demo laptop)"
 echo "$U ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/edex-user
 chmod 440 /etc/sudoers.d/edex-user
+# Guard against a 0-byte write (older installs hit this when $U was empty under
+# set -u): an empty/absent sudoers file breaks every passwordless sudo the UI
+# relies on (settings actions, sshd toggle, apt updates). Fail loudly.
+if [ ! -s /etc/sudoers.d/edex-user ]; then
+    echo "[edex] FATAL: /etc/sudoers.d/edex-user is empty/missing (passwordless sudo broken)" >&2
+    exit 1
+fi
+visudo -cf /etc/sudoers.d/edex-user >/dev/null 2>&1 \
+    || { echo "[edex] FATAL: /etc/sudoers.d/edex-user failed visudo -cf" >&2; exit 1; }
+
+echo "[edex] SSH server: installed but OFF by default (settings → network → SSH)"
+# openssh-server is baked into the ISO; keep the toggle's default-off state true
+# on fresh installs (openssh's postinst may enable the unit during image build).
+# The settings switch uses `systemctl enable --now ssh ssh.socket` /
+# `disable --now ssh ssh.socket`. Ubuntu 24.04 socket-activates sshd via
+# ssh.socket, so `disable --now ssh` alone stops ssh.service but the socket
+# keeps re-triggering it — the socket must be disabled too.
+systemctl disable --now ssh ssh.socket 2>/dev/null || true
 
 # apt must point at the Ubuntu archive so 'sudo apt update && upgrade' works.
 # Ubuntu 24.04 writes the same repos as /etc/apt/sources.list.d/ubuntu.sources at
