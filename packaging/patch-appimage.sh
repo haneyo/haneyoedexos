@@ -207,7 +207,8 @@ const AM_METHODS_OLD = '}}module.exports={AppMonitorPanel};';
 const AM_METHODS_NEW = `}openAppList(){if(!this.menu)return;this._positionMenuDefault(),this.menu.style.display="block",this.menu.focus(),this._focusMenu(0)}_positionMenuDefault(){const e=this.container&&this.container.getBoundingClientRect?this.container.getBoundingClientRect():null;this.menu.style.left=Math.max(4,(e?e.left:40)+16)+"px",this.menu.style.top=Math.max(4,(e?e.top:40)+12)+"px"}manageWebapps(){this.refresh();const that=this,rows=(window.webapps&&window.webapps._customList&&window.webapps._customList()||[]).map(e=>'<div class="appmonitor_wa_row"><span class="appmonitor_wa_name">'+e.name+'</span><span class="appmonitor_wa_url">'+e.url+'</span><button type="button" class="appmonitor_wa_del">'+window.t("appmonitor.webapps.delete")+'</button></div>').join(""),id=new Modal({type:"custom",title:window.t("appmonitor.webapps.manage"),html:'<div class="appmonitor_wa_list">'+(rows||'<div class="appmonitor_wa_empty">'+window.t("appmonitor.webapps.empty")+"</div>")+"</div>",buttons:[{label:window.t("appmonitor.webapps.title"),action:"window.appmonitorWaModal&&window.appmonitorWaModal.close()"}]});that._waModalId=id,window.appmonitorWaModal=window.modals[id],setTimeout(()=>{document.querySelectorAll(".appmonitor_wa_del").forEach(t=>{t.onclick=()=>{const u=t.parentElement&&t.parentElement.querySelector(".appmonitor_wa_url");if(!u)return;window.webapps&&window.webapps.removeCustom(u.textContent),window.modals&&window.modals[that._waModalId]&&window.modals[that._waModalId].close(),that._notify(window.t("appmonitor.webapps.removed")),that.refresh()}})},50)}_appendWaEntry(){const e=document.createElement("div");e.className="webapp_menu_opt appmonitor_opt appmonitor_menu_wa",e.textContent=window.t("appmonitor.webapps.manage"),e.onclick=e=>{e.stopPropagation(),this.manageWebapps()},this.menu.appendChild(e)}}module.exports={AppMonitorPanel};`;
 const AM_ROW_OLD = '"settings.appMonitor.appImageDirs.help"),o("settings.cat.download"),';
 const AM_ROW_NEW = '"settings.appMonitor.appImageDirs.help"),n("appmonitor.webapps.manage",`<button type="button" id="settingsAppMonitorManageWebapps" class="settings_net_btn">${t("appmonitor.webapps.manage")}</button>`,"appmonitor.webapps.manage.help"),o("settings.cat.download"),';
-const AM_CSS = `
+// 旧版注入的样式块(27fix/28fix/当前均已注入此版),用于重跑时 revert 回滚。
+const AM_CSS_OLD = `
 .appmonitor_menu{position:fixed;z-index:9000;min-width:240px;max-width:60vw;max-height:70vh;overflow-y:auto;background:rgba(10,14,16,.96);border:1px solid rgba(var(--color_r),var(--color_g),var(--color_b),.45);border-radius:6px;padding:6px 0;box-shadow:0 6px 24px rgba(0,0,0,.5);font-family:var(--font_main);font-size:1.1vh;color:rgb(var(--color_r),var(--color_g),var(--color_b))}
 .appmonitor_menu .appmonitor_opt{display:flex;align-items:center;gap:10px;padding:8px 14px;cursor:pointer;white-space:nowrap}
 .appmonitor_menu .appmonitor_opt:hover,.appmonitor_menu .appmonitor_opt.active{background:rgba(var(--color_r),var(--color_g),var(--color_b),.12)}
@@ -232,6 +233,9 @@ const AM_CSS = `
 .appmonitor_wa_del:hover{background:rgba(231,76,60,.3)}
 .appmonitor_wa_empty{opacity:.6;padding:12px;text-align:center}
 `;
+// 当前注入的样式块 = 旧版块 + 消除菜单焦点环(browser 默认 focus outline)。
+// 菜单 div 带 tabindex=-1 且打开时 focus(),会画出黄/青色焦点环,点一下(失焦/关菜单)就消失。
+const AM_CSS = AM_CSS_OLD + '\n.appmonitor_menu:focus{outline:none}\n.appmonitor_menu :focus{outline:none}';
 
 // ---- #10 CLI 会话面板(cliApps):tab4/5 默认禁用虚拟显示器,改为命令行 app 会话 ----
 const CLI_SETTINGS_OLD = 'o("settings.section.appMonitor"),n("settings.appMonitor.enabled",`<select id="settingsEditor-appMonitor-enabled">\\n                <option>${!1!==(window.settings.appMonitor||{}).enabled}</option>\\n                <option>${!1===(window.settings.appMonitor||{}).enabled}</option>\\n            </select>`,"settings.appMonitor.enabled.help"),n("settings.appMonitor.mock",`<select id="settingsEditor-appMonitor-mock">\\n                <option value="auto" ${null==(window.settings.appMonitor||{}).mock?"selected":""}>${t("settings.appMonitor.mock.auto")}</option>\\n                <option value="true" ${!0===(window.settings.appMonitor||{}).mock?"selected":""}>${t("settings.appMonitor.mock.mock")}</option>\\n                <option value="false" ${!1===(window.settings.appMonitor||{}).mock?"selected":""}>${t("settings.appMonitor.mock.real")}</option>\\n            </select>`,"settings.appMonitor.mock.help"),n("settings.appMonitor.appImageDirs",`<input type="text" id="settingsEditor-appMonitor-appImageDirs" value="${(window.settings.appMonitor||{}).appImageDirs||""}">`,"settings.appMonitor.appImageDirs.help"),n("appmonitor.webapps.manage",`<button type="button" id="settingsAppMonitorManageWebapps" class="settings_net_btn">${t("appmonitor.webapps.manage")}</button>`,"appmonitor.webapps.manage.help")';
@@ -677,9 +681,14 @@ const targets = [
     name: 'main_shell.css (appmonitor 应用列表菜单样式)',
     path: ['assets', 'css', 'main_shell.css'],
     expectIn: '.xterm:not(.enable-mouse-events){cursor:text}',
-    expectOut: '.appmonitor_menu{position:fixed',
+    // expectOut 用焦点环消除规则做标记:已注入新版(含 :focus outline:none)才跳过;
+    // 旧版(.appmonitor_menu{position:fixed 开头)或 pristine 都会重新走 revert→apply。
+    expectOut: '.appmonitor_menu:focus{outline:none}',
     // 原 asar 没有任何 appmonitor_menu 样式(菜单裸排),追加一套主题化样式(锚在文件末尾最后一条规则后)。
+    // 重跑时先 revert 掉旧注入块(旧版 AM_CSS_OLD 或当前 AM_CSS 均可回滚),再注入最新版,避免重复堆积。
     transform: c => c
+      .split('.xterm:not(.enable-mouse-events){cursor:text}' + AM_CSS).join('.xterm:not(.enable-mouse-events){cursor:text}')
+      .split('.xterm:not(.enable-mouse-events){cursor:text}' + AM_CSS_OLD).join('.xterm:not(.enable-mouse-events){cursor:text}')
       .split('.xterm:not(.enable-mouse-events){cursor:text}')
       .join('.xterm:not(.enable-mouse-events){cursor:text}' + AM_CSS),
   },
