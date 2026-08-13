@@ -204,11 +204,11 @@ fcitx5-diagnose | head -60; pgrep -a fcitx5
 
 ## 批(2026-08-13,已提交待装验)
 
-**设置输入框复制粘贴丢焦点 / 复制无效**(App,COPY 修复已同步 src+patch,剩余机制待真机插桩):
+**设置输入框复制粘贴丢焦点 / 复制无效**(App,COPY 修复已同步 src+patch;诊断插桩已拆,走新 ISO 验证):
 - 现象(#188):从文件浏览器重命名复制文字,贴到设置输入框(如 Claude API key)时,光标频繁丢焦点——输一个字母后必须再点一次输入框;复制好几次才能粘贴成功。
 - 定位:静态排查已排除全部应用层夺焦路径(onmouseup 有 `.modal_popup` 保护、`_settingsKeyHandler` 只处理 Esc/方向键/Enter、Modal focus() 是纯 CSS、setInterval 只有 edexIME 5s 轮询 + 电池 30s,主进程无周期 win.focus);fcitx5 的 `-n` 经真机确认是**纯查询**(只取当前输入法名,不切 IME),5s 轮询不再被怀疑会翻转输入上下文。但发现一个真实缺陷——**`useAppShortcut("COPY")` 无条件走终端复制**:在 modal 输入框里按 Ctrl+Shift+C,复制的是终端选区,输入框选区进不了剪贴板(PASTE 已做输入框感知,COPY 没有,不对称),这是"复制好几次才成功"的直接原因。
 - 修复 A:`_renderer.js` + `patch-appimage.sh` 给 COPY 加输入框感知——焦点在 `.modal_popup` 内的 INPUT/TEXTAREA 且选区非空时,`remote.clipboard.writeText(选中文本)` 直接返回,与 PASTE 对称。
-- 修复 B(诊断插桩,待真机):剩余"输入后丢焦点"机制不在应用代码,`patch-appimage.sh` 注入 FSLOG 插桩——监听 focusin/focusout/windowBlur/windowFocus 写 `/tmp/edex-focus.log`(仅设置编辑器开着时记录),edexIME 5s 轮询也打点,用来抓 DOM/OS 两级的 focus 变化。**真机重跑 patch 后复现丢焦点,`cat /tmp/edex-focus.log` 发回,定位后删除插桩段。**
-- 幂等:renderer target 的 expectOut 换成 `edex-focus.log`;因已打 #8/#9 的部署版会被判为"需打"而整链重跑,把 #8/#9 各 join 目标按 `c.includes('axelFmtSpeed')` 守卫(有标记→no-op,无标记→注入),防 axelFmtSpeed 二次声明。e2e-188 三场景(pristine / 27fix 旧版 / 已打 #8/#9)输出 md5 一致,node --check 全过。已同步 src + patch,待装验。
+- 决策:不再对笔记本已装 AppImage 注入诊断插桩(FSLOG/POLL)——真机确认笔记本的 #188 patch **从未跑过**(asar 无 COPY 修复标记也无插桩标记,设置仍是 uget/旧 clash),与其继续 patch 陈旧 AppImage,不如**重烧含 #8/#9 + #188 COPY 修复的新 ISO 一次到位**(task #26)。插桩段已从 `patch-appimage.sh` 拆净(`grep` 无 edex-focus/FSLOG/POLL),`build-iso.sh` 烘焙时跑的是干净版,ISO 不含诊断代码。
+- 幂等:renderer target 的 expectOut 换成 COPY 修复特征串 `value.slice(e.selectionStart,e.selectionEnd)`(pristine 无此串);因已打 #8/#9 的部署版会被判为"需打"而整链重跑,把 #8/#9 各 join 目标按 `c.includes('axelFmtSpeed')` 守卫(有标记→no-op,无标记→注入),防 axelFmtSpeed 二次声明。e2e-188 三场景(pristine / 27fix 旧版 / 已打 #8/#9)拆插桩后重验:**全部输出逐字节一致(md5 52902e8b),COPY 修复恰好 1 处,插桩 0 残留**,node --check 全过。待新 ISO 装验。
 
 
