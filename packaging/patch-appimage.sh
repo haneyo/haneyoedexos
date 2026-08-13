@@ -571,7 +571,11 @@ const targets = [
     expectIn: 'document.addEventListener("visibilitychange",()=>{"visible"===document.visibilityState&&resumeFromSuspend()})',
     // 幂等标记 = SSH 开关补丁后的特征串(13fix 的 cursorTrap 标记不足以判断本 target 是否
     // 打过 14fix 的 SSH 补丁,换用 SSH 专属标记,保证 13fix→14fix 会执行;对 .orig 同样适用)。
-    expectOut: 'window.cliApps = [ { id: "claude"',
+    // #29 又换过一次:旧的 cliApps 前缀 'window.cliApps = [ { id: "claude"' 在 27fix(及更早)
+    // 部署版上同样命中 → 整 target 误判"already patched"跳过,桥接(CLI_PANEL_CLASS_27)
+    // 根本没机会执行。改用当前版专属标记 _cliIcons(仅 f649c0c 起的版本才有):
+    //   27fix/原始 → 无 → transform 跑 → 桥接+apply 升级;current → 有 → 跳过(幂等)。
+    expectOut: '_cliIcons',
     // 合并成一个 target:多个 _renderer.js target 会相互覆盖,必须合并。
     // 1) 电池图标对准:外框 rect x=1 w=25(rx=2,圆角从 x=24 开始),发光条 x=3 w=23*s/100。
     //    满电时条右端到 x=26 插进右圆角、条整体右偏 1 单位。改 21:条右端恰止于 x=24。
