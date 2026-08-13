@@ -34,6 +34,10 @@ on:
         description: "Release tag to take the AppImage from (used when appimage_source = tag)"
         required: false
         default: ""
+      oss_version:
+        description: "Version string for the per-version Aliyun OSS mirror path (e.g. 2.3.12-test). Empty = only update the latest/ path."
+        required: false
+        default: ""
 
 jobs:
   build-iso:
@@ -124,3 +128,49 @@ jobs:
           name: eDEX-OS-ISO
           path: eDEX-OS-${{ github.ref_name }}.iso
           if-no-files-found: error
+
+      # China mirror: push the ISO to Aliyun OSS so mainland users get a fast,
+      # permanent link instead of a 90-day GitHub artifact. Mirrors the proven
+      # step in release.yml (ossutil v2, -f to force overwrite). When the
+      # `oss_version` input is set the ISO is also published under a
+      # per-version path; `latest/` is always updated so it stays the current
+      # build. Skipped when the ALIYUN_OSS_* secrets are unset.
+      - name: Publish ISO to Aliyun OSS (China mirror)
+        env:
+          OSS_AK_ID: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_ID }}
+          OSS_AK_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
+          OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
+          OSS_REGION: ${{ secrets.ALIYUN_OSS_REGION }}
+          OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OSS_AK_ID" ] || [ -z "$OSS_AK_SECRET" ] || \
+             [ -z "$OSS_ENDPOINT" ] || [ -z "$OSS_REGION" ] || [ -z "$OSS_BUCKET" ]; then
+            echo "ALIYUN_OSS_* secrets not configured — skipping China mirror."
+            exit 0
+          fi
+          SRC="eDEX-OS-${{ github.ref_name }}.iso"
+          VER="${{ github.event.inputs.oss_version }}"
+          HOST="${OSS_ENDPOINT#https://}"
+
+          echo "Installing ossutil 2.3.0 ..."
+          curl -fsSL -o /tmp/ossutil.zip https://gosspublic.alicdn.com/ossutil/v2/2.3.0/ossutil-2.3.0-linux-amd64.zip
+          unzip -o /tmp/ossutil.zip -d /tmp/ossutil >/dev/null
+          OSSUTIL=$(find /tmp/ossutil -type f -name ossutil | head -1)
+          chmod +x "$OSSUTIL"
+          "$OSSUTIL" version
+
+          # ossutil v2 flags only; `-f` forces overwrite (v1's interactive
+          # "overwrite (y or N)?" prompt reads EOF=no under CI and would
+          # silently skip the copy while exiting 0).
+          AUTH=(-e "$OSS_ENDPOINT" --region "$OSS_REGION" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET")
+
+          if [ -n "$VER" ]; then
+            DST="eDEX-OS-$VER.iso"
+            cp "$SRC" "$DST"
+            "$OSSUTIL" cp -f "$DST" "oss://$OSS_BUCKET/edex-os/$VER/" "${AUTH[@]}"
+            echo "OSS PER-VERSION URL: https://$OSS_BUCKET.$HOST/edex-os/$VER/$DST"
+          fi
+
+          "$OSSUTIL" cp -f "$SRC" "oss://$OSS_BUCKET/edex-os/latest/eDEX-OS-latest.iso" "${AUTH[@]}"
+          echo "OSS LATEST URL: https://$OSS_BUCKET.$HOST/edex-os/latest/eDEX-OS-latest.iso"
