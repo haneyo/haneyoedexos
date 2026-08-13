@@ -349,12 +349,16 @@ function createWindow(settings) {
 // handlers below, which proxy to the backend over localhost HTTP.
 const http = require("http");
 
-function apiRequest(port, method, pathname, body) {
+function apiRequest(port, method, pathname, body, headers) {
     return new Promise(resolve => {
         const payload = body ? Buffer.from(JSON.stringify(body)) : null;
         const req = http.request({
             host: "127.0.0.1", port, method, path: pathname,
-            headers: payload ? { "Content-Type": "application/json", "Content-Length": payload.length } : {}
+            headers: Object.assign(
+                {},
+                payload ? { "Content-Type": "application/json", "Content-Length": payload.length } : {},
+                headers || {}   // 第 5 参,如 { Authorization: "Bearer " + secret }(#9)
+            )
         }, res => {
             let data = "";
             res.on("data", c => { data += c; });
@@ -1119,6 +1123,18 @@ app.on('ready', async () => {
             configPath: CLASH_CONF,
             log: clashLog.slice(-200)
         });
+    }));
+    // Clash controller REST 透传(#9):renderer 打 GET /proxies、PUT /proxies/{group}、
+    // GET /proxies/{group}/delay、GET /configs、PATCH /configs、GET /rules。
+    // controller/secret 由 clashConf() 统一注入;响应包 {ok,data},失败给 NO_RESPONSE。
+    ipc.handle("clash:ctrl", (e, { method, path, body } = {}) => new Promise(async resolve => {
+        const cfg = clashConf();
+        if (!cfg.controller) return resolve({ ok: false, error: "NO_CONTROLLER" });
+        const addr = String(cfg.controller).replace(/^https?:\/\//, "");
+        const port = Number(addr.split(":")[1]) || 9090;
+        const r = await apiRequest(port, method || "GET", path || "/", body,
+            cfg.secret ? { Authorization: "Bearer " + cfg.secret } : undefined);
+        resolve(r === null ? { ok: false, error: "NO_RESPONSE" } : { ok: true, data: r });
     }));
     ipc.handle("clash:start", () => clashStart());
     ipc.handle("clash:stop", () => clashStop());
@@ -1988,6 +2004,89 @@ app.on('ready', async () => {
             resolve({ ok: true, dir });
         } catch (err) { resolve({ ok: false, error: err.message }); }
     }));
+
+    // ---- #8 AXEL download manager ----
+    // CLI 可视化:`axel -a -n <threads> -o <dir> <url>`。任务表 + 500ms 限流推送
+    // ("axel-tick"),暂停/恢复用 SIGSTOP/SIGCONT,删除先 CONT 再 KILL(停态进程
+    // SIGTERM 会挂起)。axel -a 输出用 \r 原地刷新、十进制分隔符随 locale,
+    // 这里 LC_ALL=C 强制小数点,正则同时容忍 `,`/`.`。
+    const axelTasks = new Map();
+    let axelSeq = 0;
+    const axelSnapshot = () => Array.from(axelTasks.entries()).map(([id, t]) => ({
+        id, url: t.url, dir: t.dir, file: t.file, threads: t.threads,
+        status: t.status, percent: t.percent || 0, speed: t.speed || 0,
+        eta: t.eta || "", paused: !!t.paused, error: t.error || null
+    }));
+    const axelBroadcast = () => {
+        const t = Date.now();
+        if (t - axelBroadcast._last < 500) return;
+        axelBroadcast._last = t;
+        if (win && !win.isDestroyed()) win.webContents.send("axel-tick", axelSnapshot());
+    };
+    const AXEL_PROG_RE = /\[\s*(\d{1,3})%\][^\[]*\[\s*([0-9.,]+)\s*([KMGT]?B)\/s\][^\[]*\[\s*(\d{1,2}):(\d{2})(?::(\d{2}))?\s*\]/;
+    const axelSpeedUnit = { B: 1, KB: 1024, MB: 1048576, GB: 1073741824 };
+    const axelParse = (task, chunk) => {
+        const lines = String(chunk).split(/\r|\n/).map(s => s.trim()).filter(Boolean);
+        const last = lines[lines.length - 1];
+        if (!last) return;
+        const m = last.match(AXEL_PROG_RE);
+        if (!m) return;
+        task.percent = Math.min(100, Number(m[1]));
+        task.speed = Number(m[2].replace(",", ".")) * (axelSpeedUnit[m[3]] || 1024);
+        task.eta = m[6] ? m[4] + ":" + m[5] + ":" + m[6] : m[4] + ":" + m[5];
+        if (task.status !== "paused") task.status = "downloading";
+        axelBroadcast();
+    };
+    const axelSpawn = task => {
+        const { spawn } = require("child_process");
+        try { fs.mkdirSync(task.dir, { recursive: true }); } catch (err) {}
+        task.status = "downloading"; task.percent = 0; task.speed = 0; task.error = null;
+        const proc = spawn("axel", ["-a", "-n", String(task.threads), "-o", task.dir, task.url], {
+            env: Object.assign({}, process.env, { LC_ALL: "C", LANG: "C" }),
+            stdio: ["ignore", "pipe", "pipe"]
+        });
+        task.proc = proc;
+        // 不确定 axel 进度走 stdout 还是 stderr,两路都挂。
+        proc.stdout.on("data", d => axelParse(task, d));
+        proc.stderr.on("data", d => axelParse(task, d));
+        proc.on("close", code => {
+            task.proc = null;
+            if (task.paused) return;   // 主动暂停杀掉的,保留 paused 状态
+            task.status = code === 0 ? "done" : "error";
+            if (code !== 0) task.error = "exit " + code;
+            axelBroadcast();
+        });
+        proc.on("error", e => { task.status = "error"; task.error = e.message; axelBroadcast(); });
+    };
+    ipc.handle("axel:add", (e, { url, threads, dir } = {}) => new Promise(resolve => {
+        const u = String(url || "").trim();
+        if (!/^https?:\/\//i.test(u)) return resolve({ ok: false, error: "BAD_URL" });
+        const th = Math.max(1, Math.min(32, parseInt(threads, 10) || 6));
+        const d = (dir && String(dir).trim()) || getDlDir();
+        const file = decodeURIComponent(u.split("?")[0].split("/").pop()) || "download";
+        const task = { id: "a" + (++axelSeq), url: u, threads: th, dir: d, file,
+                       proc: null, paused: false, status: "downloading",
+                       percent: 0, speed: 0, eta: "", error: null };
+        axelTasks.set(task.id, task);
+        axelSpawn(task);
+        resolve({ ok: true, task: axelSnapshot().find(x => x.id === task.id) });
+    }));
+    ipc.handle("axel:list", () => ({ ok: true, tasks: axelSnapshot() }));
+    ipc.handle("axel:pause", (e, { id } = {}) => {
+        const t = axelTasks.get(id); if (!t || !t.proc) return { ok: false, error: "NOT_FOUND" };
+        try { t.proc.kill("SIGSTOP"); } catch (err) {}
+        t.paused = true; t.status = "paused"; axelBroadcast(); return { ok: true };
+    });
+    ipc.handle("axel:resume", (e, { id } = {}) => {
+        const t = axelTasks.get(id); if (!t || !t.proc) return { ok: false, error: "NOT_FOUND" };
+        try { t.proc.kill("SIGCONT"); } catch (err) {}
+        t.paused = false; t.status = "downloading"; axelBroadcast(); return { ok: true };
+    });
+    ipc.handle("axel:remove", (e, { id } = {}) => {
+        const t = axelTasks.get(id); if (!t) return { ok: false, error: "NOT_FOUND" };
+        if (t.proc) { try { t.proc.kill("SIGCONT"); t.proc.kill("SIGKILL"); } catch (err) {} }
+        axelTasks.delete(id); axelBroadcast(); return { ok: true };
+    });
 
     // ---- System sources (apt mirrors) (#130) ----
     // Built-in presets for Ubuntu 24.04 (noble). CN mirrors serve every suite

@@ -14,9 +14,8 @@
 
 | # | 任务 | 状态 | 备注 |
 |---|---|---|---|
-| #2 | 终端滚动修复 | ⏳ | 历史遗留 |
-| #8 | 内置 **AXEL**,替换设置里 UGET 菜单 | ⏳ | 设置菜单:URL + 线程(默认6) + 下载目录(可设);显示进度/速度/剩余;暂停/恢复。本质 CLI 可视化:`axel -n <线程> -o <目录> <URL>`。先定位现有 UGET 设置实现 |
-| #9 | **CLASH** 设置增强 | ⏳ | 节点选择/测速/全局·规则·直连/规则配置。本质 GUI 写命令:Clash API(9090)或改 config.yaml + `kill -HUP`。先定位现有 CLASH 设置实现 |
+| #8 | 内置 **AXEL**,替换设置里 UGET 菜单 | 🔨 2026-08-13 实现完(src+patch 注入,仿真全过),**待笔记本验收** | 设置菜单:URL + 线程(默认6) + 下载目录(可设);显示进度/速度/剩余;暂停/恢复。已实现:`_boot.js` axel 任务表+5 IPC、`_renderer.js` 下载小节+`window.axel`、`_i18n.js` 文案、patch 注入。**验收**:笔记本 `sudo apt install axel` → 同步仓库 → `sudo bash packaging/patch-appimage.sh /opt/edex/eDEX-UI.AppImage` → `sudo systemctl restart lightdm` → 设置 apps 分类加 URL 下载看进度/暂停/恢复/删除 |
+| #9 | **CLASH** 设置增强 | 🔨 2026-08-13 实现完(src+patch 注入,仿真全过),**待笔记本验收** | 节点选择/测速/全局·规则·直连/规则列表。已实现:`clash:ctrl` 透传 handler(controller REST API,Bearer)、renderer 模式 select+代理组+规则只读、patch 注入。**验收**(同上重跑 patch):clash 分类切模式/切代理组/测速出 ms/规则列表;daemon 未启动时显示"控制接口无响应" |
 
 ### A2. Ubuntu 侧(真机 / CI 打包侧)
 
@@ -49,13 +48,15 @@
 | #19 | tab1/tab2 统一成普通终端(EMPTY→TERM) | 2026-08-12,已入补丁 |
 | #172 | WiFi 可用(netdev 组修复) | 2026-08-11 实测 |
 | #181 | 熄屏 DPMS | 2026-08-11 实测通过 |
-| #144 | 中文输入无候选框(fcitx5 dbus 抢占) | 2026-08-11 已修 |
+| #144 | 中文输入无候选框(fcitx5 dbus 抢占) | 2026-08-11 已修;**候选框 UI(黑底无边框+主题色)2026-08-13 真机目测确认** |
+| 音效 | 开机 intro 音效(rtkit/RealtimeKit 超时修复) | 2026-08-13 重启后确认有声 |
 | #10 | tab4/5 改 CLI 会话面板 + 默认禁用虚拟显示器 | 2026-08-11 |
 
-## C. 已去掉 / 不再跟踪(2026-08-12 用户确认删除)
+## C. 已去掉 / 不再跟踪
 
 | # | 内容 | 原因 |
 |---|---|---|
+| #2 | 终端滚动修复 | 2026-08-13 用户确认:PageUp/PageDown 等按键可滚动,忽略 |
 | #4 | app monitor 填满:backend.js openbox `--config→--config-file` | 已放弃虚拟显示器路线(appMonitor 不再启用),2026-08-12 |
 | #11 | 开机 GRUB 报错 `file '/boot/' not found` | 装饰性,不影响引导 |
 | #128 | 安装器 subiquity 崩溃 `load_autoinstall_data` | 不再跟踪 |
