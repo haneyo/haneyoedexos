@@ -231,11 +231,18 @@ echo "[edex] detecting installed user"
 #   1) the first uid>=1000 member of group `adm`,
 #   2) else the first uid>=1000 account,
 #   3) else create the documented kiosk default below.
+# U 探测(2026-08-13 真机安装失败根因):两条命令替换都挂 `|| true`。
+# 原因:`set -euo pipefail` 下,`U="$(getent ... | while ... done)"` 管道只要
+# getent group adm 查不到、或 adm 成员里最后一个被检查的账号 id -u 为空
+# (账号不在 /etc/passwd 或 uid<1000),while 循环体末次退出码即 1 → pipefail
+# 令整管道返回 1 → 命令替换失败 → set -e 掐死 install-edex.sh(卡在
+# "detecting installed user",安装报"完成安装时出现问题")。`|| true` 保证探测
+# 失败也继续落到 getent passwd 兜底;再失败才自愈成默认用户 edex。
 U="$(getent group adm | cut -d: -f4 | tr ',' '\n' | while read -r c; do
     uid="$(id -u "$c" 2>/dev/null)"
     [ -n "$uid" ] && [ "$uid" -ge 1000 ] && [ "$uid" -lt 65534 ] && { echo "$c"; break; }
-  done)"
-[ -z "$U" ] && U="$(getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1; exit}')"
+  done)" || true
+[ -z "$U" ] && U="$(getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1; exit}')" || true
 if [ -z "$U" ]; then
     # No login user was created — the interactive identity answer can be lost on
     # an installer restart. Self-heal so the system still boots to a usable
