@@ -215,7 +215,10 @@ fcitx5-diagnose | head -60; pgrep -a fcitx5
 - **AppImage 源 = `latest-release`(v2.3.11)**:查证 `release.yml` 发布时已对 AppImage 跑过 patch-appimage.sh → release 自带全部旧修复(SSH 开关/电池/天气/Enter/焦点),只缺 #8/#9/#188。烘焙时新补丁对 release AppImage:renderer expectOut 缺失 → transform 运行 → 注入 #8/#9(守卫 false)+ COPY;旧修复的 join 锚点已在 → 幂等 no-op。ISO 版本 == release 版本(2.3.11)→ 装机后在线更新不回退。**不选 `source` 的原因**:src 缺 patch-only 修复(SSH 开关、电池 21 宽等),且 src 版 renderer 会因自带 COPY 标记而让 renderer 目标跳过,导致 ISO 缺这些修复。
 - **两次构建**:
   1. `31671387468`(commit `30cfdee`,无 OSS 镜像)→ success,artifact `eDEX-OS-main.iso`(GitHub artifact,90 天有效)。
-  2. `31672511456`(commit `8c56100`,新增 OSS 镜像)→ 传阿里云 `edex-os/2.3.11-test/eDEX-OS-2.3.11-test.iso` + `edex-os/latest/eDEX-OS-latest.iso`。
+  2. `31672511456`(commit `8c56100`,新增 OSS 镜像)→ success,4.7GB(5,074,216,960 B),已传阿里云且实测 200 可下载:
+     - per-version:`https://oss-bucket/edex-os/2.3.11-test/eDEX-OS-2.3.11-test.iso`
+     - latest:`https://oss-bucket/edex-os/latest/eDEX-OS-latest.iso`
+     (README 不公开这两个链接,仅自用;run log 里 URL 被 GitHub 掩码,靠 memory 桶名重建验证)
 - **workflow 改动**(`8c56100`):`build-iso.yml` 增加 `oss_version` 输入 + "Publish ISO to Aliyun OSS" 步骤(从 `release.yml` 移植,ossutil v2 + `-f` 覆盖修复,ALIYUN_OSS_* secrets 未配则跳过;echo 公开 URL 进 run log)。之前手动构建的 ISO 只有 GitHub artifact,没阿里云链接。
 - **烘焙输入预检(SSH 对笔记本 asar,已通过)**:v2.3.11 release AppImage 实测:`resumeFromSuspend`=12(renderer 目标 expectIn 在,不会静默跳过)、`case"COPY":return window.term`=3(COPY join 会生效)、`settingsDlOpen`=6(uget 在)、`settingsSshEnabled`=8(旧补丁已烘,幂等 no-op)、`axelFmtSpeed`=0(守卫 false→注入)、`value.slice(e.selectionStart,e.selectionEnd)`=0(#188 未打过)。六条全中,e2e 场景 1 前提在真实烘焙输入上成立。
 - **重装验收清单(待用户刷机后)**:#8 设置→apps→下载 加任务看进度/速度/剩余+暂停/恢复/删除;#9 设置→网络→clash 模式切换/代理组切节点/测速出 ms/规则列表;#188 文件重命名复制→贴设置输入框 一次成功。
