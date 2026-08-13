@@ -13,10 +13,17 @@ export XMODIFIERS=@im=fcitx
 # scanning from here on; the WIFI button in eDEX drives nmcli.
 rfkill unblock all 2>/dev/null || true
 nmcli radio wifi on 2>/dev/null || true
-# Turn on the keyboard backlight: many ThinkPads boot with it off.
-if [ -d /sys/class/leds/tpacpi::kbd_backlight ]; then
-    echo 2 > /sys/class/leds/tpacpi::kbd_backlight/brightness 2>/dev/null || true
-fi
+# Turn on the keyboard backlight: many laptops boot with it off. The sysfs node
+# is root-owned (leds subsystem), so a plain echo from the display user silently
+# fails — use passwordless sudo (like edex-brightness.sh), with a direct write as
+# fallback. Match any kbd-led name (ThinkPad tpacpi::/thinkpad::, generic kbd_)
+# and use the device max so "on" means fully lit, not a fixed guess.
+for LED in /sys/class/leds/*kbd*backlight /sys/class/leds/*kbd*led; do
+    [ -f "$LED/brightness" ] || continue
+    MAX=$(cat "$LED/max_brightness" 2>/dev/null || echo 2)
+    echo "$MAX" | sudo -n tee "$LED/brightness" >/dev/null 2>&1 \
+        || echo "$MAX" > "$LED/brightness" 2>/dev/null || true
+done
 # Black the X root window + use the eDEX cursor theme for the gap between the
 # lightdm greeter closing and the eDEX window mapping — this is the "white flash
 # with the default arrow" seen on real hardware at boot. Once eDEX is up it
