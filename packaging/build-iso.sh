@@ -98,7 +98,7 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     linux-firmware network-manager wpasupplicant bluez rfkill upower \
     pulseaudio rtkit alsa-utils \
     uget aria2 btop ffmpeg \
-    nodejs npm \
+    aerc less \
     flatpak xdg-desktop-portal xdg-desktop-portal-gtk \
     playerctl \
     gvfs gvfs-backends libglib2.0-bin \
@@ -106,6 +106,30 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     fcitx5-config-qt fcitx5-frontend-gtk3 fcitx5-frontend-qt5 \
     p7zip-full intel-microcode \
     plymouth plymouth-theme-spinner xcursor-themes xclip"
+
+# Bake in Node.js LTS (official tarball). The built-in Claude CLI needs
+# Node >= 22, but Ubuntu noble's apt nodejs is 18 — so we ship the current LTS
+# in /opt/node like Firefox, symlink node/npm/npx into /usr/local/bin, and
+# `nodejs npm` is dropped from APTOPTS above so the apt versions can't shadow
+# it. This block runs BEFORE the chroot so the claude install sees Node 24.
+# Node is a HARD requirement (claude and any npm tooling are unusable without
+# it) — a failed download/extract FAILS the build.
+echo "[edex] baking in Node.js LTS (official tarball)"
+NODE_VER="v24.19.0"
+if ! curl -fsSL --retry 2 -o "$WORK/node.tar.xz" \
+        "https://nodejs.org/dist/$NODE_VER/node-$NODE_VER-linux-x64.tar.xz"; then
+    echo "[edex] ERROR: Node download failed — cannot build an ISO without Node"; exit 1
+fi
+sudo mkdir -p "$WORK/rootfs/opt/node"
+sudo tar -xJf "$WORK/node.tar.xz" -C "$WORK/rootfs/opt/node" --strip-components=1 \
+    || { echo "[edex] ERROR: Node extract failed"; exit 1; }
+if [ ! -x "$WORK/rootfs/opt/node/bin/node" ]; then
+    echo "[edex] ERROR: node binary missing in tarball"; exit 1
+fi
+for _bin in node npm npx; do
+    sudo ln -sf "/opt/node/bin/$_bin" "$WORK/rootfs/usr/local/bin/$_bin"
+done
+echo "[edex] Node $($WORK/rootfs/opt/node/bin/node -v) OK (linked into /usr/local/bin)"
 
 # Bind-mount /proc,/sys,/dev for the chroot. If the runner forbids mounts
 # (GitHub containers), fall back to proot (userspace chroot, no mounts).
@@ -122,7 +146,7 @@ done
 # in /usr/local/bin and its postinstall pulls the platform-native binary; the
 # `claude --version` sanity check catches a wrapper without its native dep (the
 # "claude native binary not installed" failure mode).
-INSTALL_CLAUDE='(set -o pipefail; npm install -g @anthropic-ai/claude-code >/tmp/edex-claude-install.log 2>&1; if ! command -v claude >/dev/null 2>&1 || ! claude --version >/dev/null 2>&1; then echo "[edex] ERROR: claude CLI failed to install"; tail -30 /tmp/edex-claude-install.log; exit 1; fi; echo "[edex] claude $(claude --version 2>/dev/null | head -1) OK")'
+INSTALL_CLAUDE='(set -o pipefail; npm install -g --prefix=/usr/local @anthropic-ai/claude-code >/tmp/edex-claude-install.log 2>&1; if ! command -v claude >/dev/null 2>&1 || ! claude --version >/dev/null 2>&1; then echo "[edex] ERROR: claude CLI failed to install"; tail -30 /tmp/edex-claude-install.log; exit 1; fi; echo "[edex] claude $(claude --version 2>/dev/null | head -1) OK")'
 
 # fastfetch:Ubuntu noble 官方源无此包,从 GitHub release 装静态二进制进 /usr/local/bin。
 # 装机即得 fastfetch 命令(不进 APP 列表)。失败则终止构建(用户要求内置)。

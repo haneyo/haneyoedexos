@@ -48,6 +48,8 @@ bash packaging/build-iso-local.sh            # 自动下载官方 ISO 并构建(
 - **装应用**:就是普通 Ubuntu——`sudo apt install <app>` 或 AppImage。
 - **像 macOS 一样放 AppImage**:把 `.AppImage` 文件丢进主目录的 `~/Applications`(装机时已自动创建),tab 4/5 的 ▾ 下拉就会直接列出它,选中即可显示。点开下拉菜单会自动重新扫描,新放的文件无需重启。
 - **浏览器开箱即用**:系统已内置 **Firefox**(官方版,离线可用),在 tab 4/5 的 app 列表里直接选;全屏按钮可原生全屏浏览。
+- **邮件客户端**:app 列表里有 **aerc**(带操作界面的终端邮件客户端),首次启动按提示配置邮箱账号即可收发邮件。
+- **Node.js 24 LTS**:系统已内置最新 LTS(apt 的 nodejs 是 18,已替换),`node`/`npm`/`npx` 直接可用,内置的 Claude CLI 依赖它。
 - **锁屏/屏保**:闲置自动进入 eDEX 风格纯代码屏保(可在设置里改)。
 
 ## 四、常见问题
