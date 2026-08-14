@@ -5491,8 +5491,7 @@ window.screensaver = (() => {
         coverRestoreTab,
         endCover,
         streamCodeIntoCover,
-        stopCodeStream,
-        isCodeStreaming
+        stopCodeStream
     };
 })();
 
