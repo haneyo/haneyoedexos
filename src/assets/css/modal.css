@@ -589,6 +589,14 @@ div.modal_popup #settingsEditor .settings_ver_row {
 }
 div.modal_popup #settingsEditor .settings_ver_row .settings_net_actions {
     margin-top: 0;
+    /* keep the check/update buttons from hugging the modal's right edge */
+    margin-left: auto;
+    margin-right: 0.6vh;
+}
+/* Update-check outcome dialog (current + latest versions, Update / Close) */
+div.modal_popup .settings_update_dialog {
+    line-height: 1.6;
+    color: var(--color_white);
 }
 div.modal_popup #settingsEditor .settings_net_proxy {
     display: flex;
