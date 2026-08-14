@@ -1,0 +1,18 @@
+[Unit]
+Description=eDEX-OS first-boot user setup
+# The real login user is created by cloud-init on the installed system's FIRST
+# BOOT (Subiquity defers the interactive identity past install-edex.sh), so this
+# must run After=cloud-init.target — and Before=lightdm.service so the autologin
+# config is in place before the greeter starts. A done-file touched by the script
+# makes a failed run retry on the next boot.
+ConditionPathExists=!/etc/edex-firstboot.done
+After=cloud-init.target systemd-user-sessions.service
+Before=lightdm.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/edex-firstboot.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
