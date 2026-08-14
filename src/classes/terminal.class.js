@@ -10,6 +10,7 @@ class Terminal {
             this.Ipc = require("electron").ipcRenderer;
 
             this.port = opts.port || 3000;
+            this.muted = !!opts.muted;
             this.cwd = "";
             this.oncwdchange = () => {};
 
@@ -239,7 +240,10 @@ class Terminal {
             this.socket.addEventListener("message", e => {
                 let d = Date.now();
 
-                if (d - this.lastSoundFX > 30) {
+                // muted terminals (the cover session's inert cat pty) must not
+                // chime — the screensaver/lock streams fake content, not real
+                // output, so its stdout sound would be noise (#50).
+                if (!this.muted && d - this.lastSoundFX > 30) {
                     window.audioManager.stdout.play();
                     this.lastSoundFX = d;
                 }
@@ -320,13 +324,22 @@ class Terminal {
                 // past the visible edge, clipping the output.
                 let dims = fitAddon.proposeDimensions();
                 if (!dims || typeof dims.cols === "undefined" || typeof dims.rows === "undefined") return;
+                // A hidden / mid-animation container reports fractional or 0
+                // dims; xterm's resize() rejects non-integers with "This API
+                // only accepts integers" (#48). Floor and clamp before touching
+                // the terminal.
+                const cols = Math.max(1, Math.floor(dims.cols));
+                const rows = Math.max(1, Math.floor(dims.rows));
 
-                if (this.term.cols !== dims.cols || this.term.rows !== dims.rows) {
-                    this.resize(dims.cols, dims.rows);
+                if (this.term.cols !== cols || this.term.rows !== rows) {
+                    this.resize(cols, rows);
                 }
             };
 
             this.resize = (cols, rows) => {
+                cols = Math.floor(Number(cols));
+                rows = Math.floor(Number(rows));
+                if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols < 1 || rows < 1) return;
                 this.term.resize(cols, rows);
                 this._sendSizeToServer();
             };

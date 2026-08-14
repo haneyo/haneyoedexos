@@ -51,7 +51,7 @@ window._isHotReload = () => {
 // DOM access happens at call time (set()), never at module load.
 window.cover = (() => {
     const FAKE_TABS = { 0: "MAIN - LAUNCHCTRL", 1: "#2 - GUIDANCE", 2: "KEYHOLDER", 3: "WARHEAD A", 4: "WARHEAD B" };
-    const FALLBACK_TABS = { 0: "MAIN SHELL", 1: "EMPTY", 2: "CLAUDE", 3: "MONITOR A", 4: "MONITOR B" };
+    const FALLBACK_TABS = { 0: "MAIN SHELL", 1: "EMPTY", 2: "TERM", 3: "MONITOR A", 4: "MONITOR B" };
     const FAKE_PROCS = ["launch_seq", "targeting_core", "guidance_fuse", "key_custodian",
         "threat_eval", "silo_monitor", "telemetry_relay", "auth_gate",
         "warhead_diag", "perim_alarm"];
@@ -60,8 +60,10 @@ window.cover = (() => {
 
     let active = false;
     // Real process names seen by the terminal tabs while NOT covered, so they
-    // can be restored verbatim when the cover is released.
-    const realProc = { 0: null, 1: null };
+    // can be restored verbatim when the cover is released. Tab 2 is now a plain
+    // terminal too (claude lives in the CLI-app panels), so it follows the same
+    // MAIN/#2 real-process labelling as tabs 0/1.
+    const realProc = { 0: null, 1: null, 2: null };
     let prevFsDir = null; // directory the file browser showed before covering
     // The fabricated process list is minted ONCE per cover session (screensaver
     // → lock both wear the same cover) and frozen, so the TOP PROCESSES panel
@@ -182,6 +184,7 @@ window.cover = (() => {
         if (active) return FAKE_TABS[num] != null ? FAKE_TABS[num] : "";
         if (num === 0) return realP ? "MAIN - " + realP : FALLBACK_TABS[num];
         if (num === 1) return realP ? "#2 - " + realP : FALLBACK_TABS[num];
+        if (num === 2) return realP ? "#3 - " + realP : FALLBACK_TABS[num];
         if (num === 3 || num === 4) return realMonitor[num] || FALLBACK_TABS[num];
         return FALLBACK_TABS[num] != null ? FALLBACK_TABS[num] : "";
     };
@@ -195,7 +198,7 @@ window.cover = (() => {
         }
     };
     const rememberProc = (num, p) => {
-        if (num === 0 || num === 1) realProc[num] = p;
+        if (num === 0 || num === 1 || num === 2) realProc[num] = p;
     };
 
     // A path is "fake" if it belongs to the fabricated tree; we must never
@@ -1145,7 +1148,7 @@ async function initUI() {
         <ul id="main_shell_tabs">
             <li id="shell_tab0" onclick="window.focusShellTab(0);" class="active"><p>MAIN SHELL</p></li>
             <li id="shell_tab1" onclick="window.focusShellTab(1);"><p>EMPTY</p></li>
-            <li id="shell_tab2" onclick="window.focusShellTab(2);"><p>CLAUDE</p></li>
+            <li id="shell_tab2" onclick="window.focusShellTab(2);"><p>TERM</p></li>
             <li id="shell_tab3" onclick="window.focusShellTab(3);"><p><span id="shell_tab3_label">APP</span> <span class="webapp_chevron" title="Switch app" onclick="event.stopPropagation();window.appmonitorA.toggleMenu(event);">${Icons.chevronDown}</span></p></li>
             <li id="shell_tab4" onclick="window.focusShellTab(4);"><p>${(window.settings.appMonitor||{}).showGui?'<button class="appmonitor_fs_tab" title="Fullscreen" onclick="event.stopPropagation();window.appmonitorB.fullscreenButton()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2 2h20L2 22z"/></svg></button>':''}<span id="shell_tab4_label">APP</span> <span class="webapp_chevron" title="Switch app" onclick="event.stopPropagation();window.appmonitorB.toggleMenu(event);">${Icons.chevronDown}</span></p></li>
         </ul>
@@ -1676,7 +1679,7 @@ async function initUI() {
     });
 
     // Tabs 4 & 5 are CLI panels by default: command-line apps with a UI
-    // (claude, browsh, aerc, htop, btop) run in a real terminal session, and
+    // (claude, carbonyl, aerc, btop) run in a real terminal session, and
     // both tabs read "APP". When the experimental GUI-app mode
     // (settings.appMonitor.showGui) is enabled, tab 5 becomes the
     // AppMonitorPanel virtual-display entry ("GUI APPS") and shows the hollow
@@ -2123,7 +2126,6 @@ async function initUI() {
                 if (!st) return;
                 const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
                 set("settingsUpClashVer", (st.clash && st.clash.installed) ? (st.clash.version ? "v" + st.clash.version : "installed") : "–");
-                set("settingsUpFirefoxVer", (st.firefox && st.firefox.version) ? "v" + st.firefox.version : "–");
                 set("settingsUpClaudeVer", (st.claude && st.claude.version) ? "v" + st.claude.version : "–");
             }).catch(() => {});
         },
@@ -2166,10 +2168,14 @@ async function initUI() {
     // network settings category. Applies through a background command via sysCmd
     // (like file moves), so it never shows in a terminal tab. eDEX has
     // passwordless sudo, so `enable --now` / `disable --now` is enough — no
-    // main-process involvement, and the state survives reboots. Off by default.
+    // main-process involvement, and the state survives reboots. On by default.
     window.ssh = {
         refreshStatus() {
-            window.sysCmd.run("sudo -n systemctl is-active ssh").then(r => {
+            // Ubuntu 24.04 socket-activates sshd: ssh.socket is what listens on
+            // :22. ssh.service only goes active while a connection is open, so
+            // `is-active ssh` reads "inactive" (toggle would wrongly show OFF)
+            // whenever the machine is idle — check the socket, not the service.
+            window.sysCmd.run("sudo -n systemctl is-active ssh.socket").then(r => {
                 const el = document.getElementById("settingsSshEnabled");
                 if (el) el.value = r.ok && (r.out || "").trim() === "active" ? "1" : "0";
             }).catch(() => {});
@@ -2364,7 +2370,10 @@ window.remakeKeyboard = layout => {
 };
 
 window.focusShellTab = number => {
-    window.audioManager.folder.play();
+    // The cover-session switch (screensaver / lock) must not play the tab
+    // chime — window.screensaverSilent is set by the screensaver module while
+    // covering, and cleared when the cover lifts (#50).
+    if (!window.screensaverSilent) window.audioManager.folder.play();
     const kind = window.shellSlotKinds[number] || "term";
 
     // Toggle the tab-strip <li> active classes.
@@ -2405,10 +2414,10 @@ window.focusShellTab = number => {
     } else if (number > 0 && number <= 4 && window.term[number] !== null && typeof window.term[number] !== "object") {
         window.term[number] = null;
 
-        // Tab 2 is the dedicated Claude Code tab (see the _boot.js ttyspawn handler).
-        const isClaudeTab = (number === 2);
-        document.getElementById("shell_tab"+number).innerHTML = `<p>${isClaudeTab ? "LAUNCHING" : "LOADING"}...</p>`;
-        ipc.send("ttyspawn", isClaudeTab ? "claude" : "term");
+        // Every lazy tab (1-4) is a plain terminal now — claude lives in the
+        // CLI-app panels (tab 3/4), so tab 2 is no longer special (#57).
+        document.getElementById("shell_tab"+number).innerHTML = "<p>LOADING...</p>";
+        ipc.send("ttyspawn", "term");
         ipc.once("ttyspawn-reply", (e, r) => {
             if (r.startsWith("ERROR")) {
                 document.getElementById("shell_tab"+number).innerHTML = "<p>ERROR</p>";
@@ -2423,51 +2432,6 @@ window.focusShellTab = number => {
 
                 window.term[number].onclose = e => {
                     delete window.term[number].onprocesschange;
-
-                    // The Claude tab is special: an early exit there is almost
-                    // always an error (missing API key / auth failure), and the
-                    // stock "wipe the pane + switch to the previous tab" threw
-                    // that error away before anyone could read it. Stay on this
-                    // tab and show the last thing the process printed, with a
-                    // pointer to the fix. Clicking the tab again relaunches
-                    // (window.term[number] is deleted below).
-                    const isClaude = (number === 2);
-                    let lastScreen = "";
-                    if (isClaude) {
-                        try {
-                            const t = window.term[number].term;
-                            const buf = t && t.buffer && t.buffer.active;
-                            const total = buf ? buf.length : 0;
-                            const from = Math.max(0, total - 60);
-                            const lines = [];
-                            for (let i = from; i < total; i++) {
-                                const line = buf.getLine(i);
-                                if (line) lines.push(line.translateToString(true));
-                            }
-                            lastScreen = lines.join("\r\n");
-                        } catch (err) {
-                            try { console.error("claude exit capture failed:", err); } catch (_) {}
-                        }
-                    }
-
-                    document.getElementById("shell_tab"+number).innerHTML = "<p>" + (isClaude ? "CLAUDE" : "EMPTY") + "</p>";
-
-                    if (isClaude) {
-                        const pane = document.getElementById("terminal"+number);
-                        window.term[number].term.dispose();
-                        delete window.term[number];
-                        const authHint = /api[_ -]?key|authenticat|anthropic|\b401\b|\b403\b|\blogin\b/i.test(lastScreen);
-                        pane.classList.add("terminal-closed");
-                        pane.textContent =
-                            (lastScreen || "(claude exited without output)") +
-                            "\r\n\r\n[ claude process ended ]\r\n" +
-                            (authHint
-                                ? "No API key configured? Open Settings -> Claude and set one,\r\n"
-                                  + "then click this CLAUDE tab to relaunch.\r\n"
-                                : "Click this CLAUDE tab to relaunch.\r\n");
-                        return;
-                    }
-
                     document.getElementById("terminal"+number).innerHTML = "";
                     window.term[number].term.dispose();
                     delete window.term[number];
@@ -2734,7 +2698,7 @@ window.openSettings = async () => {
                 settingsRow("settings.network.btDevices", `<div id="settingsNetBtList" class="settings_net_list" augmented-ui="bl-clip tr-clip exe"></div>
                     <div class="settings_net_actions"><button type="button" id="settingsNetBtScan" class="settings_net_btn">${t("settings.network.btScan")}</button></div>`, "settings.network.btDevices.help"),
                 section("settings.cat.ssh"),
-                settingsRow("settings.ssh.enabled", netOnOff("settingsSshEnabled", false), "settings.ssh.enabled.help"),
+                settingsRow("settings.ssh.enabled", netOnOff("settingsSshEnabled", true), "settings.ssh.enabled.help"),
             ].join("");
         } },
         { id: "clash", titleKey: "settings.cat.clash", html: () => {
@@ -2828,7 +2792,6 @@ window.openSettings = async () => {
                     <button type="button" id="settingsUpClashCheck" class="settings_net_btn">${t("settings.updates.check")}</button>
                     <button type="button" id="settingsUpClashUpdate" class="settings_net_btn">${t("settings.updates.updateBtn")}</button>
                 </div>`),
-            settingsRow("settings.updates.firefox", `<span id="settingsUpFirefoxVer" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.manual")}</span>`),
             settingsRow("settings.updates.claude", `<span id="settingsUpClaudeVer" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.auto")}</span>`),
         ].join("") },
         { id: "power", titleKey: "settings.cat.power", html: () => [
@@ -4386,6 +4349,84 @@ function cyberEntrance(onDone) {
 window.screensaver = (() => {
     let active = false;
 
+    // ---- cover session: 屏保/锁屏共享一个 CliPanel 真终端会话 ----
+    // 旧实现(SSVT 覆盖层)已废弃:独立 xterm div 渲染和真终端不一致,而且
+    // show/hide/windDown 还要对 window.term[currentTerm] 做 reset()+writelr("")
+    // 清屏 —— 解锁后用户的 CLAUDE 等会话被清空(Bug8)。
+    // 现在改为:屏保/锁屏在 CliPanel(tab3,appmonitorA 恒为 CliPanel)里临时建
+    // 一个 `__cover__` 会话(真 pty `cat`,muted Terminal wrapper),假代码流进它;
+    // 解锁/dismiss 时销毁。用户所有真终端(0/1/2 tab)和已开的 CLI 会话全程不碰,
+    // 无需任何缓冲区重放。
+    let coverPanel = null;        // hosting CliPanel (always appmonitorA, tab 3)
+    const coverTab = 3;           // shell tab the cover session lives on
+    let _coverRestoreTab = null;  // tab to return to when the cover lifts
+    let coverShim = null;         // the window.term[3] shim the wrapper replaces
+    const _pickCoverPanel = () => {
+        // appmonitorA is always a CliPanel — a safe cover host even when tab 4
+        // is an AppMonitorPanel (showGui). Guarded by _uiReady so the boot-time
+        // lock (matrix, never touches the terminal) never reaches here.
+        const p = (window._uiReady && window.appmonitorA && typeof window.appmonitorA.beginCoverSession === "function")
+            ? window.appmonitorA : null;
+        coverPanel = p;
+        return p;
+    };
+    // The Terminal wrapper of the cover session (null until the pty attaches;
+    // codeTick and the lock poll / self-heal once it does).
+    const coverTerm = () => {
+        if (window.screensaverSilent === true && coverPanel && typeof coverPanel.coverTerm === "function") {
+            return coverPanel.coverTerm();
+        }
+        const p = _pickCoverPanel();
+        if (!p) return null;
+        if (_coverRestoreTab == null) _coverRestoreTab = window.currentTerm;
+        window.screensaverSilent = true;
+        p.beginCoverSession();
+        if (coverTab !== window.currentTerm) {
+            try { if (window.focusShellTab) window.focusShellTab(coverTab); } catch (e) {}
+        }
+        // Route the virtual keyboard to the cover wrapper (the tab shim's write
+        // is a no-op), so touch input reaches the lock's _termKey interceptor.
+        const w = p.coverTerm ? p.coverTerm() : null;
+        if (w && window.term && window.term[coverTab] !== w) {
+            if (!coverShim) coverShim = window.term[coverTab];
+            window.term[coverTab] = w;
+        }
+        return w;
+    };
+    const coverRestoreTab = () => _coverRestoreTab;
+    // Destroy the cover session and release the cover's hold on the panel /
+    // shim / sound. `keepRestoreTab` preserves _coverRestoreTab across the
+    // lock→screensaver idle timeout, so the eventual dismiss still returns to
+    // the tab the user was on before the cover started (#88).
+    const endCover = keepRestoreTab => {
+        const p = coverPanel;
+        coverPanel = null;
+        if (!keepRestoreTab) _coverRestoreTab = null;
+        window.screensaverSilent = false;
+        if (coverShim != null && window.term) {
+            try { window.term[coverTab] = coverShim; } catch (e) {}
+            coverShim = null;
+        }
+        if (p && typeof p.endCoverSession === "function") {
+            try { p.endCoverSession(); } catch (e) {}
+        }
+    };
+    // Direct lock (Win+L, no screensaver first): stream fake code behind the
+    // passcode box for ~1.5s before it assembles. Creates the cover session
+    // like the screensaver would, but never sets `active` — bumpActivity must
+    // keep treating the input that started the lock as a dismiss, not a wake.
+    const streamCodeIntoCover = () => {
+        coverTerm();
+        sessionFirstFile = true;
+        sessionUsed.clear();
+        winding = false;
+        pendingLines = [];
+        if (!codeTimer) codeTimer = setInterval(codeTick, 100);
+    };
+    const stopCodeStream = () => {
+        if (codeTimer) { clearInterval(codeTimer); codeTimer = null; }
+    };
+
     // ---- code style (hacktyper-style: streams procedurally generated source
     // code so it never visibly repeats - brace depth and indentation stay
     // coherent for a premium, "real code" look) ----
@@ -4624,13 +4665,15 @@ window.screensaver = (() => {
 
     let codeTickCount = 0;
     const codeTick = () => {
-        // Guard window.term itself: the code screensaver can start during the
-        // boot-time lock, BEFORE initUI() creates window.term / currentTerm, so
-        // a bare window.term[currentTerm] read throws (undefined[undefined])
-        // and stacks a crash modal for every tick.
-        let t = window.term && window.term[window.currentTerm];
-        if (!t || !t.term || typeof t.term.write !== "function") return;
-        t.term.write(nextLine() + "\r\n");
+        // Stream into the cover session (real pty on the CLI panel tab). The
+        // pty attaches asynchronously, so the wrapper can be null at first —
+        // skip the tick and self-heal on the next one. The user's real
+        // terminals (0-2) and running CLI sessions are never touched, so a
+        // boot-time code lock (before _uiReady) simply no-ops, not crashes
+        // (#50).
+        const w = coverTerm();
+        if (!w || !w.term || typeof w.term.write !== "function") return;
+        w.term.write(nextLine() + "\r\n");
         // Once a second, force a full repaint from the buffer. The diff renderer
         // only repaints cells it saw change, so when a wrapped long line is
         // overwritten by a shorter one it can leave a stale glyph in the last
@@ -4643,9 +4686,9 @@ window.screensaver = (() => {
         // the real terminal.
         if (++codeTickCount % 10 === 0) {
             try {
-                const rs = t.term._core && t.term._core._renderService;
+                const rs = w.term._core && w.term._core._renderService;
                 if (rs && typeof rs.clear === "function") rs.clear();
-                t.term.refresh(0, t.term.rows - 1);
+                w.term.refresh(0, w.term.rows - 1);
             } catch (e) {}
         }
     };
@@ -4737,29 +4780,19 @@ window.screensaver = (() => {
                 mTimer = setInterval(mDraw, 50);
             } else {
                 // Fresh code session: opening banner plays once, collections
-                // stream until wind-down. Cleared so the same terminal can be
-                // re-entered (timeout back to screensaver) with a fresh opening.
+                // stream until wind-down. Cleared so the same cover session can
+                // be re-entered (timeout back to screensaver) with a fresh
+                // opening.
                 sessionFirstFile = true;
                 sessionUsed.clear();
                 winding = false;
                 pendingLines = [];
-                // The fake code streams straight into the real terminal, and the
-                // lock that follows this screensaver re-serializes that same
-                // buffer for its unlock replay — so without a clean snapshot the
-                // replay would carry the fake code and the wind-down blank lines,
-                // pushing the user's content up and leaving a blank gap (#148).
-                // Capture the clean buffer BEFORE the first fake line is written;
-                // the lock prefers this over a live re-serialize.
-                this.preSaverTerm0 = null;
-                try {
-                    const t0 = window.term && window.term[0];
-                    if (t0 && t0.term) {
-                        const {SerializeAddon} = require("xterm-addon-serialize");
-                        const addon = new SerializeAddon();
-                        t0.term.loadAddon(addon);
-                        this.preSaverTerm0 = addon.serialize();
-                    }
-                } catch (e) { this.preSaverTerm0 = null; }
+                // Ensure the cover session exists and the shell is on its tab
+                // before the fake identity (cover.set) paints over the labels.
+                // The user's real terminals (0-2) and running CLI sessions are
+                // never touched, so there is nothing to snapshot or replay on
+                // unlock (#50).
+                coverTerm();
                 codeTimer = setInterval(codeTick, 100);
             }
             // The code screensaver draws NO covering overlay (the fake code
@@ -4790,12 +4823,6 @@ window.screensaver = (() => {
         hide(immediate, keepCover, keepMatrixRain) {
             if (!active) return;
             active = false;
-            // The pre-screensaver buffer snapshot (preSaverTerm0) is only valid
-            // for the dismiss-into-lock handoff, which passes keepCover=true.
-            // Any other dismissal returns to the live terminal whose buffer has
-            // since changed — drop the snapshot so a later direct lock (Win+L)
-            // re-serializes the CURRENT state, not a stale pre-screensaver one.
-            if (!keepCover) this.preSaverTerm0 = null;
             document.body.classList.remove("screensaver_on");
             if (window.cursorTrap) window.cursorTrap.show();
             // Leave cover mode: restore the real tabs / filesystem / IP / procs.
@@ -4806,24 +4833,21 @@ window.screensaver = (() => {
             if (window.cover && !keepCover) window.cover.set(false);
             if (immediate) {
                 // Used when dismissing straight into the lock screen: stop
-                // cleanly, no wind-down animation and no boot replay.
-                if (codeTimer) {
-                    clearInterval(codeTimer);
-                    codeTimer = null;
-                    // The code style streams into the real terminal — clear it
-                    // back to a fresh prompt, otherwise the fake code lingers on
-                    // screen after the screensaver is dismissed (#29).
-                    const t = window.term && window.term[window.currentTerm];
-                    if (t && t.term) {
-                        try {
-                            if (typeof t.term.reset === "function") t.term.reset();
-                            if (typeof t.writelr === "function") t.writelr("");
-                        } catch (e) {}
-                    }
-                }
+                // cleanly, no wind-down animation and no boot replay. The lock
+                // borrows the cover session and redraws it with the passcode
+                // box, so it survives when keepCover is set; any other dismissal
+                // destroys it and returns to the pre-cover tab (#50).
+                if (codeTimer) { clearInterval(codeTimer); codeTimer = null; }
                 if (mTimer && !keepMatrixRain) { clearInterval(mTimer); mTimer = null; }
                 fading = false; fadeTail = 0;
                 if (canvas && !keepMatrixRain) canvas.style.display = "none";
+                if (!keepCover) {
+                    const backTo = _coverRestoreTab;
+                    endCover();
+                    if (backTo != null && backTo !== window.currentTerm) {
+                        try { if (window.focusShellTab) window.focusShellTab(backTo); } catch (e) {}
+                    }
+                }
                 return;
             }
             if (canvas) {
@@ -4838,27 +4862,33 @@ window.screensaver = (() => {
                 // Natural wind-down for the code style: stop generating, write a
                 // completion line, then scroll the code up one line at a time so
                 // the visible code gradually decreases; once it's scrolled off,
-                // reset the terminal to a fresh shell prompt.
-                let t = window.term && window.term[window.currentTerm];
-                if (t && t.term) {
-                    if (typeof t.term.write === "function") {
-                        // Closing banner — the fake ending plays only when the
-                        // code disappears (#89).
-                        buildEnding().forEach(l => t.term.write(l + "\r\n"));
-                        let rows = t.term.rows || 24;
-                        let scrolled = 0;
-                        let scroller = setInterval(() => {
-                            if (typeof t.term.write === "function") t.term.write("\n");
-                            scrolled++;
-                            if (scrolled >= rows) {
-                                clearInterval(scroller);
-                                if (typeof t.term.reset === "function" && typeof t.writelr === "function") {
-                                    t.term.reset();
-                                    t.writelr("");
-                                }
-                            }
-                        }, 45);
+                // the cover session is destroyed and the pre-cover tab restored.
+                // The user's real terminals were never touched, so no reset or
+                // prompt replay is needed (#50).
+                const w = coverTerm();
+                const backTo = _coverRestoreTab;
+                const finishCover = () => {
+                    endCover();
+                    if (backTo != null && backTo !== window.currentTerm) {
+                        try { if (window.focusShellTab) window.focusShellTab(backTo); } catch (e) {}
                     }
+                };
+                if (w && w.term && typeof w.term.write === "function") {
+                    // Closing banner — the fake ending plays only when the
+                    // code disappears (#89).
+                    buildEnding().forEach(l => w.term.write(l + "\r\n"));
+                    let rows = w.term.rows || 24;
+                    let scrolled = 0;
+                    let scroller = setInterval(() => {
+                        if (typeof w.term.write === "function") w.term.write("\n");
+                        scrolled++;
+                        if (scrolled >= rows) {
+                            clearInterval(scroller);
+                            finishCover();
+                        }
+                    }, 45);
+                } else {
+                    finishCover();
                 }
             }
         },
@@ -4903,13 +4933,13 @@ window.screensaver = (() => {
             if (!active || winding) { if (cb) cb(); return; }
             winding = true;
             if (codeTimer) { clearInterval(codeTimer); codeTimer = null; }
-            const t = window.term && window.term[window.currentTerm];
-            if (!t || !t.term || typeof t.term.write !== "function") { winding = false; if (cb) cb(); return; }
-            buildEnding().forEach(l => t.term.write(l + "\r\n"));
+            const w = coverTerm();
+            if (!w || !w.term || typeof w.term.write !== "function") { winding = false; if (cb) cb(); return; }
+            buildEnding().forEach(l => w.term.write(l + "\r\n"));
             let ticks = 0;
             const accel = setInterval(() => {
                 try {
-                    for (let i = 0; i < 4; i++) t.term.write("\n");
+                    for (let i = 0; i < 4; i++) w.term.write("\n");
                 } catch (e) {}
                 if (++ticks >= 30) {
                     clearInterval(accel);
@@ -4964,8 +4994,19 @@ window.screensaver = (() => {
             sessionUsed.clear();
             winding = false;
             pendingLines = [];
+            // Rebuild the cover session synchronously so the resumed stream does
+            // not flash the user's CLI app for a frame (#88 / #50).
+            coverTerm();
             if (!codeTimer) codeTimer = setInterval(codeTick, 100);
-        }
+        },
+        // Cover-session API shared with the lock screen (#50). The lock borrows
+        // the same real pty the code screensaver streams into, so a screensaver
+        // → lock handover is seamless, and a direct lock (Win+L) creates one.
+        coverTerm,
+        coverRestoreTab,
+        endCover,
+        streamCodeIntoCover,
+        stopCodeStream
     };
 })();
 

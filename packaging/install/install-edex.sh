@@ -597,14 +597,15 @@ fi
 visudo -cf /etc/sudoers.d/edex-user >/dev/null 2>&1 \
     || { echo "[edex] FATAL: /etc/sudoers.d/edex-user failed visudo -cf" >&2; exit 1; }
 
-echo "[edex] SSH server: installed but OFF by default (settings → network → SSH)"
-# openssh-server is baked into the ISO; keep the toggle's default-off state true
-# on fresh installs (openssh's postinst may enable the unit during image build).
+echo "[edex] SSH server: installed and ON by default (settings → network → SSH)"
+# openssh-server is baked into the ISO; default SSH to ON on fresh installs
+# (socket-activated, survives reboot). Toggle off in settings → network → SSH
+# runs `systemctl disable --now ssh ssh.socket`.
 # The settings switch uses `systemctl enable --now ssh ssh.socket` /
 # `disable --now ssh ssh.socket`. Ubuntu 24.04 socket-activates sshd via
 # ssh.socket, so `disable --now ssh` alone stops ssh.service but the socket
 # keeps re-triggering it — the socket must be disabled too.
-systemctl disable --now ssh ssh.socket 2>/dev/null || true
+systemctl enable --now ssh ssh.socket 2>/dev/null || true
 
 # apt must point at the Ubuntu archive so 'sudo apt update && upgrade' works.
 # Ubuntu 24.04 writes the same repos as /etc/apt/sources.list.d/ubuntu.sources at
