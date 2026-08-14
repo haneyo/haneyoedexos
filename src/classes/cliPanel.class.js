@@ -56,7 +56,11 @@ window._cliPickIcon = (id) => {
         s.id = "edex_cli_css";
         // Hide the xterm viewport scrollbar gutter too — otherwise it eats ~15px
         // on the right and the browser renders with black bars on both sides (#75).
-        s.textContent = ".cli_session{position:absolute;inset:0;display:none;overflow:hidden}.cli_session.active{display:block}"
+        // Bleed past the shell's padding so the terminal fills the whole frame
+        // (the browser rectangle otherwise stops short and leaves black bars on
+        // the left/bottom, #86), then clip the bottom-left corner to match the
+        // frame's bl notch — same approach as .appmonitor_webview.
+        s.textContent = ".cli_session{position:absolute;inset:0 calc(-1 * var(--shell-pad, 0.74vh)) calc(-1 * var(--shell-pad, 0.74vh)) calc(-1 * var(--shell-pad, 0.74vh));display:none;overflow:hidden;clip-path:polygon(0 0,100% 0,100% 100%,15px 100%,0 calc(100% - 15px))}.cli_session.active{display:block}"
             + ".xterm .xterm-viewport{overflow-y:hidden!important;scrollbar-width:none!important}"
             + ".xterm .xterm-viewport::-webkit-scrollbar{width:0!important;height:0!important;display:none!important}";
         document.head.appendChild(s);

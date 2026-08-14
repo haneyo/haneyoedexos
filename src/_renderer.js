@@ -419,30 +419,28 @@ const scifiCursor = () => {
     return "url(\"data:image/svg+xml;utf8," + encodeURIComponent(svg) + "\") 2 2, default";
 };
 
-// ---- WP7 pointer set (assets/cursors/*.ani) ----
-// The bundled .ani files are Windows cursor resources: a RIFF "ACON" wrapper
-// holding per-frame ICO cursors, each a 32bpp DIB (BITMAPINFOHEADER with the
-// height doubled for the AND mask). Chromium can load one via `cursor: url()`,
-// but then the pointer size is chosen by the OS, not the user. So each frame is
-// parsed here, blitted to a canvas at the configured size (settings.cursorSize),
-// and emitted as a data-URI PNG with the hotspot scaled proportionally. A
-// `#cursor_style` block then maps the pointer roles (default / hand / text / …)
-// to those data URIs. Native CSS cursors mean the OS still does the hit-testing
-// — no overlay div.
+// ---- Windows pointer set (assets/cursors/*.cur) ----
+// The bundled .cur files are single-frame Windows cursor resources: a 32bpp
+// DIB (BITMAPINFOHEADER with the height doubled for the AND mask). Chromium can
+// load one via `cursor: url()`, but then the pointer size is chosen by the OS,
+// not the user. So each frame is parsed here, blitted to a canvas at the
+// configured size (settings.cursorSize), and emitted as a data-URI PNG with the
+// hotspot scaled proportionally. A `#cursor_style` block then maps the pointer
+// roles (default / hand / text / …) to those data URIs. Native CSS cursors mean
+// the OS still does the hit-testing — no overlay div.
 const CURSOR_ROLES = {
-    // .ani frames carry no hotspot in the ICO entries (that lives in the ACON
-    // header), so each role's click point is pinned here instead of read from
-    // the file (measured from the 32×32 first frame of the WP7 pack).
-    default:     { file: "WP7Cursor.ani", hotX: 2, hotY: 5 },
-    hand:        { file: "WP7Links.ani", hotX: 2, hotY: 5 },
-    text:        { file: "WP7Text.ani", hotX: 6, hotY: 11 },
-    crosshair:   { file: "WP7Precision.ani", hotX: 10, hotY: 10 },
-    notallowed:  { file: "WP7Unavail.ani", hotX: 15, hotY: 15 },
-    move:        { file: "WP7Move.ani", hotX: 13, hotY: 13 },
-    ns:          { file: "WP7Vert.ani", hotX: 13, hotY: 13 },
-    ew:          { file: "WP7Hor.ani", hotX: 13, hotY: 13 },
-    nwse:        { file: "WP7Nwse.ani", hotX: 20, hotY: 10 },
-    nesw:        { file: "WP7Nesw.ani", hotX: 10, hotY: 10 }
+    // .cur files carry their own hotspot in the ICO entry, so the click point
+    // is read from the file (hotX/hotY omitted → falls back to entry.hotX/Y).
+    default:     { file: "Arrow.cur" },
+    hand:        { file: "Hand.cur" },
+    text:        { file: "IBeam.cur" },
+    crosshair:   { file: "Cross.cur" },
+    notallowed:  { file: "NO.cur" },
+    move:        { file: "SizeAll.cur" },
+    ns:          { file: "SizeNS.cur" },
+    ew:          { file: "SizeWE.cur" },
+    nwse:        { file: "SizeNWSE.cur" },
+    nesw:        { file: "SizeNESW.cur" }
 };
 
 // Pick the frame closest to (but ≥) the target size — downscaling from a
@@ -2091,35 +2089,91 @@ async function initUI() {
         app: null,
         clash: null,
         _clashUpdating: false,
+        _appUpdatable: false,
+        _clashUpdatable: false,
         refresh() {
             this.checkApp();
             this.refreshBundled();
             this.refreshLastUpdate();
             this.checkClashUpdate();
         },
-        checkApp() {
-            ipc.invoke("edex:latest-release").then(r => {
+        checkApp(manual) {
+            // manual=true (the "Check" button): dialog with the outcome. refresh()
+            // also calls this on every settings open — no dialog then.
+            return ipc.invoke("edex:latest-release").then(r => {
                 this.app = r;
                 const ver = document.getElementById("settingsUpAppVersion");
-                const upd = document.getElementById("settingsUpAppUpdate");
-                if (!ver) return;
+                const btn = document.getElementById("settingsUpAppCheck");
+                if (!ver) return r;
                 const current = (r && r.current) || remote.app.getVersion();
                 if (r && r.ok) {
                     const c = cmpVer(r.latest, current);
                     if (c > 0) ver.textContent = "v" + current + " → " + t("settings.updates.newVersion") + " v" + r.latest;
                     else if (c === 0) ver.textContent = "v" + current + " (" + t("settings.updates.upToDate") + ")";
                     else ver.textContent = "v" + current + " (dev)";
-                    if (upd) upd.style.display = (c > 0 && r.appImageUrl) ? "" : "none";
+                    // Available update → the check button becomes the update button.
+                    this._appUpdatable = (c > 0 && r.appImageUrl);
+                    if (btn) btn.textContent = this._appUpdatable ? t("settings.updates.updateBtn") : t("settings.updates.check");
                 } else {
                     ver.textContent = "v" + current + (r && r.error === "FETCH_FAILED" ? " — GitHub unreachable" : "");
-                    if (upd) upd.style.display = "none";
+                    this._appUpdatable = false;
+                    if (btn) btn.textContent = t("settings.updates.check");
                 }
-            }).catch(() => {});
+                if (manual) this._appManualResult(r, current);
+                return r;
+            }).catch(err => { if (manual) this.toast(t("settings.updates.updateFailed")); return null; });
+        },
+        _appManualResult(r, current) {
+            // The check button was pressed by hand: surface the outcome in a
+            // dialog. Update available → confirm (shows current + latest, offers
+            // Update / Close); already current → tell the user.
+            if (!r || !r.ok) { this.toast(t("settings.updates.updateFailed") + (r && r.error ? " " + r.error : "")); return; }
+            const c = cmpVer(r.latest, current);
+            if (c > 0 && r.appImageUrl) {
+                this._confirmModal(
+                    t("settings.updates.newVersion"),
+                    `${t("settings.updates.current")} v${current}<br>${t("settings.updates.latest")} v${r.latest}`,
+                    () => this.updateApp(),
+                    t("settings.updates.updateBtn")
+                );
+            } else if (c === 0) {
+                this._confirmModal(
+                    t("settings.updates.upToDate"),
+                    `${t("settings.updates.current")} v${current}`,
+                    null, null
+                );
+            } else {
+                this.toast(t("settings.updates.upToDate"));
+            }
         },
         updateApp() {
             const r = this.app;
             if (!r) return;
             window.edexUpdate.start(r.appImageUrl || "", r.sha256Url || "", r.releaseUrl || "");
+        },
+        // Shared update-dialog (type:custom Modal). html shows current + latest;
+        // when confirmLabel is given, a confirm button runs `onConfirm` and the
+        // check button in the row flips to "Update" before closing. The Modal
+        // constructor returns the generated id; the instance lives in
+        // window.modals[id], so we capture the id after construction and close
+        // through the registry when the confirm button is pressed.
+        _confirmModal(title, html, onConfirm, confirmLabel) {
+            let modalId = null;
+            const btns = [];
+            if (confirmLabel && typeof onConfirm === "function") {
+                window.__updConfirm = () => {
+                    try { onConfirm(); } catch (e) {}
+                    if (modalId && window.modals[modalId]) window.modals[modalId].close();
+                };
+                btns.push({ label: confirmLabel, action: "window.__updConfirm();" });
+            }
+            modalId = new Modal({
+                type: "custom",
+                title,
+                html: `<div class="settings_update_dialog">${html}</div>`,
+                buttons: btns,
+                closeLabel: t("settings.updates.close")
+            }, () => { try { delete window.__updConfirm; } catch (e) {} });
         },
         systemUpdate() { window.systemUpdate.open(); },
         refreshBundled() {
@@ -2147,29 +2201,54 @@ async function initUI() {
             });
         },
         checkClashUpdate(manual) {
-            // manual=true (the "Check" button): toast the outcome. refresh()
-            // also calls this on every settings open — no toast then.
+            // manual=true (the "Check" button): dialog with the outcome. refresh()
+            // also calls this on every settings open — no dialog then.
             ipc.invoke("clash:check-update").then(r => {
                 this.clash = r;
                 const el = document.getElementById("settingsUpClashVer");
-                const upd = document.getElementById("settingsUpClashUpdate");
+                const btn = document.getElementById("settingsUpClashCheck");
+                let updatable = false;
                 if (el) {
-                    if (r && r.available) el.textContent = (r.current ? "v" + r.current : "–") + (r.ok && r.latest && cmpVer(r.latest, r.current) > 0 ? " → v" + r.latest : "");
-                    else el.textContent = t("settings.clash.mock");
+                    if (r && r.available) {
+                        const c = r.ok && r.latest && r.current && cmpVer(r.latest, r.current) > 0;
+                        updatable = !!(c && r.downloadUrl);
+                        el.textContent = (r.current ? "v" + r.current : "–") + (c ? " → v" + r.latest : "");
+                    } else {
+                        el.textContent = t("settings.clash.mock");
+                    }
                 }
-                if (upd) upd.style.display = (r && r.available && r.ok && r.downloadUrl && cmpVer(r.latest, r.current) > 0) ? "" : "none";
-                if (manual) {
-                    if (!r || !r.available) this.toast(t("settings.clash.mock"));
-                    else if (!r.ok) this.toast(t("settings.updates.updateFailed") + (r.error ? " " + r.error : ""));
-                    else if (r.latest && cmpVer(r.latest, r.current) > 0) this.toast(t("settings.updates.newVersion") + " v" + r.latest);
-                    else this.toast(t("settings.updates.upToDate"));
-                }
+                this._clashUpdatable = updatable;
+                // Available update → the check button becomes the update button.
+                if (btn) btn.textContent = updatable ? t("settings.updates.updateBtn") : t("settings.updates.check");
+                if (manual) this._clashManualResult(r);
             }).catch(() => { if (manual) this.toast(t("settings.updates.updateFailed")); });
+        },
+        _clashManualResult(r) {
+            // The check button was pressed by hand: surface the outcome in a
+            // dialog. Update available → confirm (current + latest, Update /
+            // Close); already current → tell the user.
+            if (!r || !r.available) { this.toast(t("settings.clash.mock")); return; }
+            if (!r.ok) { this.toast(t("settings.updates.updateFailed") + (r.error ? " " + r.error : "")); return; }
+            const c = r.latest && r.current && cmpVer(r.latest, r.current) > 0;
+            if (c && r.downloadUrl) {
+                this._confirmModal(
+                    t("settings.updates.newVersion"),
+                    `${t("settings.updates.app")} v${r.current}<br>${t("settings.updates.latest")} v${r.latest}`,
+                    () => this.updateClash(),
+                    t("settings.updates.updateBtn")
+                );
+            } else {
+                this._confirmModal(
+                    t("settings.updates.upToDate"),
+                    `${t("settings.updates.app")} v${r.current || "–"}`,
+                    null, null
+                );
+            }
         },
         updateClash() {
             if (this._clashUpdating) return;
             const r = this.clash;
-            const upd = document.getElementById("settingsUpClashUpdate");
+            const btn = document.getElementById("settingsUpClashCheck");
             // Pressing Update without a prior (or successful) check: say so
             // instead of silently doing nothing (#78).
             if (!r || !r.downloadUrl) {
@@ -2177,15 +2256,15 @@ async function initUI() {
                 return;
             }
             this._clashUpdating = true;
-            if (upd) {
-                upd.disabled = true;
-                upd.textContent = t("settings.updates.updating");
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = t("settings.updates.updating");
             }
             ipc.invoke("clash:update", { url: r.downloadUrl }).then(res => {
                 this._clashUpdating = false;
-                if (upd) {
-                    upd.disabled = false;
-                    upd.textContent = t("settings.updates.updateBtn");
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = t("settings.updates.updateBtn");
                 }
                 if (res && res.ok) {
                     this.toast(t("settings.updates.updated") + (r.latest ? " v" + r.latest : ""));
@@ -2196,9 +2275,9 @@ async function initUI() {
                 }
             }).catch(() => {
                 this._clashUpdating = false;
-                if (upd) {
-                    upd.disabled = false;
-                    upd.textContent = t("settings.updates.updateBtn");
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = t("settings.updates.updateBtn");
                 }
                 this.toast(t("settings.updates.updateFailed"));
             });
@@ -3173,12 +3252,14 @@ window.openSettings = async () => {
                     <span id="settingsUpAppVersion" class="settings_net_info">v${remote.app.getVersion()}</span>
                     <div class="settings_net_actions">
                         <button type="button" id="settingsUpAppCheck" class="settings_net_btn">${t("settings.updates.check")}</button>
-                        <button type="button" id="settingsUpAppUpdate" class="settings_net_btn">${t("settings.updates.updateBtn")}</button>
                     </div>
                 </div>`),
             section("settings.section.updatesSystem"),
-            settingsRow("settings.updates.system", `<div class="settings_net_actions">
-                    <button type="button" id="settingsUpSystemBtn" class="settings_net_btn">${t("settings.updates.check")}</button>
+            settingsRow("settings.updates.system", `<div class="settings_ver_row">
+                    <span id="settingsUpSystemInfo" class="settings_net_info">–</span>
+                    <div class="settings_net_actions">
+                        <button type="button" id="settingsUpSystemBtn" class="settings_net_btn">${t("settings.updates.check")}</button>
+                    </div>
                 </div>`, "settings.updates.system.help"),
             settingsRow("settings.updates.lastUpdate", `<span id="settingsUpLastUpdate" class="settings_net_status">–</span>`),
             section("settings.section.updatesBundled"),
@@ -3186,7 +3267,6 @@ window.openSettings = async () => {
                     <span id="settingsUpClashVer" class="settings_net_info">–</span>
                     <div class="settings_net_actions">
                         <button type="button" id="settingsUpClashCheck" class="settings_net_btn">${t("settings.updates.check")}</button>
-                        <button type="button" id="settingsUpClashUpdate" class="settings_net_btn">${t("settings.updates.updateBtn")}</button>
                     </div>
                 </div>`),
             settingsRow("settings.updates.claude", `<span id="settingsUpClaudeVer" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.auto")}</span>`),
@@ -3339,16 +3419,21 @@ window.openSettings = async () => {
         if (sshEnabled) sshEnabled.addEventListener("change", () => window.ssh.applyEnabled());
         if (window.ssh) window.ssh.refreshStatus();
         // Updates category bindings: app check/update, apt system update,
-        // mihomo check/update — then pull all the statuses once.
+        // mihomo check/update — then pull all the statuses once. Each check
+        // button doubles as the update button once a newer version is known.
         const bindUpd = (id, fn) => {
             const el = document.getElementById(id);
             if (el) el.addEventListener("click", fn);
         };
-        bindUpd("settingsUpAppCheck", () => window.updates.checkApp());
-        bindUpd("settingsUpAppUpdate", () => window.updates.updateApp());
+        bindUpd("settingsUpAppCheck", () => {
+            if (window.updates._appUpdatable) window.updates.updateApp();
+            else window.updates.checkApp(true);
+        });
         bindUpd("settingsUpSystemBtn", () => window.updates.systemUpdate());
-        bindUpd("settingsUpClashCheck", () => window.updates.checkClashUpdate(true));
-        bindUpd("settingsUpClashUpdate", () => window.updates.updateClash());
+        bindUpd("settingsUpClashCheck", () => {
+            if (window.updates._clashUpdatable) window.updates.updateClash();
+            else window.updates.checkClashUpdate(true);
+        });
         if (window.updates) window.updates.refresh();
         const active = document.querySelector("#settingsSide .settings_cat_btn.active");
         if (active) active.focus();
@@ -5466,6 +5551,10 @@ const screenOffEl = () => document.getElementById("screen_off");
 // True while the real panel has been powered down (screen:power off) — set on
 // show, cleared on hide so the matching force-on is sent exactly once.
 let screenOffPowered = false;
+// Keyboard-backlight level captured when the screen blanks, restored on wake so
+// the keys go dark with the panel (#89). Refreshed every off-cycle; `null` when
+// the capture read hasn't landed yet.
+let screenOffKbdLevel = null;
 const showScreenOff = () => {
     if (screenOffEl()) return;
     const el = document.createElement("div");
@@ -5481,6 +5570,13 @@ const showScreenOff = () => {
         screenOffPowered = true;
         ipc.invoke("power:screen", { action: "off" }).catch(() => {});
     }
+    // Dim the keyboard backlight with the panel, capturing the live level so
+    // wake restores it (the saved setting is only the boot default — the
+    // dropdown may have changed it since).
+    ipc.invoke("kbd:backlight", {}).then(r => {
+        if (r && r.ok && r.level != null) screenOffKbdLevel = r.level;
+    }).catch(() => {});
+    ipc.invoke("kbd:backlight", { set: 0 }).catch(() => {});
 };
 window.hideScreenOff = () => {
     const el = screenOffEl();
@@ -5489,6 +5585,11 @@ window.hideScreenOff = () => {
         screenOffPowered = false;
         ipc.invoke("power:screen", { action: "on" }).catch(() => {});
     }
+    // Bring the keyboard backlight back with the panel. If the capture read
+    // hadn't landed yet, fall back to the saved boot value.
+    const lv = screenOffKbdLevel;
+    screenOffKbdLevel = null;
+    ipc.invoke("kbd:backlight", { set: (lv != null ? lv : (window.settings.kbdBacklight ?? 1)) }).catch(() => {});
     el.classList.add("screen_off_fade_out");
     // Disable pointer capture immediately: the overlay is invisible by now and
     // must never swallow clicks, even if the removal timeout below is delayed
