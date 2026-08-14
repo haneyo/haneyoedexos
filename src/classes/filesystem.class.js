@@ -89,6 +89,11 @@ class FilesystemDisplay {
             text: document.querySelector("#fs_space_bar > h3"),
             bar: document.querySelector("#fs_space_bar > progress")
         };
+        // Copy/move progress overlay (created once; shown/hidden during paste).
+        const _copyEl = document.createElement("div");
+        _copyEl.id = "fs_copy_progress";
+        _copyEl.innerHTML = `<span id="fs_copy_text"></span><progress id="fs_copy_bar" value="0" max="100"></progress>`;
+        document.body.appendChild(_copyEl);
         this.fsBlock = {};
         this.dirpath = "";
         this.failed = false;
@@ -264,14 +269,26 @@ class FilesystemDisplay {
 
         this.selected = [];
         this.clipboard = null;
+        this._cutPaths = [];
+        this._collideResolver = null;
         this._dragSel = { active: false };
         this._justDragged = false;
 
         this._itemPath = el => el && el.getAttribute ? (el.getAttribute("data-path") || "") : "";
 
+        // Set the internal clipboard. Cutting fades the source icons (Windows-like);
+        // starting a Copy instead clears the previous cut fade.
+        this._setClip = (mode, paths) => {
+            this.clipboard = { mode: mode, paths: paths };
+            this._cutPaths = mode === "cut" ? paths.slice() : [];
+            this._refreshSelectionUI();
+        };
+
         this._refreshSelectionUI = () => {
             [...this.filesContainer.querySelectorAll("[data-path]")].forEach(el => {
-                el.classList.toggle("selected", this.selected.indexOf(this._itemPath(el)) !== -1);
+                let p = this._itemPath(el);
+                el.classList.toggle("selected", this.selected.indexOf(p) !== -1);
+                el.classList.toggle("fs_disp_cut", this._cutPaths && this._cutPaths.indexOf(p) !== -1);
             });
         };
 
@@ -348,6 +365,30 @@ class FilesystemDisplay {
                 this.selected = [...this.filesContainer.querySelectorAll("[data-path]")]
                     .map(el => this._itemPath(el)).filter(Boolean);
                 this._refreshSelectionUI();
+            }
+            // Ctrl+C / Ctrl+X / Ctrl+V (Windows-like clipboard, only while the
+            // pointer is over the file panel). Never steals keys from inputs.
+            if (this._fsHovered && (e.ctrlKey || e.metaKey)) {
+                let tgt = e.target;
+                let editable = !!(tgt && ((tgt.tagName && /^(INPUT|TEXTAREA|SELECT)$/i.test(tgt.tagName)) || tgt.isContentEditable));
+                if (!editable && e.code === "KeyC" && this.selected.length) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this._setClip("copy", this.selected.slice());
+                    return;
+                }
+                if (!editable && e.code === "KeyX" && this.selected.length) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this._setClip("cut", this.selected.slice());
+                    return;
+                }
+                if (!editable && e.code === "KeyV" && this.clipboard) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this._paste();
+                    return;
+                }
             }
             // Windows-like deletion in the normal file view:
             //   Delete        → move to trash
@@ -505,8 +546,8 @@ class FilesystemDisplay {
                 case "open": this._openSelected(); break;
                 case "info": this._showInfo(); break;
                 case "rename": this._rename(); break;
-                case "copy": this.clipboard = { mode: "copy", paths: this.selected.slice() }; break;
-                case "cut": this.clipboard = { mode: "cut", paths: this.selected.slice() }; break;
+                case "copy": this._setClip("copy", this.selected.slice()); break;
+                case "cut": this._setClip("cut", this.selected.slice()); break;
                 case "paste": this._paste(); break;
                 case "trash": this._deleteSelected(); break;                  // Move to Trash
                 case "delete": this._deleteSelectedPermanent(); break;        // Delete Permanently
@@ -659,14 +700,215 @@ class FilesystemDisplay {
             });
         };
 
-        this._paste = () => {
+        // Copy/move progress readout (Windows-like: percentage + done/total bytes).
+        // The element itself is created once in the constructor; these only toggle it.
+        this._showCopyProgress = (label, pct, curBytes, totalBytes) => {
+            const el = document.getElementById("fs_copy_progress");
+            if (!el) return;
+            const text = document.getElementById("fs_copy_text");
+            const bar = document.getElementById("fs_copy_bar");
+            if (text) text.innerHTML = `${label} ${pct}% &middot; ${this._formatBytes(curBytes)} / ${this._formatBytes(totalBytes)}`;
+            if (bar) bar.value = pct;
+            el.style.display = "flex";
+        };
+        this._hideCopyProgress = () => {
+            const el = document.getElementById("fs_copy_progress");
+            if (el) el.style.display = "none";
+        };
+
+        // Recursive byte total for one path (files count their size, dirs sum
+        // their tree, symlinks are skipped). Used both for the total and to poll
+        // the destination growth while a cp/mv runs.
+        this._pathBytes = p => {
+            const fs = require("fs");
+            const path = require("path");
+            try {
+                const st = fs.lstatSync(p);
+                if (st.isSymbolicLink()) return 0;
+                if (st.isDirectory()) {
+                    let sum = 0;
+                    fs.readdirSync(p).forEach(f => { sum += this._pathBytes(path.join(p, f)); });
+                    return sum;
+                }
+                return st.size || 0;
+            } catch (e) { return 0; }
+        };
+
+        // Run one cp/mv shell command and poll the destination so the progress
+        // readout shows real byte-level progress until the process exits.
+        this._runOp = (label, cmd, entry, totalBytes, doneBytes) => new Promise(resolve => {
+            const child = require("child_process").spawn("/bin/sh", ["-c", cmd]);
+            let lastPct = -1;
+            const iv = setInterval(() => {
+                let cur = this._pathBytes(entry.target) - (entry.mergeBase || 0);
+                if (cur < 0) cur = 0;
+                const pct = totalBytes > 0 ? Math.min(100, Math.round(((doneBytes + cur) / totalBytes) * 100)) : 100;
+                if (pct !== lastPct) { lastPct = pct; this._showCopyProgress(label, pct, doneBytes + cur, totalBytes); }
+            }, 300);
+            child.on("error", () => { clearInterval(iv); resolve(false); });
+            child.on("close", code => {
+                clearInterval(iv);
+                if (code === 0) {
+                    let cur = this._pathBytes(entry.target) - (entry.mergeBase || 0);
+                    if (cur < 0) cur = 0;
+                    this._showCopyProgress(label, 100, doneBytes + cur, totalBytes);
+                }
+                resolve(code === 0);
+            });
+        });
+
+        // A collision modal's button routes here (buttons only run inline JS).
+        this._resolveCollide = choice => {
+            const m = window.modals && window.modals[Object.keys(window.modals).pop()];
+            if (m && m.close) m.close();
+            if (this._collideResolver) {
+                const r = this._collideResolver;
+                this._collideResolver = null;
+                r(choice);
+            }
+        };
+
+        // Windows-like paste: the underlying operations are still plain
+        // mv / cp / rm, but the collision logic matches Windows, not macOS.
+        //  - copy into the same folder → auto-renames to "A 2"
+        //  - copy into a folder with a same-named file → ask Overwrite/Rename
+        //  - copy into a folder with a same-named folder → ask Merge/Rename
+        //  - cut into the same folder → no-op (the file is already there)
+        this._paste = async () => {
             if (!this.clipboard || !this.clipboard.paths.length || !this.dirpath) return;
-            let dest = this.dirpath.replace(/"/g, '\\"');
-            let srcs = this.clipboard.paths.map(p => `"${p.replace(/"/g, '\\"')}"`).join(" ");
-            this._exec(this.clipboard.mode === "copy"
-                ? `cp -R ${srcs} "${dest}/"`
-                : `mv ${srcs} "${dest}/"`);
+            if (String(this.dirpath).indexOf("://") !== -1) return;
+            const path = require("path");
+            const fs = require("fs");
+            const destDir = this.dirpath;
+            const mode = this.clipboard.mode;
+            const clip = this.clipboard;
             this.clipboard = null;
+            if (mode === "cut") { this._cutPaths = []; this._refreshSelectionUI(); }
+
+            const srcs = clip.paths.filter(p => { try { return fs.existsSync(p); } catch (e) { return false; } });
+            if (!srcs.length) return;
+
+            // Windows: moving files to their own folder is a no-op.
+            if (mode === "cut" && srcs.every(p => path.dirname(p) === destDir)) return;
+
+            // Same-folder copies auto-rename to "A 2", "A 3", … (Windows style).
+            const seen = {};
+            const uniq = base => {
+                const dot = base.lastIndexOf(".");
+                const stem = dot > 0 ? base.slice(0, dot) : base;
+                const ext = dot > 0 ? base.slice(dot) : "";
+                let n = 2, candidate;
+                do { candidate = stem + " " + n + ext; n++; }
+                while (fs.existsSync(path.join(destDir, candidate)) || seen[candidate]);
+                seen[candidate] = true;
+                return candidate;
+            };
+
+            // Build the plan: each src → target, tagging any collision that needs
+            // a user decision (Windows asks; it never silently replaces).
+            let plan = [], dirAsk = null, fileAsk = null;
+            srcs.forEach(src => {
+                let st;
+                try { st = fs.statSync(src); } catch (e) { return; }
+                const isDir = st.isDirectory();
+                const base = path.basename(src);
+                const sameDir = path.dirname(src) === destDir;
+                const target = path.join(destDir, base);
+                let exists = false;
+                try { exists = fs.existsSync(target); } catch (e) {}
+
+                if (mode === "copy" && sameDir && exists) {
+                    plan.push({ src, target: path.join(destDir, uniq(base)), isDir, mode, collision: "none" });
+                } else if (exists && !sameDir) {
+                    const entry = { src, target, isDir, mode, collision: "ask" };
+                    plan.push(entry);
+                    if (isDir && !dirAsk) dirAsk = entry;
+                    else if (!isDir && !fileAsk) fileAsk = entry;
+                } else {
+                    plan.push({ src, target, isDir, mode, collision: "none" });
+                }
+            });
+
+            if (!plan.length) return;
+
+            // Ask about the collision (once; the choice applies to all of them).
+            const askEntry = dirAsk || fileAsk;
+            if (askEntry) {
+                const isDir = askEntry.isDir;
+                const choice = await new Promise(resolve => {
+                    this._collideResolver = resolve;
+                    const buttons = isDir
+                        ? [
+                            { label: window.t("fs.merge"), action: "window.fsDisp._resolveCollide('merge')" },
+                            { label: window.t("fs.rename"), action: "window.fsDisp._resolveCollide('rename')" },
+                            { label: window.t("fs.cancel"), action: "window.fsDisp._resolveCollide('cancel')" }
+                        ]
+                        : [
+                            { label: window.t("fs.overwrite"), action: "window.fsDisp._resolveCollide('overwrite')" },
+                            { label: window.t("fs.rename"), action: "window.fsDisp._resolveCollide('rename')" },
+                            { label: window.t("fs.cancel"), action: "window.fsDisp._resolveCollide('cancel')" }
+                        ];
+                    new Modal({
+                        type: "custom",
+                        title: window.t("fs.collideTitle"),
+                        html: `<p style="margin:0 0 1.2vh;">${isDir ? window.t("fs.collideDir") : window.t("fs.collideFile")}</p>
+                               <pre class="file_run_path">${String(askEntry.src.split("/").pop() || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>`,
+                        buttons,
+                        closeLabel: window.t("fs.cancel")
+                    });
+                });
+                this._collideResolver = null;
+                if (choice === "cancel") return;
+
+                plan.forEach(entry => {
+                    if (entry.collision !== "ask") return;
+                    if (entry.isDir) entry.collision = choice === "merge" ? "merge" : "rename";
+                    else entry.collision = choice === "overwrite" ? "overwrite" : "rename";
+                    // A file-vs-folder mismatch can't merge/overwrite sanely → rename.
+                    let targetIsDir = false;
+                    try { targetIsDir = fs.statSync(entry.target).isDirectory(); } catch (e) {}
+                    if (targetIsDir !== entry.isDir) entry.collision = "rename";
+                    // "Rename" means a fresh unique name ("A 2", "A 3", …), never
+                    // clobbering the existing item.
+                    if (entry.collision === "rename") {
+                        entry.target = path.join(destDir, uniq(String(entry.src.split("/").pop() || "file")));
+                    }
+                });
+            }
+
+            // Merge targets start from an existing folder, so subtract what was
+            // already there before measuring destination growth.
+            plan.forEach(entry => {
+                if (entry.collision === "merge") entry.mergeBase = this._pathBytes(entry.target);
+            });
+
+            // Build the shell commands (still plain mv / cp / rm under the hood).
+            const cmds = plan.map(entry => {
+                const s = `"${String(entry.src).replace(/"/g, '\\"')}"`;
+                const d = `"${String(entry.target).replace(/"/g, '\\"')}"`;
+                if (entry.collision === "merge") {
+                    return entry.mode === "copy"
+                        ? `cp -R ${s}/. ${d}/`
+                        : `cp -R ${s}/. ${d}/ && rm -rf ${s}`;
+                }
+                if (entry.mode === "copy") {
+                    return entry.collision === "overwrite" ? `cp -Rf ${s} ${d}` : `cp -R ${s} ${d}`;
+                }
+                return entry.collision === "overwrite" ? `mv -f ${s} ${d}` : `mv ${s} ${d}`;
+            });
+
+            // Total bytes across all sources, for the progress readout.
+            let totalBytes = 0;
+            plan.forEach(entry => { totalBytes += this._pathBytes(entry.src); });
+
+            const label = mode === "copy" ? window.t("fs.copying") : window.t("fs.moving");
+            let doneBytes = 0;
+            for (let i = 0; i < cmds.length; i++) {
+                await this._runOp(label, cmds[i], plan[i], totalBytes, doneBytes);
+                doneBytes += this._pathBytes(plan[i].src);
+            }
+            this._hideCopyProgress();
+            this.readFS(this.dirpath);
         };
 
         this._deleteSelected = () => {
@@ -1431,7 +1673,8 @@ class FilesystemDisplay {
                 const runnable = e.isScript === true
                     || (e.executable === true && !/\.desktop$/i.test(e.name));
 
-                filesDOM += `<div class="fs_disp_${e.type}${hidden}${runnable ? " fs_disp_run" : ""} animationWait" data-path="${(e.path || "").replace(/"/g, "&quot;")}" onclick='${cmdPrefix+cmd+cmdSuffix}'>
+                const cutHere = this._cutPaths && this._cutPaths.indexOf(e.path) !== -1;
+                filesDOM += `<div class="fs_disp_${e.type}${hidden}${runnable ? " fs_disp_run" : ""}${cutHere ? " fs_disp_cut" : ""} animationWait" data-path="${(e.path || "").replace(/"/g, "&quot;")}" onclick='${cmdPrefix+cmd+cmdSuffix}'>
                                 <svg viewBox="0 0 ${icon.width} ${icon.height}" fill="${this.iconcolor}">
                                     ${icon.svg}
                                 </svg>
@@ -1600,6 +1843,96 @@ class FilesystemDisplay {
             try { t.term.focus(); } catch (e) {}
         };
 
+        // ---- AppImageLauncher-style install entry points (#62) ----
+
+        // Clicked an .AppImage in the browser. Already inside an apps folder →
+        // just confirm and run. Elsewhere → offer run-once or move-to-apps.
+        this._appImagePrompt = (block) => {
+            const name = block.name || String(block.path).split("/").pop() || "file";
+            const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            const closeTop = "window.modals[Object.keys(window.modals).pop()].close();";
+            const dirs = (window.appManager && window.appManager._appImageDirs) ? window.appManager._appImageDirs() : [];
+            const parent = String(block.path).split("/").slice(0, -1).join("/");
+            const inApps = dirs.indexOf(parent) !== -1;
+            window._pendingRunPath = block.path;
+            const buttons = inApps
+                ? [{ label: window.t("fs.appimage.run"), action: "window.fsDisp.runAppImageOnce(window._pendingRunPath); " + closeTop }]
+                : [
+                    { label: window.t("fs.appimage.runOnce"), action: "window.fsDisp.runAppImageOnce(window._pendingRunPath); " + closeTop },
+                    { label: window.t("fs.appimage.moveToApps"), action: "window.fsDisp.moveAppImageToApps(window._pendingRunPath); " + closeTop }
+                ];
+            new Modal({
+                type: "custom",
+                title: window.t("fs.appimage.title") + " — " + name,
+                html: `<p style="margin:0 0 1.2vh;">${inApps ? window.t("fs.appimage.inAppsMsg") : window.t("fs.appimage.msg")}</p>
+                       <pre class="file_run_path">${esc(block.path)}</pre>`,
+                buttons,
+                closeLabel: window.t("fs.cancel")
+            });
+        };
+
+        // Run an AppImage once on the real display, backgrounded so the browser's
+        // terminal isn't blocked. AppImages are Chromium/Electron family —
+        // --no-sandbox matches the app-monitor backend's isChromium() rule.
+        // chmod +x first: AppImages downloaded without the exec bit should still
+        // launch (same as AppImageLauncher), and a run failure should never leave
+        // the browser's terminal occupied.
+        this.runAppImageOnce = (path) => {
+            const q = String(path || "").replace(/"/g, '\\"');
+            require("child_process").exec(`chmod +x "${q}" >/dev/null 2>&1; DISPLAY=:0 nohup "${q}" --no-sandbox >/dev/null 2>&1 &`, { timeout: 10000 }, () => {});
+        };
+
+        // Move an AppImage into the first apps folder: it then shows up in the
+        // GUI-app list (tab 4/5) and the settings app manager automatically.
+        this.moveAppImageToApps = (path) => {
+            const q = s => String(s).replace(/"/g, '\\"');
+            let dir = "";
+            if (window.appManager && window.appManager._appImageDirs) {
+                const dirs = window.appManager._appImageDirs();
+                if (dirs.length) dir = dirs[0];
+            }
+            if (!dir) dir = require("path").join(require("os").homedir(), "Applications");
+            const base = String(path || "").split("/").pop() || "app.AppImage";
+            const dest = dir + "/" + base;
+            require("child_process").exec(
+                `mkdir -p "${q(dir)}" && mv -f "${q(String(path))}" "${q(dest)}" && chmod +x "${q(dest)}"`,
+                { timeout: 15000 },
+                (err) => {
+                    if (window.appManager && window.appManager._notify) {
+                        if (!err) window.appManager._notify(window.t("fs.appimage.moved"));
+                        else window.appManager._notify(window.t("appmgr.failed"));
+                    }
+                    this.readFS(this.dirpath);
+                }
+            );
+        };
+
+        // Clicked a .deb in the browser → confirm and install via apt, recording
+        // it so it appears in the settings app manager + GUI-app list.
+        this._debPrompt = (block) => {
+            const name = block.name || String(block.path).split("/").pop() || "file";
+            const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            const closeTop = "window.modals[Object.keys(window.modals).pop()].close();";
+            window._pendingRunPath = block.path;
+            new Modal({
+                type: "custom",
+                title: window.t("fs.deb.title") + " — " + name,
+                html: `<p style="margin:0 0 1.2vh;">${window.t("fs.deb.msg")}</p>
+                       <pre class="file_run_path">${esc(block.path)}</pre>`,
+                buttons: [
+                    { label: window.t("fs.deb.install"), action: "window.fsDisp.installDebFromBrowser(window._pendingRunPath); " + closeTop }
+                ],
+                closeLabel: window.t("fs.cancel")
+            });
+        };
+
+        // Reuse the app manager's deb install (apt + tracking) so a file-browser
+        // install is indistinguishable from a settings-manager install.
+        this.installDebFromBrowser = (path) => {
+            if (window.appManager && window.appManager.installDeb) window.appManager.installDeb(path);
+            else new Modal({ type: "info", title: "App manager unavailable", message: "Reload the interface and try again." });
+        };
+
         // Open a text file in the editable doc viewer. Runnable files reach
         // here via the confirm dialog's "Open as text" button.
         this.openFileAsText = (path, name) => {
@@ -1683,6 +2016,12 @@ class FilesystemDisplay {
             // AppImages get started. .desktop launchers are config, not
             // binaries, so they stay readable text.
             const _ext = String(name || "").toLowerCase().split(".").pop() || "";
+            // AppImageLauncher-style entry points (#62): .AppImage gets a
+            // run-once / move-to-apps-folder choice (apps-folder copies just run),
+            // .deb gets a one-click install. Both land in the GUI-app list and the
+            // settings app manager, which scan the same sources — no registration.
+            if (_ext === "appimage") { this._appImagePrompt(block); return; }
+            if (_ext === "deb") { this._debPrompt(block); return; }
             const _isScript = block.isScript === true || _ext === "sh" || _ext === "bash";
             const _isExec = block.executable === true || _isScript;
             if (_isExec && _ext !== "desktop") {

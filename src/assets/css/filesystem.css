@@ -257,6 +257,48 @@ div.modal_popup input#fs_rename_name {
     box-shadow: 0 0 1.2vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
 }
 
+/* Cut files (Ctrl+X / Cut) fade like Windows; the selection highlight stays. */
+#fs_disp_container > *[data-path].fs_disp_cut {
+    opacity: 0.45;
+    filter: grayscale(0.5);
+}
+
+/* Copy/move progress overlay — floating readout: % + done/total bytes. */
+div#fs_copy_progress {
+    display: none;
+    position: fixed;
+    left: 50%;
+    bottom: 10vh;
+    transform: translateX(-50%);
+    z-index: 60;
+    align-items: center;
+    gap: 1vh;
+    background: rgba(0, 0, 0, 0.78);
+    border: 1px solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    border-radius: 3px;
+    padding: 1vh 1.5vh;
+}
+div#fs_copy_progress > span#fs_copy_text {
+    font-family: var(--font_main_light);
+    font-size: 1.4vh;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    white-space: nowrap;
+}
+div#fs_copy_progress > progress#fs_copy_bar {
+    width: 18vw;
+    height: 1.8vh;
+    -webkit-appearance: none;
+}
+div#fs_copy_progress > progress#fs_copy_bar::-webkit-progress-bar {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.35);
+    height: 0.9vh;
+}
+div#fs_copy_progress > progress#fs_copy_bar::-webkit-progress-value {
+    background: rgb(var(--color_r), var(--color_g), var(--color_b));
+    height: 0.9vh;
+    transition: width 0.3s cubic-bezier(0.4, 0, 1, 1);
+}
+
 /* Drag-box multi-select */
 div#fs_drag_box {
     position: fixed;

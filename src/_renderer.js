@@ -2194,6 +2194,316 @@ async function initUI() {
         }
     };
 
+    // GUI app manager (#62): one-click install/uninstall for the GUI apps the
+    // user installs (Flatpak / AppImage / custom / deb). Purely renderer-side —
+    // privileged commands go through a long-timeout exec, the same "single
+    // control + background command" pattern as the SSH toggle. The list only
+    // shows *user-installed* apps (a pristine system has none): flatpak apps via
+    // `flatpak list`, AppImages + custom entries from the app-monitor backend,
+    // and debs the manager itself installed (tracked in installed-debs.json).
+    // The same sources feed the tab 4/5 GUI-app list, so an app installed here
+    // shows up there too. `require` is used inline so the minified patch mirror
+    // can drop this block verbatim without terser-renamed module identifiers.
+    window.appManager = {
+        _list: [],
+        _searchList: [],
+        _pending: null,
+        _fpOk: false,
+
+        _debFile() { return require("path").join(require("path").dirname(window.settingsFile), "installed-debs.json"); },
+        _readDebs() {
+            try { const l = JSON.parse(require("fs").readFileSync(this._debFile(), "utf8")); return Array.isArray(l) ? l : []; } catch (e) { return []; }
+        },
+        _writeDebs(list) { try { require("fs").writeFileSync(this._debFile(), JSON.stringify(list, null, 2)); } catch (e) {} },
+        _home() { try { return require("os").homedir(); } catch (e) { return "~"; } },
+
+        // Long-timeout exec (flatpak/apt installs take minutes; sysCmd.run caps
+        // at 30s). Promise<{out,err,ok}>.
+        _run(cmd, timeoutMs) {
+            return new Promise(resolve => {
+                require("child_process").exec(cmd, { timeout: timeoutMs || 1800000, maxBuffer: 32 * 1024 * 1024 }, (e, so, se) => resolve({ out: so || "", err: se || "", ok: !e }));
+            });
+        },
+        // Shell-quote one argument (exec runs through sh -c).
+        _shq(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; },
+        _esc(s) { return String(s == null ? "" : s).replace(/[<>&"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c])); },
+        _notify(m) {
+            let _t = document.getElementById("edex_toast");
+            if (!_t) { _t = document.createElement("div"); _t.id = "edex_toast"; _t.className = "browser_toast"; document.body.appendChild(_t); }
+            _t.textContent = m; _t.classList.add("show");
+            clearTimeout(this._notifyTimer);
+            this._notifyTimer = setTimeout(() => _t.classList.remove("show"), 2200);
+        },
+        _ensureCss() {
+            if (document.getElementById("appmgr-style")) return;
+            const st = document.createElement("style");
+            st.id = "appmgr-style";
+            st.textContent = ".appmgr_row{display:flex;align-items:center;gap:.8vh;padding:.5vh .6vh;border-bottom:1px dashed rgba(128,128,128,.22)}.appmgr_row.active,.appmgr_row:focus{background:rgba(128,128,128,.16);outline:none}.appmgr_icon{width:2.2vh;height:2.2vh;flex:0 0 2.2vh;opacity:.85}.appmgr_name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.appmgr_desc{opacity:.5;font-size:1.05vh}.appmgr_badge{font-size:1.05vh;opacity:.65;padding:0 .5vh;border:1px solid rgba(128,128,128,.45);border-radius:.3vh;white-space:nowrap}.appmgr_btn{font-size:1.15vh;padding:.25vh .9vh;cursor:pointer}.appmgr_btn:disabled{opacity:.4}.appmgr_empty{padding:.8vh;opacity:.55;text-align:center}.appmgr_banner{display:flex;align-items:center;justify-content:space-between;gap:1vh;padding:.5vh .8vh;margin-bottom:.6vh}";
+            (document.head || document.documentElement).appendChild(st);
+        },
+
+        _flatpakIcon(appId) {
+            const bases = ["/var/lib/flatpak/exports/share/icons/hicolor", this._home() + "/.local/share/flatpak/exports/share/icons/hicolor"];
+            for (const base of bases) for (const sz of ["256x256", "128x128", "64x64", "512x512", "scalable"]) for (const ext of ["png", "svg"]) {
+                const p = base + "/" + sz + "/apps/" + appId + "." + ext;
+                try { if (require("fs").existsSync(p)) return p; } catch (e) {}
+            }
+            return null;
+        },
+
+        _parseFlatpakList(out) {
+            const rows = [];
+            for (const line of String(out || "").split("\n")) {
+                const parts = line.split("\t").map(s => s.trim()).filter(Boolean);
+                if (parts.length < 2) continue;
+                let id = parts[0];
+                if (/^(application|name|ref|application_id)$/i.test(id)) continue;
+                if (id.indexOf("/") >= 0) { const segs = id.split("/"); id = segs[0] === "app" && segs[1] ? segs[1] : segs[segs.length - 1]; }
+                rows.push({ id: "flatpak:" + id, appId: id, name: parts[1] || id, source: "flatpak" });
+            }
+            return rows;
+        },
+        _parseFlatpakSearch(out) {
+            const rows = [];
+            for (const line of String(out || "").split("\n")) {
+                const parts = line.split("\t").map(s => s.trim()).filter(Boolean);
+                if (!parts.length) continue;
+                let id = parts[0];
+                if (/^(application|name|ref|application_id)$/i.test(id)) continue;
+                if (id.indexOf("/") >= 0) { const segs = id.split("/"); id = segs[0] === "app" && segs[1] ? segs[1] : segs[segs.length - 1]; }
+                rows.push({ id: "flatpak:" + id, appId: id, name: parts[1] || id, desc: parts.slice(2).join(" ") || "", source: "flatpak" });
+            }
+            return rows;
+        },
+        _appImageDirs() {
+            const s = String((((window.settings || {}).appMonitor || {}).appImageDirs) || "~/Applications,~/AppImages");
+            const home = this._home();
+            return s.split(",").map(x => x.trim()).filter(Boolean).map(x => x === "~" ? home : x.indexOf("~/") === 0 ? require("path").join(home, x.slice(2)) : x);
+        },
+
+        _iconHtml(app) {
+            let lib = null;
+            if (app.icon && window.iconLibrary) lib = window.iconLibrary.get(app.icon);
+            if (lib) return lib;
+            if (app.source === "flatpak" && app.appId) { const p = this._flatpakIcon(app.appId); if (p) return '<img class="appmgr_icon" src="' + this._esc(p) + '">'; }
+            return '<svg class="appmgr_icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3" fill="none" stroke="currentColor" stroke-opacity=".7"/></svg>';
+        },
+        _row(app, i, primary) {
+            const badge = '<span class="appmgr_badge">' + this._esc(t("appmgr.source." + app.source)) + "</span>";
+            const sub = primary === "installFlatpak" && app.desc ? ' <span class="appmgr_desc">' + this._esc(app.desc) + "</span>" : "";
+            const name = app.name || app.appId || "";
+            const btn = primary === "uninstall"
+                ? '<button type="button" class="appmgr_btn" onclick="window.appManager.uninstall(' + i + ')">' + this._esc(t("appmgr.uninstall")) + "</button>"
+                : '<button type="button" class="appmgr_btn" data-fpi="' + i + '" onclick="window.appManager.installFlatpak(' + i + ')">' + this._esc(t("appmgr.install")) + "</button>";
+            return '<div class="appmgr_row" tabindex="-1">' + this._iconHtml(app) + '<span class="appmgr_name">' + this._esc(name) + sub + "</span>" + badge + btn + "</div>";
+        },
+        _wireKeys(cid) {
+            const box = document.getElementById(cid);
+            if (!box) return;
+            box.onkeydown = e => {
+                const rows = box.querySelectorAll(".appmgr_row");
+                if (!rows.length) return;
+                if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                    e.preventDefault(); e.stopPropagation();
+                    let idx = -1; rows.forEach((r, i) => { if (r.classList.contains("active")) idx = i; });
+                    idx = e.key === "ArrowDown" ? Math.min(idx + 1, rows.length - 1) : Math.max(idx - 1, 0);
+                    rows.forEach(r => r.classList.remove("active"));
+                    rows[idx].classList.add("active");
+                    try { rows[idx].scrollIntoView({ block: "nearest" }); } catch (err) {}
+                } else if (e.key === "Enter") {
+                    e.preventDefault(); e.stopPropagation();
+                    const active = box.querySelector(".appmgr_row.active");
+                    const btn = active && active.querySelector("button.appmgr_btn");
+                    if (btn) btn.click();
+                } else if (e.key === "Escape") {
+                    e.stopPropagation();
+                    rows.forEach(r => r.classList.remove("active"));
+                }
+            };
+        },
+
+        async refresh() {
+            const box = document.getElementById("appmgrInstalledList");
+            if (!box) return;
+            this._ensureCss();
+            this._fpOk = false;
+            try { this._fpOk = (await this._run("flatpak --version", 10000)).ok; } catch (e) {}
+            let list = [];
+            if (this._fpOk) {
+                const r = await this._run("flatpak list --app --columns=application,name", 30000);
+                if (r.ok) list = list.concat(this._parseFlatpakList(r.out));
+            }
+            try {
+                const nl = await window.appmonitorApi.nativeList();
+                const apps = (nl && nl.apps) || [];
+                for (const a of apps) {
+                    if (String(a.id || "").indexOf("appimage:") === 0) list.push({ id: a.id, name: a.name, source: "appimage", path: a.path, icon: null });
+                    else if (String(a.id || "").indexOf("custom:") === 0) list.push({ id: a.id, name: a.name, source: "custom", icon: a.icon });
+                }
+            } catch (e) {}
+            for (const d of this._readDebs()) list.push({ id: "deb:" + (d.pkg || d.name), name: d.name, pkg: d.pkg || d.name, source: "deb", icon: null });
+            list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+            this._list = list;
+            let html = "";
+            if (!this._fpOk) html += '<div class="appmgr_banner"><span>' + this._esc(t("appmgr.flatpakMissing")) + '</span><button type="button" class="appmgr_btn" onclick="window.appManager.ensureFlatpakThen()">' + this._esc(t("appmgr.flatpakInstall")) + "</button></div>";
+            html += list.length ? list.map((a, i) => this._row(a, i, "uninstall")).join("") : '<div class="appmgr_empty">' + this._esc(t("appmgr.installed.empty")) + "</div>";
+            box.innerHTML = html;
+            this._wireKeys("appmgrInstalledList");
+        },
+        _renderSearchResults(list) {
+            const box = document.getElementById("appmgrSearchResults");
+            if (!box) return;
+            this._searchList = list;
+            box.innerHTML = list.map((a, i) => this._row(a, i, "installFlatpak")).join("");
+            this._wireKeys("appmgrSearchResults");
+        },
+
+        async searchFlathub() {
+            const input = document.getElementById("appmgrSearchInput");
+            const box = document.getElementById("appmgrSearchResults");
+            if (!input || !box) return;
+            const kw = String(input.value || "").trim();
+            if (!kw) return;
+            box.innerHTML = '<div class="appmgr_empty">…</div>';
+            await this.ensureFlathub();
+            const r = await this._run("flatpak search --columns=application,name,description " + this._shq(kw), 60000);
+            if (!r.ok) { box.innerHTML = '<div class="appmgr_empty">' + this._esc(t("appmgr.search.failed")) + "</div>"; return; }
+            const list = this._parseFlatpakSearch(r.out);
+            if (!list.length) { box.innerHTML = '<div class="appmgr_empty">' + this._esc(t("appmgr.search.empty")) + "</div>"; return; }
+            this._renderSearchResults(list);
+        },
+        async ensureFlathub() {
+            const vr = await this._run("flatpak --version", 10000);
+            if (!vr.ok) { const r = await this._run("sudo -n apt install -y flatpak", 600000); if (!r.ok) return false; }
+            await this._run("sudo -n flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo", 60000);
+            return true;
+        },
+        ensureFlatpakThen() { this.ensureFlathub().then(() => this.refresh()); },
+
+        installFlatpak(i) {
+            const app = this._searchList && this._searchList[i];
+            if (!app) return;
+            const btn = document.querySelector('#appmgrSearchResults button[data-fpi="' + i + '"]');
+            this._confirm(t("appmgr.confirm.install"), this._esc(app.name || app.appId) + " · <code>" + this._esc(app.appId) + "</code>", t("appmgr.install"), () => {
+                if (btn) { btn.disabled = true; btn.textContent = t("appmgr.installing"); }
+                this._runInstall("sudo -n flatpak install -y flathub " + this._shq(app.appId), () => {
+                    if (btn) { btn.disabled = false; btn.textContent = t("appmgr.install"); }
+                    this.refresh();
+                });
+            });
+        },
+        _runInstall(cmd, done) {
+            this._run(cmd, 1800000).then(r => {
+                if (r.ok) this._notify(t("appmgr.done"));
+                else this._notify((r.err || "").split("\n").filter(Boolean).pop() || t("appmgr.failed"));
+                if (done) done();
+            });
+        },
+
+        async installLocal() {
+            const input = document.getElementById("appmgrLocalInput");
+            if (!input) return;
+            const raw = String(input.value || "").trim();
+            if (!raw) return;
+            const p = raw.indexOf("~/") === 0 ? require("path").join(this._home(), raw.slice(2)) : raw;
+            const abs = require("path").resolve(p);
+            const lower = abs.toLowerCase();
+            if (lower.indexOf(".appimage") === lower.length - 9) {
+                const dirs = this._appImageDirs();
+                if (!dirs.length) { this._notify(t("appmgr.failed")); return; }
+                const dest = require("path").join(dirs[0], require("path").basename(abs));
+                const r = await this._run("install -Dm755 " + this._shq(abs) + " " + this._shq(dest), 120000);
+                if (r.ok) { this._notify(t("appmgr.done")); input.value = ""; }
+                else this._notify((r.err || "").split("\n").filter(Boolean).pop() || t("appmgr.failed"));
+                this.refresh();
+                return;
+            }
+            if (lower.indexOf(".deb") === lower.length - 4) {
+                this.installDeb(abs).then(ok => { if (ok) input.value = ""; });
+                return;
+            }
+            this._notify(t("appmgr.badType"));
+        },
+
+        // Install a local .deb via apt and record it in installed-debs.json so it
+        // shows up in the manager (settings) and the GUI-app list (tab 4/5).
+        // Shared by the settings local-install path and the file browser's .deb
+        // click (fs.class installDebFromBrowser). Resolves true on success.
+        async installDeb(abs) {
+            const pk = await this._run("dpkg-deb -f " + this._shq(abs) + " Package Description", 30000);
+            const lines = (pk.out || "").split("\n").map(s => s.trim()).filter(Boolean);
+            const pkg = lines[0] || "";
+            if (!pk.ok || !pkg) { this._notify(t("appmgr.failed")); this.refresh(); return false; }
+            const r = await this._run("sudo -n apt install -y " + this._shq(abs), 1800000);
+            if (r.ok) {
+                const debs = this._readDebs();
+                if (!debs.some(d => d.pkg === pkg)) { debs.push({ name: lines[1] || pkg, pkg, added: Date.now() }); this._writeDebs(debs); }
+                this._notify(t("appmgr.done"));
+            } else this._notify((r.err || "").split("\n").filter(Boolean).pop() || t("appmgr.failed"));
+            this.refresh();
+            return !!r.ok;
+        },
+
+        uninstall(i) {
+            const app = this._list && this._list[i];
+            if (!app) return;
+            const name = app.name || app.appId || "";
+            if (app.source === "deb") {
+                this._confirm(t("appmgr.confirm.uninstall"), this._esc(t("appmgr.confirm.debRisk").replace("{name}", name)), t("appmgr.uninstall"), () => {
+                    this._confirm(t("appmgr.confirm.uninstall"), this._esc(t("appmgr.confirm.debRisk").replace("{name}", name)), t("appmgr.uninstall"), () => {
+                        this._run("sudo -n apt remove --purge -y " + this._shq(app.pkg), 600000).then(r => {
+                            if (r.ok) { this._writeDebs(this._readDebs().filter(d => d.pkg !== app.pkg)); this._notify(t("appmgr.done")); }
+                            else this._notify((r.err || "").split("\n").filter(Boolean).pop() || t("appmgr.failed"));
+                            this.refresh();
+                        });
+                    });
+                });
+                return;
+            }
+            this._confirm(t("appmgr.confirm.uninstall"), this._esc(name) + " · " + this._esc(t("appmgr.source." + app.source)), t("appmgr.uninstall"), () => {
+                let p;
+                if (app.source === "flatpak") p = this._run("sudo -n flatpak uninstall -y " + this._shq(app.appId), 600000);
+                else if (app.source === "appimage") p = this._run("rm -f " + this._shq(app.path), 30000);
+                else if (app.source === "custom") p = window.appmonitorApi.removeNative(app.id);
+                if (!p) { this.refresh(); return; }
+                p.then(r => {
+                    if (r && r.ok === false) this._notify((r.err || "").split("\n").filter(Boolean).pop() || t("appmgr.failed"));
+                    else this._notify(t("appmgr.done"));
+                    this.refresh();
+                }).catch(() => this.refresh());
+            });
+        },
+
+        _confirm(title, html, okLabel, fn) {
+            this._pending = fn;
+            const self = this;
+            const m = new Modal({
+                type: "custom",
+                title: title,
+                html: '<div class="appmgr_confirm">' + html + "</div>",
+                closeLabel: (window.settings && window.settings.language === "zh") ? "关闭" : "Close",
+                buttons: [{ label: okLabel, action: "window.appManager._confirmed()" }]
+            });
+            const inst = window.modals[m];
+            if (!inst) return;
+            const onKey = e => {
+                if (e.key === "Escape") { e.stopPropagation(); e.preventDefault(); inst.close(); }
+                else if (e.key === "Enter") { e.stopPropagation(); e.preventDefault(); self._confirmed(); }
+            };
+            document.addEventListener("keydown", onKey, true);
+            const origClose = inst.close.bind(inst);
+            inst.close = () => { document.removeEventListener("keydown", onKey, true); origClose(); };
+            setTimeout(() => { const btns = document.querySelectorAll('#modal_' + m + " button"); if (btns[0]) btns[0].focus(); }, 60);
+        },
+        _confirmed() {
+            const fn = this._pending; this._pending = null;
+            const keys = Object.keys(window.modals);
+            const top = keys.length ? window.modals[keys[keys.length - 1]] : null;
+            if (top && typeof top.close === "function") top.close();
+            if (typeof fn === "function") fn();
+        }
+    };
+
     // "显示GUI应用" experimental toggle (virtual-display GUI apps on tab 5).
     // Off by default: tabs 4 & 5 are both CLI apps. The backend server always
     // runs (Xvfb is lazy-started), so flipping this just records intent — the
@@ -2699,6 +3009,30 @@ window.openSettings = async () => {
                     <div class="settings_net_actions"><button type="button" id="settingsNetBtScan" class="settings_net_btn">${t("settings.network.btScan")}</button></div>`, "settings.network.btDevices.help"),
                 section("settings.cat.ssh"),
                 settingsRow("settings.ssh.enabled", netOnOff("settingsSshEnabled", true), "settings.ssh.enabled.help"),
+            ].join("");
+        } },
+        { id: "appmgr", titleKey: "settings.cat.appmgr", html: () => {
+            // Fill the lists as soon as the settings modal is built. The modal is
+            // rebuilt on every open (openSettings early-returns only while it is
+            // already open), so this refresh also runs each time settings opens.
+            setTimeout(() => { if (window.appManager) window.appManager.refresh(); }, 0);
+            return [
+                section("settings.cat.appmgr"),
+                section("appmgr.install.title"),
+                settingsRow("appmgr.search",
+                    `<div class="settings_net_pw"><input type="text" id="appmgrSearchInput" placeholder="${t("appmgr.search.placeholder")}" onkeydown="if(event.key==='Enter'){event.preventDefault();window.appManager.searchFlathub();}"></div>
+                    <div class="settings_net_actions">
+                        <button type="button" id="appmgrSearchBtn" class="settings_net_btn" onclick="window.appManager.searchFlathub()">${t("appmgr.search")}</button>
+                    </div>
+                    <div id="appmgrSearchResults" class="settings_net_list" tabindex="0" augmented-ui="bl-clip tr-clip exe"></div>`),
+                settingsRow("appmgr.local.title",
+                    `<div class="settings_net_pw"><input type="text" id="appmgrLocalInput" placeholder="${t("appmgr.local.placeholder")}" onkeydown="if(event.key==='Enter'){event.preventDefault();window.appManager.installLocal();}"></div>
+                    <div class="settings_net_actions">
+                        <button type="button" id="appmgrLocalInstall" class="settings_net_btn" onclick="window.appManager.installLocal()">${t("appmgr.local.install")}</button>
+                    </div>`),
+                section("appmgr.installed.title"),
+                settingsRow("appmgr.installed",
+                    `<div id="appmgrInstalledList" class="settings_net_list" tabindex="0" augmented-ui="bl-clip tr-clip exe"></div>`),
             ].join("");
         } },
         { id: "clash", titleKey: "settings.cat.clash", html: () => {
