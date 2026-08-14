@@ -130,10 +130,11 @@ class LockScreen {
         // whatever a previous lock flow left behind.
         this._deferRestore = false;
         this._pendingRestore = false;
-        // Remember where the user was: the tab they were on and every window
-        // they had open. The lock itself runs on tab 0 and hides those windows,
-        // and unlock must put everything back exactly as it was.
-        this._prevTerm = window.currentTerm;
+        // Remember where the user was: every window they had open, and the tab
+        // they were on. _prevTerm is captured AFTER _showTerminalLock below —
+        // the cover session lives on a CLI panel tab, and the screensaver /
+        // cover module records the pre-cover tab (coverRestoreTab) when it
+        // switches there. Unlock restores exactly that tab.
         this._snapshotWindows();
         // The app-monitor dropdowns are body-level menus, not modals — hide
         // them too so no app list lingers over the lock (#22).
@@ -149,6 +150,13 @@ class LockScreen {
         this._mode = style;
         if (style === "matrix") this._showFullscreen();
         else this._showTerminalLock();
+        // Where the user was before the cover switched tabs. For a screensaver
+        // → lock handover this is the pre-screensaver tab; for a direct lock
+        // (Win+L) streamCodeIntoCover captured it just now. Matrix mode never
+        // switches tabs, so currentTerm is already correct there.
+        this._prevTerm = (window.screensaver && typeof window.screensaver.coverRestoreTab === "function"
+            && window.screensaver.coverRestoreTab() != null)
+            ? window.screensaver.coverRestoreTab() : window.currentTerm;
         // While locked, eDEX wears its cover identity (fake tabs / filesystem /
         // IP / process list) — a launch device doesn't show real data.
         if (window.cover) window.cover.set(true);
@@ -226,45 +234,32 @@ class LockScreen {
             const strip = document.getElementById("cyber_panel_inner");
             if (strip) strip.style.pointerEvents = "";
         }
-        // restore the terminal's pty send (physical keys + virtual keyboard both
-        // flowed through it while locked), reset the display and show the cursor
+        // Un-hook the pty send interceptor (physical keys + virtual keyboard
+        // both flowed through it while locked) so endCoverSession's socket.close
+        // does not route through _termKey. No output interceptor exists on the
+        // cover terminal and its cat pty holds no user buffer, so there is
+        // nothing to reset, replay or re-prompt — the whole session is destroyed
+        // by endCover() below, and the user's real terminals were never touched.
         if (this._term) {
-            let hadSaved = false;
             try {
                 if (this._origSend) this._term.socket.send = this._origSend;
-                if (this._term.term) {
-                    // un-hook the output interceptor first so the fresh prompt
-                    // (requested below) reaches the xterm normally
-                    if (this._origTermWrite) this._term.term.write = this._origTermWrite;
-                    this._suppressOutput = false;
-                    this._term.term.reset();
-                    this._term.term.write("\x1b[?25h");
-                    // Replay the pre-lock buffer so the user's command history
-                    // and output survive the lock instead of vanishing (#141).
-                    // The prompt is already part of the restored content, so no
-                    // fresh "\r" is needed — and sending one would execute any
-                    // half-typed command the shell still holds in readline.
-                    if (restoreWindows && this._savedTerm) {
-                        this._term.term.write(this._savedTerm);
-                        this._savedTerm = null;
-                        this._serializeAddon = null;
-                        hadSaved = true;
-                    }
-                }
-                // No buffer to restore (fallback): term.reset() wiped the shell's
-                // prompt off the screen and the idle shell will not redraw it on
-                // its own — ask the pty for a fresh prompt so the tab is not left
-                // blank after unlock (#62). On a timeout the screensaver re-owns
-                // the terminal instead.
-                // NB: gate on hadSaved, not on this._savedTerm — nulling it above
-                // would make this fallback fire even after a successful replay and
-                // print a spurious extra prompt after unlock (#176).
-                if (restoreWindows && !hadSaved && this._term.socket && this._term.socket.readyState === 1) {
-                    try { this._term.socket.send("\r"); } catch (e) {}
-                }
+                this._suppressOutput = false;
             } catch (e) {}
         }
         this._term = null;
+        // A direct lock streams fake code behind the box; stop it if the lock is
+        // torn down before the ~1.5s window elapsed (no-op for screensaver locks,
+        // whose wind-down already cleared the timer).
+        if (window.screensaver && typeof window.screensaver.stopCodeStream === "function") {
+            window.screensaver.stopCodeStream();
+        }
+        // Destroy the cover session (screen session + pty). On a real unlock the
+        // restore tab was already captured as _prevTerm; on a timeout back to
+        // the screensaver, keepRestoreTab preserves the ORIGINAL pre-cover tab
+        // so resumeCode() doesn't re-capture the cover tab itself (#88).
+        if (window.screensaver && typeof window.screensaver.endCover === "function") {
+            window.screensaver.endCover(!restoreWindows);
+        }
         // restore the virtual keyboard to the user's setting
         this._restoreKeyboard();
         const el = document.getElementById("lock_screen");
@@ -383,75 +378,28 @@ class LockScreen {
             inner.style.clipPath = "polygon(0 0, calc(100% - 15px) 0, 100% 15px, 100% 100%, 15px 100%, 0 calc(100% - 15px))";
         }
 
-        // Switch to the main terminal and draw the command-line lock UI in it.
-        if (window.focusShellTab) window.focusShellTab(0);
-        const t = window.term[0];
-        this._term = t;
+        // Draw the command-line lock UI on the cover session — a real pty on the
+        // CLI panel tab owned by the screensaver module. A screensaver → lock
+        // handover reuses the very session the fake code streamed into; a direct
+        // lock (Win+L with no screensaver first) streams fake code behind the
+        // box for ~1.5s before it assembles. The user's real terminals (0-2) and
+        // running CLI sessions are never touched, so nothing needs re-serialising
+        // on unlock (#50).
+        const direct = !(window.screensaver && window.screensaver.isActive());
+        if (direct && window.screensaver && typeof window.screensaver.streamCodeIntoCover === "function") {
+            window.screensaver.streamCodeIntoCover();
+        }
         this._codeBuf = "";
-        // The shell keeps running underneath the fake lock UI. On ws connect —
-        // and again when hide() asks the pty for a fresh prompt — the shell
-        // re-emits its PS1, and that output lands inside the box if it arrives
-        // mid-draw. Intercept term.write so real output is dropped while locked;
-        // the box itself draws through the saved raw writer (`_w`) instead.
-        if (t && t.term) {
-            this._origTermWrite = t.term.write;
-            this._rawWrite = t.term.write.bind(t.term);
-            t.term.write = data => {
-                if (this.active && this._suppressOutput) return;
-                this._rawWrite(data);
-            };
-        }
-        this._suppressOutput = true;
-        if (t) {
-            try {
-                // Intercept every keystroke that would reach the shell — physical
-                // keyboard (xterm onData → socket.send) and the virtual keyboard
-                // (term.write → socket.send) both land here while locked.
-                this._origSend = t.socket.send.bind(t.socket);
-                t.socket.send = data => this._termKey(data);
-                // The box decrypts in over the cleared terminal (the fake code
-                // scrolled away accelerated); input is dropped until it has fully
-                // materialised, then _startLockAnim hands over focus (#88).
-                // FIRST capture the shell's live buffer (scrollback + screen) —
-                // the lock's term.reset() below wipes it, and without a snapshot
-                // the user's command history and output vanish from view after
-                // unlock. Replayed by _teardownLock on a real unlock.
-                try {
-                    // Prefer the clean pre-screensaver snapshot when this lock is
-                    // reached from the code screensaver: the fake code streamed
-                    // into this very buffer and wind-down left it there, so a
-                    // live re-serialize would replay the pollution and push the
-                    // user's content up into scrollback on unlock (#148). The
-                    // screensaver took the snapshot BEFORE the fake code started.
-                    const clean = window.screensaver && window.screensaver.preSaverTerm0;
-                    if (clean && typeof clean === "string" && clean.length) {
-                        this._savedTerm = clean;
-                        this._serializeAddon = null;
-                        // One-shot: a later direct lock (no screensaver between)
-                        // must re-serialize the CURRENT live buffer, not reuse
-                        // this pre-screensaver snapshot.
-                        window.screensaver.preSaverTerm0 = null;
-                    } else if (this._savedTerm && typeof this._savedTerm === "string" && this._savedTerm.length) {
-                        // Re-engaging from a screensaver whose clean snapshot is
-                        // gone (the lock-first flow started the streamer via
-                        // resumeCode/show, never preSaverTerm0). The FIRST engage
-                        // in this cycle captured the pre-lock buffer BEFORE any
-                        // fake code touched the terminal, and teardown-to-
-                        // screensaver kept it. A live re-serialize now would
-                        // replay that fake code on unlock (#176) — keep the clean
-                        // snapshot instead.
-                        this._serializeAddon = null;
-                    } else {
-                        const {SerializeAddon} = require("xterm-addon-serialize");
-                        this._serializeAddon = new SerializeAddon();
-                        t.term.loadAddon(this._serializeAddon);
-                        this._savedTerm = this._serializeAddon.serialize();
-                    }
-                } catch (e) { this._savedTerm = null; this._serializeAddon = null; }
-                this._boxAnimating = true;
-                this._drawLockBox(true);
-            } catch (e) {}
-        }
+        const grab = () => {
+            if (!this.active) return;
+            const t = (window.screensaver && typeof window.screensaver.coverTerm === "function")
+                ? window.screensaver.coverTerm() : null;
+            // The cover pty attaches asynchronously (ttyspawn round-trip) — poll
+            // until the wrapper is ready before wiring the box onto it (#50).
+            if (!t || !t.term || !t.socket) { setTimeout(grab, 120); return; }
+            this._setupTermLock(t, direct);
+        };
+        grab();
         // Force the on-screen keyboard so the password can be typed on a touch
         // screen even when the user has the virtual keyboard hidden in settings.
         // Physical-key echo is disabled so typing the passcode on a real keyboard
@@ -498,6 +446,39 @@ class LockScreen {
         // screen back to the screensaver (code box dissolves, then the fake
         // code resumes) (#88).
         this._armIdleTimeout();
+    }
+
+    // Wire the lock UI onto the cover terminal: intercept pty sends so every
+    // keystroke (physical keyboard xterm onData and the virtual keyboard both
+    // reach socket.send) lands in _termKey, then draw the passcode box. No
+    // output interceptor is installed on purpose — the cat pty echoes nothing
+    // (input is consumed here, never forwarded) and a write interceptor would
+    // swallow the fake-code streamer's direct xterm writes during a direct lock
+    // (#50).
+    _setupTermLock(t, direct) {
+        this._term = t;
+        if (t.socket && typeof t.socket.send === "function") {
+            this._origSend = t.socket.send.bind(t.socket);
+            t.socket.send = data => this._termKey(data);
+        }
+        this._rawWrite = t.term.write.bind(t.term);
+        this._suppressOutput = true;
+        this._boxAnimating = true;
+        if (direct) {
+            // Stream fake code behind the box for ~1.5s, then stop the stream
+            // and assemble the box over the "still busy" terminal. Input is
+            // dropped (boxAnimating) for the whole transition (#50).
+            const ss = window.screensaver;
+            setTimeout(() => {
+                if (!this.active) return;
+                if (ss && typeof ss.stopCodeStream === "function") ss.stopCodeStream();
+                this._drawLockBox(true);
+            }, 1500);
+        } else {
+            // Screensaver → lock: the fake code was already wound down; assemble
+            // the box straight over the "finished" terminal.
+            this._drawLockBox(true);
+        }
     }
 
     // Any input typed during the lock (from either input path) lands here.

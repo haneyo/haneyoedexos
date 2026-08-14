@@ -1700,9 +1700,8 @@ app.on('ready', async () => {
     }));
 
     // Version probes for the bundled programs. Best-effort: any failure leaves
-    // that slot empty and the UI shows "—". Firefox's official tarball does not
-    // self-update, so it is flagged manual (snap/deb do, but eDEX-OS ships the
-    // tarball). Claude ships via npm → auto. mihomo ships via our own updater.
+    // that slot empty and the UI shows "—". Claude ships via npm → auto.
+    // mihomo ships via our own updater.
     const bundledClaudeVersion = () => new Promise(resolve => {
         // claude may be a script/alias on some systems → execFile can raise
         // ENOEXEC/ENOENT on the child; that error must not reject the promise
@@ -1718,19 +1717,11 @@ app.on('ready', async () => {
             child.on("error", () => finish({ installed: false, version: "" }));
         } catch (e) { finish({ installed: false, version: "" }); }
     });
-    const bundledFirefoxVersion = () => {
-        try {
-            const ini = fs.readFileSync("/opt/firefox/browser/application.ini", "utf8");
-            const m = /^Version=([^\r\n]+)$/m.exec(ini);
-            return { installed: !!m, version: m ? m[1] : "" };
-        } catch (e) { return { installed: false, version: "" }; }
-    };
     ipc.handle("bundled:status", () => new Promise(async resolve => {
         const claude = await bundledClaudeVersion();
         resolve({
             ok: true,
             claude: { update: "auto", ...claude },
-            firefox: { update: "manual", ...bundledFirefoxVersion() },
             clash: { update: "auto", installed: !!CLASH_BIN, version: await clashVersion() }
         });
     }));
@@ -1884,7 +1875,7 @@ app.on('ready', async () => {
             //    sci-fi workspace picker (falls back to the normal shell when
             //    the claude CLI is not installed);
             //  * { cli: [cmd, ...args] } — the MONITOR A/B CLI panels run an
-            //    arbitrary command-line app (claude, browsh, aerc, htop, btop);
+            //    arbitrary command-line app (claude, carbonyl, aerc, btop);
             //    a "claude" first element still goes through the picker.
             const cliArg = (typeof arg === "object" && arg !== null && Array.isArray(arg.cli)) ? arg.cli : null;
             let shell = settings.shell;

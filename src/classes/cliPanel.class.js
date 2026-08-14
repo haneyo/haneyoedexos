@@ -2,7 +2,7 @@
 //
 // Instead of the retired virtual-display app monitor (AppMonitorPanel), these
 // tabs launch command-line apps that have their own user interface (claude,
-// browsh, aerc, htop, btop) inside a real terminal session. Each entry is
+// carbonyl, aerc, btop) inside a real terminal session. Each entry is
 // started by asking the main process for a new pty via
 // `ipcRenderer.send("ttyspawn", { cli: [cmd, ...args] })`; the main process
 // replies with a port and this side attaches a client-side Terminal to it.
@@ -23,9 +23,8 @@ const _cliIpc = require("electron").ipcRenderer;
 
 window.cliApps = [
     { id: "claude", name: "Claude", cmd: ["claude"], icon: "ai" },
-    { id: "browsh", name: "browsh", cmd: ["browsh", "--startup-url", "https://lite.duckduckgo.com/lite"], icon: "browser" },
+    { id: "carbonyl", name: "carbonyl", cmd: ["carbonyl", "https://lite.duckduckgo.com/lite"], icon: "browser" },
     { id: "aerc", name: "aerc", cmd: ["aerc"], icon: "mail" },
-    { id: "htop", name: "htop", cmd: ["htop"], icon: "monitor" },
     { id: "btop", name: "BTOP", cmd: ["btop"], icon: "monitor" }
 ];
 
@@ -319,6 +318,88 @@ class CliPanel {
         _t.classList.add("show");
         clearTimeout(this._notifyTimer);
         this._notifyTimer = setTimeout(() => _t.classList.remove("show"), 2200);
+    }
+
+    // ---- cover session (screensaver / lock share one inert pty) ----
+    // The code screensaver streams fake code into a real terminal and the code
+    // lock draws its passcode box in one, so they borrow a dedicated __cover__
+    // session on this panel: a `cat` pty that echoes nothing, wrapped in a
+    // muted Terminal. Owned by window.screensaver; destroyed when the cover
+    // lifts. It never appears in the app menu (__cover__ is not in cliApps)
+    // and never touches this._spawning (a user app may be mid-launch).
+    beginCoverSession() {
+        if (this._coverSession || this.sessions.__cover__) return this._coverSession || this.sessions.__cover__;
+        const _t = this;
+        const _sid = "__cover__";
+        if (!this._coverRestoreSel) this._coverRestoreSel = this.selected || null;
+        // During the cover, `selected` points at the cover session so focus()
+        // keeps it the active div (and never reveals the user's app on screen).
+        this.selected = { id: _sid, name: "AUTH GATE" };
+        const _s = { id: _sid, sid: _sid, starting: true, term: null, el: null, cover: true };
+        this.sessions[_sid] = _s;
+        const _box = this.container;
+        const _el = document.createElement("div");
+        _el.className = "cli_session";
+        _el.id = _sid;
+        _box.appendChild(_el);
+        _el.classList.add("active");
+        Object.keys(this.sessions).forEach(_k => {
+            if (_k !== _sid && this.sessions[_k].el) this.sessions[_k].el.classList.remove("active");
+        });
+        _cliIpc.send("ttyspawn", { cli: ["sh", "-c", "stty raw -echo; exec cat"] });
+        _cliIpc.once("ttyspawn-reply", (e, r) => {
+            if (String(r).startsWith("ERROR")) {
+                _s.starting = false;
+                if (_el.parentNode) _el.parentNode.removeChild(_el);
+                delete _t.sessions[_sid];
+                _t._coverSession = null;
+                return;
+            }
+            const _port = Number(String(r).substr(9));
+            let _term = null;
+            try {
+                _term = new Terminal({ role: "client", parentId: _sid, port: _port, muted: true });
+            } catch (_e) {
+                _s.starting = false;
+                return;
+            }
+            _term.onclose = () => {
+                try { if (_term.term && _term.term.dispose) _term.term.dispose(); } catch (_e) {}
+                if (_el.parentNode) _el.parentNode.removeChild(_el);
+                delete _t.sessions[_sid];
+                _t._coverSession = null;
+            };
+            _s.starting = false;
+            _s.term = _term;
+            _t._coverSession = _s;
+        });
+        return _s;
+    }
+
+    coverTerm() {
+        const _s = this._coverSession || this.sessions.__cover__ || null;
+        return (_s && _s.term) ? _s.term : null;
+    }
+
+    endCoverSession() {
+        const _s = this._coverSession || this.sessions.__cover__ || null;
+        if (!_s) return;
+        if (_s.term) {
+            try {
+                if (_s.term.onclose) _s.term.onclose = null;
+                // The cat pty never exits on its own — close the socket to reap it.
+                if (_s.term.socket && typeof _s.term.socket.close === "function") _s.term.socket.close();
+                if (_s.term.term && _s.term.term.dispose) _s.term.term.dispose();
+            } catch (_e) {}
+        }
+        if (_s.el && _s.el.parentNode) _s.el.parentNode.removeChild(_s.el);
+        delete this.sessions.__cover__;
+        this._coverSession = null;
+        this.selected = this._coverRestoreSel || this.selected;
+        if (this.selected && this.selected.id === "__cover__") this.selected = null;
+        this._coverRestoreSel = null;
+        if (this.labelEl) this.labelEl.textContent = this.selected ? this.selected.name : this._label();
+        this._renderMenu();
     }
 
     // Shell / DEV_DEBUG entry points the AppMonitorPanel also exposed.

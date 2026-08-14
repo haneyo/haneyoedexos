@@ -41,7 +41,7 @@ EXTRACT="$WORK/iso-extract"
 echo "[edex] installing build tools"
 export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update -y
-sudo apt-get install -y squashfs-tools xorriso genisoimage
+sudo apt-get install -y squashfs-tools xorriso genisoimage unzip
 
 echo "[edex] extracting stock ISO"
 mkdir -p "$EXTRACT"
@@ -97,7 +97,7 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 \
     linux-firmware network-manager wpasupplicant bluez rfkill upower \
     pulseaudio rtkit alsa-utils \
-    uget aria2 btop ffmpeg axel \
+    btop ffmpeg axel \
     openssh-server \
     aerc less \
     flatpak xdg-desktop-portal xdg-desktop-portal-gtk \
@@ -110,7 +110,7 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
 
 # Bake in Node.js LTS (official tarball). The built-in Claude CLI needs
 # Node >= 22, but Ubuntu noble's apt nodejs is 18 — so we ship the current LTS
-# in /opt/node like Firefox, symlink node/npm/npx into /usr/local/bin, and
+# in /opt/node, symlink node/npm/npx into /usr/local/bin, and
 # `nodejs npm` is dropped from APTOPTS above so the apt versions can't shadow
 # it. This block runs BEFORE the chroot so the claude install sees Node 24.
 # Node is a HARD requirement (claude and any npm tooling are unusable without
@@ -186,52 +186,39 @@ fi
 sudo rm -f "$WORK/rootfs/tmp/edex-build-wifi-drivers.sh"
 for m in /proc /sys /dev; do sudo umount "$WORK/rootfs$m" 2>/dev/null || true; done
 
-echo "[edex] baking in Firefox (official tarball — offline, no snap)"
-# Ubuntu 24.04's 'firefox' package is a snap; for a fully offline system we
-# instead embed Mozilla's official Linux tarball and register a .desktop entry
-# so it shows up in the app-monitor list.
-curl -fsSL -o "$WORK/firefox.tar.xz" \
-    "https://download.mozilla.org/?product=firefox-latest-ssl&os=linux64&lang=en-US" \
-    || echo "[edex] WARN: Firefox download failed (best-effort)"
-if [ -s "$WORK/firefox.tar.xz" ]; then
-    sudo mkdir -p "$WORK/rootfs/opt/firefox"
-    sudo tar -xJf "$WORK/firefox.tar.xz" -C "$WORK/rootfs/opt/firefox" --strip-components=1 \
-        || echo "[edex] WARN: Firefox extract failed (best-effort)"
-    sudo tee "$WORK/rootfs/usr/share/applications/firefox.desktop" >/dev/null <<'DESK'
-[Desktop Entry]
-Name=Firefox
-Comment=Browse the web
-Exec=/opt/firefox/firefox
-Icon=/opt/firefox/browser/chrome/icons/default/default128.png
-Type=Application
-Terminal=false
-Categories=Network;WebBrowser;
-DESK
+# Carbonyl — the in-app Browser (CLI panel tab 4/5) runs `carbonyl <url>`, a
+# self-contained Chromium that renders real web pages straight into the
+# terminal. Unlike the old browsh, it bundles its own Chromium engine and needs
+# no separate Firefox/geckodriver — the libs it wants (libgtk-3-0, libnss3,
+# libasound2t64, libxkbcommon0, ...) are already in APTOPTS above. Carbonyl is
+# a HARD requirement (the built-in browser is unusable without it) — a failed
+# download/install FAILS the build instead of shipping an ISO whose browser tab
+# dies on launch.
+echo "[edex] installing carbonyl (Chromium terminal browser)"
+CARBONYL_VER="v0.0.3"
+if ! curl -fsSL --retry 2 -o "$WORK/carbonyl.zip" \
+        "https://github.com/fathyb/carbonyl/releases/download/$CARBONYL_VER/carbonyl.linux-amd64.zip"; then
+    echo "[edex] ERROR: carbonyl download failed — cannot build an ISO without the browser"; exit 1
 fi
-
-# Browsh terminal browser — the in-app Browser (CLI panel tab 4/5) runs `browsh`,
-# a TUI that renders real web pages by driving headless Firefox. It needs
-# Firefox in $PATH, which is exactly the /opt/firefox we bake in above, so link
-# it in. Browsh is a HARD requirement (the built-in browser is unusable without
-# it) — a failed download/install, or a missing Firefox runtime, FAILS the build
-# instead of shipping an ISO whose browser tab dies on launch.
-# (v1.8.2 is the last release with linux binaries; v1.8.3 ships an .xpi only.)
-echo "[edex] installing browsh (terminal browser) + linking firefox into PATH"
-BROWSH_VER="1.8.2"
-if ! curl -fsSL --retry 2 -o "$WORK/browsh.deb" \
-        "https://github.com/browsh-org/browsh/releases/download/v$BROWSH_VER/browsh_${BROWSH_VER}_linux_amd64.deb"; then
-    echo "[edex] ERROR: browsh download failed — cannot build an ISO without the browser"; exit 1
+sudo rm -rf "$WORK/carbonyl-root"
+if ! sudo unzip -q "$WORK/carbonyl.zip" -d "$WORK/carbonyl-root"; then
+    echo "[edex] ERROR: carbonyl zip extract failed"; exit 1
 fi
-if ! sudo dpkg -x "$WORK/browsh.deb" "$WORK/browsh-root"; then
-    echo "[edex] ERROR: browsh deb extract failed"; exit 1
+# The zip layout is not documented — locate the executable defensively. Carbonyl
+# resolves its bundled Chromium resources relative to the binary, so we keep the
+# whole tree under /opt/carbonyl and symlink the binary into /usr/local/bin
+# (a lone `install` of just the executable would orphan its resources/ dir and
+# crash on launch).
+CARBONYL_BIN=$(find "$WORK/carbonyl-root" -type f -name 'carbonyl' 2>/dev/null | head -1)
+[ -z "$CARBONYL_BIN" ] && CARBONYL_BIN=$(find "$WORK/carbonyl-root" -type f -executable 2>/dev/null | head -1)
+if [ -z "$CARBONYL_BIN" ]; then
+    echo "[edex] ERROR: carbonyl binary not found in zip"; exit 1
 fi
-sudo install -Dm 755 "$WORK/browsh-root/usr/bin/browsh" "$WORK/rootfs/usr/local/bin/browsh" 2>/dev/null \
-    || { echo "[edex] ERROR: browsh binary not found in deb"; exit 1; }
-if [ ! -f "$WORK/rootfs/opt/firefox/firefox" ]; then
-    echo "[edex] ERROR: /opt/firefox/firefox missing — browsh needs Firefox as its render engine; cannot build an ISO without it"; exit 1
-fi
-sudo ln -sf /opt/firefox/firefox "$WORK/rootfs/usr/local/bin/firefox"
-echo "[edex] browsh $(ls -lh "$WORK/browsh-root/usr/bin/browsh" 2>/dev/null | awk '{print $5}') OK, firefox linked"
+sudo mkdir -p "$WORK/rootfs/opt/carbonyl"
+sudo cp -a "$WORK/carbonyl-root/." "$WORK/rootfs/opt/carbonyl/"
+sudo chmod +x "$WORK/rootfs/opt/carbonyl/$(basename "$CARBONYL_BIN")"
+sudo ln -sf "/opt/carbonyl/$(basename "$CARBONYL_BIN")" "$WORK/rootfs/usr/local/bin/carbonyl"
+echo "[edex] carbonyl $(ls -lh "$WORK/rootfs/opt/carbonyl/$(basename "$CARBONYL_BIN")" 2>/dev/null | awk '{print $5}') OK"
 
 # Bake in the mihomo proxy daemon (MetaCubeX/mihomo) + metacubexd dashboard +
 # geo databases so the built-in Clash proxy (#46) works fully offline at
