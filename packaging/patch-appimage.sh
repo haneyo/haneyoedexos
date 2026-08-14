@@ -209,10 +209,16 @@ const SSH_OBJ_V2_OLD = ');window.ssh={refreshStatus(){window.sysCmd.run("sudo -n
 // Ubuntu 24.04 的 sshd 是 socket 激活,空闲时 ssh.service 是 inactive → 开关误显示 OFF。
 // 重跑时先 revert 回锚点,再注入 v2.2。
 const SSH_OBJ_NEW_OLD = ');window.ssh={refreshStatus(){window.sysCmd.run("sudo -n systemctl is-active ssh").then(e=>{const o=document.getElementById("settingsSshEnabled");o&&(o.value=e.ok&&"active"===(e.out||"").trim()?"1":"0")}).catch(()=>{})},applyEnabled(){const e=document.getElementById("settingsSshEnabled");if(!e)return;const a="1"===e.value?"enable --now":"disable --now";window.sysCmd.run("sudo -n systemctl "+a+" ssh ssh.socket").then(()=>{this.refreshStatus()}).catch(()=>{})}};const v=(e,t)=>{const n=(e||"").replace';
-// v2.2(本行)= 可靠性修复:refreshStatus 改查 `is-active ssh.socket`(真正的 :22 监听者)。
+// v2.2 = 可靠性修复:refreshStatus 改查 `is-active ssh.socket`(真正的 :22 监听者)。
 // 与 src/_renderer.js 的 window.ssh 保持一致。Ubuntu 24.04 的 sshd 是 socket 激活,
 // ssh.service 只在有连接时才 active,查它会误报 inactive(开关显示 OFF 但 SSH 实际可用)。
-const SSH_OBJ_NEW = ');window.ssh={refreshStatus(){window.sysCmd.run("sudo -n systemctl is-active ssh.socket").then(e=>{const o=document.getElementById("settingsSshEnabled");o&&(o.value=e.ok&&"active"===(e.out||"").trim()?"1":"0")}).catch(()=>{})},applyEnabled(){const e=document.getElementById("settingsSshEnabled");if(!e)return;const a="1"===e.value?"enable --now":"disable --now";window.sysCmd.run("sudo -n systemctl "+a+" ssh ssh.socket").then(()=>{this.refreshStatus()}).catch(()=>{})}};const v=(e,t)=>{const n=(e||"").replace';
+// v2.3 起降级为 revert 桥接(部署态,开关命令仍带 ssh 双 unit)。
+const SSH_OBJ_V23_OLD = ');window.ssh={refreshStatus(){window.sysCmd.run("sudo -n systemctl is-active ssh.socket").then(e=>{const o=document.getElementById("settingsSshEnabled");o&&(o.value=e.ok&&"active"===(e.out||"").trim()?"1":"0")}).catch(()=>{})},applyEnabled(){const e=document.getElementById("settingsSshEnabled");if(!e)return;const a="1"===e.value?"enable --now":"disable --now";window.sysCmd.run("sudo -n systemctl "+a+" ssh ssh.socket").then(()=>{this.refreshStatus()}).catch(()=>{})}};const v=(e,t)=>{const n=(e||"").replace';
+// v2.3(本行)= socket-only 开关:命令只动 ssh.socket,不再带 ssh 双 unit。
+// 安装脚本只 enable ssh.socket(ssh.service 保持 disabled);若开关仍 enable 两个 unit,
+// 开机 ssh.socket 先占 :22,ssh.service 再绑就 "Address already in use" → 红字 FAILED。
+// 与 src/_renderer.js 的 window.ssh(已改 socket-only)保持一致。
+const SSH_OBJ_NEW = ');window.ssh={refreshStatus(){window.sysCmd.run("sudo -n systemctl is-active ssh.socket").then(e=>{const o=document.getElementById("settingsSshEnabled");o&&(o.value=e.ok&&"active"===(e.out||"").trim()?"1":"0")}).catch(()=>{})},applyEnabled(){const e=document.getElementById("settingsSshEnabled");if(!e)return;const a="1"===e.value?"enable --now":"disable --now";window.sysCmd.run("sudo -n systemctl "+a+" ssh.socket").then(()=>{this.refreshStatus()}).catch(()=>{})}};const v=(e,t)=>{const n=(e||"").replace';
 const SSH_WIRE_ANCHOR = 'window.clash&&window.clash.refreshStatus();const s=(e,t)=>{';
 const SSH_WIRE_NEW_OLD = "window.clash&&window.clash.refreshStatus();const _se=document.getElementById(\"settingsSshEnabled\");_se&&_se.addEventListener(\"change\",()=>window.ssh.applyEnabled());window.ssh&&window.ssh.refreshStatus();const _mw=document.getElementById(\"settingsAppMonitorManageWebapps\");_mw&&_mw.addEventListener(\"click\",()=>{(window.appmonitorA||window.appmonitorB)&&(window.appmonitorA||window.appmonitorB).manageWebapps()});const s=(e,t)=>{";
 const SSH_WIRE_NEW = "window.clash&&window.clash.refreshStatus();const _se=document.getElementById(\"settingsSshEnabled\");_se&&_se.addEventListener(\"change\",()=>window.ssh.applyEnabled());window.ssh&&window.ssh.refreshStatus();const _mw=document.getElementById(\"settingsAppMonitorManageWebapps\");_mw&&_mw.addEventListener(\"click\",()=>{(window.appmonitorA||window.appmonitorB)&&(window.appmonitorA||window.appmonitorB).manageWebapps()});const _dld=document.getElementById(\"settingsDlDir\");_dld&&(_dld.value=(window.settings&&window.settings.downloadDir)||require(\"os\").homedir()+\"/Downloads\");const _dla=document.getElementById(\"settingsDlApply\");_dla&&_dla.addEventListener(\"click\",()=>{const d=(_dld?_dld.value:\"\").trim();if(!d)return;ipc.invoke(\"dl:setDir\",{dir:d}).then(r=>{if(window.settings&&r&&r.ok)window.settings.downloadDir=d})});const _dladd=document.getElementById(\"settingsDlAdd\");_dladd&&_dladd.addEventListener(\"click\",()=>window.axel&&window.axel.add());window.axel&&window.axel.startPoll();const _cmo=document.getElementById(\"settingsClashMode\");_cmo&&_cmo.addEventListener(\"change\",()=>window.clash&&window.clash.setMode());const _cgr=document.getElementById(\"settingsClashGroupsRefresh\");_cgr&&_cgr.addEventListener(\"click\",()=>window.clash&&(window.clash.refreshGroups(),window.clash.refreshRules()));const s=(e,t)=>{";
@@ -969,7 +975,11 @@ const targets = [
     // #60(v2.2 SSH 可靠性):标记再换成 `is-active ssh.socket`。v2.1 部署版(有 beginCoverSession、但
     //   refreshStatus 仍查 `is-active ssh`)→ 无此串 → 整链重跑,SSH_OBJ_NEW_OLD revert 后注入 v2.2;
     //   新态(此串)→ 跳过。src 新构建的 _renderer.js 含此串(刷新状态命令),ISO 烘焙同样 no-op。
-    expectOut: 'is-active ssh.socket',
+    // v2.3(socket-only 开关):标记换成命令特征串 `"+a+" ssh.socket")`。v2.2 部署版(有 is-active
+    //   ssh.socket、但开关命令仍带 ssh 双 unit)→ 无此串 → 整链重跑,SSH_OBJ_V23_OLD revert 后注入
+    //   v2.3(socket-only);新态(此串)→ 跳过。src 新构建的 _renderer.js 含此串(开关命令已改
+    //   socket-only),ISO 烘焙同样 no-op。
+    expectOut: '"+a+" ssh.socket")',
     // 合并成一个 target:多个 _renderer.js target 会相互覆盖,必须合并。
     // 1) 电池图标对准:外框 rect x=1 w=25(rx=2,圆角从 x=24 开始),发光条 x=3 w=23*s/100。
     //    满电时条右端到 x=26 插进右圆角、条整体右偏 1 单位。改 21:条右端恰止于 x=24。
@@ -1040,7 +1050,9 @@ const targets = [
       .split(SSH_OBJ_V2_OLD).join(SSH_OBJ_ANCHOR)
       // v2.1:refreshStatus 仍查 `is-active ssh`(socket 激活下空闲误报 inactive),revert 回锚点。
       .split(SSH_OBJ_NEW_OLD).join(SSH_OBJ_ANCHOR)
-      // anchor → v2.2(is-active ssh.socket 可靠性修复)。
+      // v2.2:开关命令仍带 ssh 双 unit(socket-only 修复前),revert 回锚点。
+      .split(SSH_OBJ_V23_OLD).join(SSH_OBJ_ANCHOR)
+      // anchor → v2.3(socket-only 开关)。
       .split(SSH_OBJ_ANCHOR).join(SSH_OBJ_NEW)
       // #36 apply:SHOWGUI_OBJ 挂在 const v 锚点(SSH_OBJ_NEW 尾部同锚,顺序必须在 SSH 之后);
       // SHOWGUI_ROW 无条件插到 apps 分类首行(o("settings.cat.apps"),后)。

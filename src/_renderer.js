@@ -2184,11 +2184,12 @@ async function initUI() {
             const el = document.getElementById("settingsSshEnabled");
             if (!el) return;
             const action = el.value === "1" ? "enable --now" : "disable --now";
-            // Ubuntu 24.04 socket-activates sshd via ssh.socket: `disable --now
-            // ssh` alone stops ssh.service but the socket keeps re-triggering it,
-            // so the toggle must stop/enable the socket too — both units, both
-            // directions.
-            window.sysCmd.run("sudo -n systemctl " + action + " ssh ssh.socket")
+            // Ubuntu 24.04 socket-activates sshd via ssh.socket; installs bake
+            // only the socket on (ssh.service stays disabled). The toggle must
+            // match: enabling ssh.service too makes ssh.socket bind :22 first at
+            // boot and ssh.service then fail with "Address already in use" →
+            // red FAILED text. So only the socket, both directions.
+            window.sysCmd.run("sudo -n systemctl " + action + " ssh.socket")
                 .then(() => this.refreshStatus())
                 .catch(() => {});
         }
