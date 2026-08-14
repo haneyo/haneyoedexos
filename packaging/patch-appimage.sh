@@ -403,6 +403,11 @@ const CLI_COVER_METHODS = `beginCoverSession(){if(this._coverSession||this.sessi
 const CLI_PANEL_CLASS_NEW = CLI_PANEL_CLASS_NEW_OLD
   .split('{id:"browsh",name:"browsh",cmd:["browsh","--startup-url","https://lite.duckduckgo.com/lite"],icon:"browser"}')
   .join('{id:"carbonyl",name:"carbonyl",cmd:["carbonyl","https://lite.duckduckgo.com/lite"],icon:"browser"}')
+  // #49:最终应用态去掉 htop(保留 btop)。CLI_PANEL_CLASS_NEW_OLD 仍带 htop —— 它是 #36 部署态的
+  // 匹配锚点(桥接 .split(NEW_OLD).join(NEW) 靠它命中),不能在 OLD 里删;derive 出 NEW 后再移除,
+  // 锚点不受影响,最终注入的菜单与 src(cliPanel.class.js 无 htop)对齐。
+  .split('{id:"htop",name:"htop",cmd:["htop"],icon:"monitor"},')
+  .join('')
   .split('toggleDevTools(){}}')
   .join('toggleDevTools(){}' + CLI_COVER_METHODS + '}');
 // CLI_PANEL_NEW 注入点是逗号表达式链(appmonitorApi={...},appmonitorA=...,appmonitorB=...,wifiApi=...),
