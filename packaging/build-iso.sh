@@ -214,11 +214,16 @@ CARBONYL_BIN=$(find "$WORK/carbonyl-root" -type f -name 'carbonyl' 2>/dev/null |
 if [ -z "$CARBONYL_BIN" ]; then
     echo "[edex] ERROR: carbonyl binary not found in zip"; exit 1
 fi
+# The zip nests everything under a versioned dir (e.g. carbonyl-0.0.3/), so the
+# binary lands at /opt/carbonyl/<ver>/carbonyl after the full-tree copy. Use the
+# RELATIVE path (not basename) for chmod/symlink — basename would point at
+# /opt/carbonyl/carbonyl which doesn't exist.
+CARBONYL_REL="${CARBONYL_BIN#"$WORK/carbonyl-root/"}"
 sudo mkdir -p "$WORK/rootfs/opt/carbonyl"
 sudo cp -a "$WORK/carbonyl-root/." "$WORK/rootfs/opt/carbonyl/"
-sudo chmod +x "$WORK/rootfs/opt/carbonyl/$(basename "$CARBONYL_BIN")"
-sudo ln -sf "/opt/carbonyl/$(basename "$CARBONYL_BIN")" "$WORK/rootfs/usr/local/bin/carbonyl"
-echo "[edex] carbonyl $(ls -lh "$WORK/rootfs/opt/carbonyl/$(basename "$CARBONYL_BIN")" 2>/dev/null | awk '{print $5}') OK"
+sudo chmod +x "$WORK/rootfs/opt/carbonyl/$CARBONYL_REL"
+sudo ln -sf "/opt/carbonyl/$CARBONYL_REL" "$WORK/rootfs/usr/local/bin/carbonyl"
+echo "[edex] carbonyl $(ls -lh "$WORK/rootfs/opt/carbonyl/$CARBONYL_REL" 2>/dev/null | awk '{print $5}') OK"
 
 # Bake in the mihomo proxy daemon (MetaCubeX/mihomo) + metacubexd dashboard +
 # geo databases so the built-in Clash proxy (#46) works fully offline at
