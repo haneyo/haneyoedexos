@@ -1717,12 +1717,42 @@ app.on('ready', async () => {
             child.on("error", () => finish({ installed: false, version: "" }));
         } catch (e) { finish({ installed: false, version: "" }); }
     });
+    // Generic --version probe for apt-bundled CLIs (btop / aerc). Best-effort:
+    // any failure leaves that slot empty and the UI shows "—".
+    const bundledCmdVersion = cmd => new Promise(resolve => {
+        const { execFile } = require("child_process");
+        let done = false;
+        const finish = v => { if (!done) { done = true; resolve(v); } };
+        try {
+            const child = execFile(cmd, ["--version"], { timeout: 5000 }, (err, stdout) => {
+                const m = String(stdout || "").match(/[\d]+(?:\.[\d]+)+/);
+                finish({ installed: !err && !!m, version: m ? m[0] : "" });
+            });
+            child.on("error", () => finish({ installed: false, version: "" }));
+        } catch (e) { finish({ installed: false, version: "" }); }
+    });
+    // carbonyl ships under /opt/carbonyl/<version-dir>/carbonyl (symlinked into
+    // /usr/local/bin) — the version lives in the real path, not a --version flag.
+    const carbonylVersion = () => new Promise(resolve => {
+        try {
+            const real = require("fs").realpathSync("/usr/local/bin/carbonyl");
+            const m = String(real).match(/([\d]+(?:\.[\d]+)+)/);
+            if (m) return resolve({ installed: true, version: m[1] });
+            return resolve({ installed: true, version: "" });
+        } catch (e) { resolve({ installed: false, version: "" }); }
+    });
     ipc.handle("bundled:status", () => new Promise(async resolve => {
         const claude = await bundledClaudeVersion();
+        const [btop, aerc, carbonyl] = await Promise.all([
+            bundledCmdVersion("btop"), bundledCmdVersion("aerc"), carbonylVersion()
+        ]);
         resolve({
             ok: true,
             claude: { update: "auto", ...claude },
-            clash: { update: "auto", installed: !!CLASH_BIN, version: await clashVersion() }
+            clash: { update: "auto", installed: !!CLASH_BIN, version: await clashVersion() },
+            btop: { update: "apt", ...btop },
+            aerc: { update: "apt", ...aerc },
+            carbonyl: { update: "bundled", ...carbonyl }
         });
     }));
 
@@ -1925,7 +1955,15 @@ app.on('ready', async () => {
             term.onresized = () => {};
             term.ondisconnected = () => {
                 term.onclosed = () => {};
-                term.close();
+                // Kill the whole process group (shell + children). Closing the
+                // websocket alone leaves orphan children running — e.g. closing
+                // the browser kept carbonyl/chromium alive and audio kept
+                // playing after the panel session was gone (#74).
+                try {
+                    process.kill(-term.tty.pid, "SIGKILL");
+                } catch (e) {
+                    try { term.close(); } catch (e) {}
+                }
                 term.wss.close();
                 extraTtys[term.port] = null;
                 term = null;

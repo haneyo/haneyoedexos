@@ -23,7 +23,10 @@ const _cliIpc = require("electron").ipcRenderer;
 
 window.cliApps = [
     { id: "claude", name: "Claude", cmd: ["claude"], icon: "ai" },
-    { id: "carbonyl", name: "carbonyl", cmd: ["carbonyl", "https://lite.duckduckgo.com/lite"], icon: "browser" },
+    // carbonyl bundles Chromium; Ubuntu 24.04 blocks its user-namespace sandbox
+    // ("No usable sandbox!" FATAL), so the browser only runs with --no-sandbox
+    // (kiosk device, trusted start page only). Verified on the laptop 2026-08-14.
+    { id: "carbonyl", name: "carbonyl", cmd: ["carbonyl", "--no-sandbox", "https://lite.duckduckgo.com/lite"], icon: "browser" },
     { id: "aerc", name: "aerc", cmd: ["aerc"], icon: "mail" },
     { id: "btop", name: "BTOP", cmd: ["btop"], icon: "monitor" }
 ];
@@ -51,7 +54,11 @@ window._cliPickIcon = (id) => {
     try {
         const s = document.createElement("style");
         s.id = "edex_cli_css";
-        s.textContent = ".cli_session{position:absolute;inset:0;display:none;overflow:hidden}.cli_session.active{display:block}";
+        // Hide the xterm viewport scrollbar gutter too — otherwise it eats ~15px
+        // on the right and the browser renders with black bars on both sides (#75).
+        s.textContent = ".cli_session{position:absolute;inset:0;display:none;overflow:hidden}.cli_session.active{display:block}"
+            + ".xterm .xterm-viewport{overflow-y:hidden!important;scrollbar-width:none!important}"
+            + ".xterm .xterm-viewport::-webkit-scrollbar{width:0!important;height:0!important;display:none!important}";
         document.head.appendChild(s);
     } catch (e) {}
 })();
@@ -260,6 +267,10 @@ class CliPanel {
         if (_s.term) {
             try {
                 if (_s.term.onclose) _s.term.onclose = null;
+                // Closing the websocket makes the backend's ondisconnected fire,
+                // which kills the whole process group (shell + children). Without
+                // this the browser keeps running and audio lingers after close (#74).
+                if (_s.term.socket && _s.term.socket.close) _s.term.socket.close();
                 if (_s.term.term && _s.term.term.dispose) _s.term.term.dispose();
             } catch (_e) {}
         }
