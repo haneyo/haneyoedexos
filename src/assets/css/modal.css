@@ -578,6 +578,18 @@ div.modal_popup #settingsEditor .settings_net_actions {
     display: flex;
     gap: 0.6vh;
 }
+/* Updates category: version number + check/update buttons on one line. The
+   .settings_net_actions has margin-left:auto (right-align) + margin-top:0.5vh
+   (stacked below the version span) — inside this flex row, drop the top margin
+   so the buttons sit beside the version instead of under it. */
+div.modal_popup #settingsEditor .settings_ver_row {
+    display: flex;
+    align-items: center;
+    gap: 1vh;
+}
+div.modal_popup #settingsEditor .settings_ver_row .settings_net_actions {
+    margin-top: 0;
+}
 div.modal_popup #settingsEditor .settings_net_proxy {
     display: flex;
     flex-wrap: wrap;

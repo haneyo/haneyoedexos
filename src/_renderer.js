@@ -2090,6 +2090,7 @@ async function initUI() {
     window.updates = {
         app: null,
         clash: null,
+        _clashUpdating: false,
         refresh() {
             this.checkApp();
             this.refreshBundled();
@@ -2145,7 +2146,9 @@ async function initUI() {
                 if (el) el.textContent = t("settings.updates.never");
             });
         },
-        checkClashUpdate() {
+        checkClashUpdate(manual) {
+            // manual=true (the "Check" button): toast the outcome. refresh()
+            // also calls this on every settings open — no toast then.
             ipc.invoke("clash:check-update").then(r => {
                 this.clash = r;
                 const el = document.getElementById("settingsUpClashVer");
@@ -2155,15 +2158,67 @@ async function initUI() {
                     else el.textContent = t("settings.clash.mock");
                 }
                 if (upd) upd.style.display = (r && r.available && r.ok && r.downloadUrl && cmpVer(r.latest, r.current) > 0) ? "" : "none";
-            }).catch(() => {});
+                if (manual) {
+                    if (!r || !r.available) this.toast(t("settings.clash.mock"));
+                    else if (!r.ok) this.toast(t("settings.updates.updateFailed") + (r.error ? " " + r.error : ""));
+                    else if (r.latest && cmpVer(r.latest, r.current) > 0) this.toast(t("settings.updates.newVersion") + " v" + r.latest);
+                    else this.toast(t("settings.updates.upToDate"));
+                }
+            }).catch(() => { if (manual) this.toast(t("settings.updates.updateFailed")); });
         },
         updateClash() {
+            if (this._clashUpdating) return;
             const r = this.clash;
-            if (!r || !r.downloadUrl) return;
-            ipc.invoke("clash:update", { url: r.downloadUrl }).then(() => {
-                window.clash.refreshStatus();
-                this.checkClashUpdate();
+            const upd = document.getElementById("settingsUpClashUpdate");
+            // Pressing Update without a prior (or successful) check: say so
+            // instead of silently doing nothing (#78).
+            if (!r || !r.downloadUrl) {
+                this.toast(t("settings.updates.noUpdate"));
+                return;
+            }
+            this._clashUpdating = true;
+            if (upd) {
+                upd.disabled = true;
+                upd.textContent = t("settings.updates.updating");
+            }
+            ipc.invoke("clash:update", { url: r.downloadUrl }).then(res => {
+                this._clashUpdating = false;
+                if (upd) {
+                    upd.disabled = false;
+                    upd.textContent = t("settings.updates.updateBtn");
+                }
+                if (res && res.ok) {
+                    this.toast(t("settings.updates.updated") + (r.latest ? " v" + r.latest : ""));
+                    window.clash.refreshStatus();
+                    this.checkClashUpdate();
+                } else {
+                    this.toast(t("settings.updates.updateFailed") + (res && res.error ? " " + res.error : ""));
+                }
+            }).catch(() => {
+                this._clashUpdating = false;
+                if (upd) {
+                    upd.disabled = false;
+                    upd.textContent = t("settings.updates.updateBtn");
+                }
+                this.toast(t("settings.updates.updateFailed"));
             });
+        },
+        toast(msg) {
+            if (window.appmonitorA && typeof window.appmonitorA._notify === "function") {
+                window.appmonitorA._notify(msg);
+                return;
+            }
+            let el = document.getElementById("edex_toast");
+            if (!el) {
+                el = document.createElement("div");
+                el.id = "edex_toast";
+                el.className = "browser_toast";
+                document.body.appendChild(el);
+            }
+            el.textContent = msg;
+            el.classList.add("show");
+            clearTimeout(this.toast._timer);
+            this.toast._timer = setTimeout(() => el.classList.remove("show"), 2200);
         }
     };
 
@@ -3114,10 +3169,12 @@ window.openSettings = async () => {
         ].join("") },
         { id: "updates", titleKey: "settings.cat.updates", html: () => [
             section("settings.section.updatesApp"),
-            settingsRow("settings.updates.app", `<span id="settingsUpAppVersion" class="settings_net_info">v${remote.app.getVersion()}</span>
-                <div class="settings_net_actions">
-                    <button type="button" id="settingsUpAppCheck" class="settings_net_btn">${t("settings.updates.check")}</button>
-                    <button type="button" id="settingsUpAppUpdate" class="settings_net_btn">${t("settings.updates.updateBtn")}</button>
+            settingsRow("settings.updates.app", `<div class="settings_ver_row">
+                    <span id="settingsUpAppVersion" class="settings_net_info">v${remote.app.getVersion()}</span>
+                    <div class="settings_net_actions">
+                        <button type="button" id="settingsUpAppCheck" class="settings_net_btn">${t("settings.updates.check")}</button>
+                        <button type="button" id="settingsUpAppUpdate" class="settings_net_btn">${t("settings.updates.updateBtn")}</button>
+                    </div>
                 </div>`),
             section("settings.section.updatesSystem"),
             settingsRow("settings.updates.system", `<div class="settings_net_actions">
@@ -3125,10 +3182,12 @@ window.openSettings = async () => {
                 </div>`, "settings.updates.system.help"),
             settingsRow("settings.updates.lastUpdate", `<span id="settingsUpLastUpdate" class="settings_net_status">–</span>`),
             section("settings.section.updatesBundled"),
-            settingsRow("settings.updates.clash", `<span id="settingsUpClashVer" class="settings_net_info">–</span>
-                <div class="settings_net_actions">
-                    <button type="button" id="settingsUpClashCheck" class="settings_net_btn">${t("settings.updates.check")}</button>
-                    <button type="button" id="settingsUpClashUpdate" class="settings_net_btn">${t("settings.updates.updateBtn")}</button>
+            settingsRow("settings.updates.clash", `<div class="settings_ver_row">
+                    <span id="settingsUpClashVer" class="settings_net_info">–</span>
+                    <div class="settings_net_actions">
+                        <button type="button" id="settingsUpClashCheck" class="settings_net_btn">${t("settings.updates.check")}</button>
+                        <button type="button" id="settingsUpClashUpdate" class="settings_net_btn">${t("settings.updates.updateBtn")}</button>
+                    </div>
                 </div>`),
             settingsRow("settings.updates.claude", `<span id="settingsUpClaudeVer" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.auto")}</span>`),
             settingsRow("settings.updates.carbonyl", `<span id="settingsUpCarbonylVer" class="settings_net_info">–</span>`),
@@ -3173,7 +3232,6 @@ window.openSettings = async () => {
             {label: t("settings.btn.openExternal"), action:`electron.shell.openPath('${settingsFile}');electronWin.minimize();`},
             {label: t("settings.btn.save"), action: "window.writeSettingsFile()"},
             {label: t("settings.btn.shortcuts"), action: "window.openShortcutsHelp()"},
-            {label: t("settings.btn.update"), action: "window.openSettingsCategory('updates')"},
             {label: t("settings.btn.reload"), action: "window.location.reload(true);"},
             {label: t("settings.btn.restart"), action: "remote.app.relaunch();remote.app.quit();"}
         ]
@@ -3197,14 +3255,6 @@ window.openSettings = async () => {
     document.querySelectorAll("#settingsSide .settings_cat_btn").forEach(btn => {
         btn.addEventListener("click", () => activateCategory(btn));
     });
-
-    // Switch to a category from outside the sidebar (e.g. the footer UPDATE
-    // button → the Updates pane). The sidebar button's click listener handles
-    // the activation, so just click it.
-    window.openSettingsCategory = cat => {
-        const btn = document.querySelector(`#settingsSide .settings_cat_btn[data-cat="${cat}"]`);
-        if (btn) btn.click();
-    };
 
     // "i" info buttons toggle their sibling help popover (bound once per page).
     if (!window._settingsInfoBound) {
@@ -3297,7 +3347,7 @@ window.openSettings = async () => {
         bindUpd("settingsUpAppCheck", () => window.updates.checkApp());
         bindUpd("settingsUpAppUpdate", () => window.updates.updateApp());
         bindUpd("settingsUpSystemBtn", () => window.updates.systemUpdate());
-        bindUpd("settingsUpClashCheck", () => window.updates.checkClashUpdate());
+        bindUpd("settingsUpClashCheck", () => window.updates.checkClashUpdate(true));
         bindUpd("settingsUpClashUpdate", () => window.updates.updateClash());
         if (window.updates) window.updates.refresh();
         const active = document.querySelector("#settingsSide .settings_cat_btn.active");
@@ -5595,6 +5645,9 @@ const resumeFromSuspend = () => {
         Object.keys(window.term || {}).forEach(k => {
             const t = window.term[k];
             if (t && t.term && typeof t.fit === "function") t.fit();
+            // The ws may have died during suspend; force a fresh connection
+            // instead of waiting for the next silent-failed send (#67).
+            if (t && typeof t.reconnectNow === "function") t.reconnectNow();
         });
     } catch (e) {
         try { console.error("resumeFromSuspend failed:", e && e.stack || e); } catch (_) {}

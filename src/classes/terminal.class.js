@@ -13,6 +13,15 @@ class Terminal {
             this.muted = !!opts.muted;
             this.cwd = "";
             this.oncwdchange = () => {};
+            // Alternate-screen history (#67): frames captured by the write
+            // wrapper (below) land here, newest first, capped at 400 frames
+            // (≈100s of alt-screen output).
+            this._altHist = [];
+            this._altHistIdx = 0;
+            this._altLast = "";
+            this._altPaused = false;
+            this._altLastT = 0;
+            this._serializeA = null;
 
             this._sendSizeToServer = () => {
                 let cols = this.term.cols.toString();
@@ -120,6 +129,7 @@ class Terminal {
                 letterSpacing: window.theme.terminal.letterSpacing || 0,
                 lineHeight: window.theme.terminal.lineHeight || 1,
                 scrollback: 1500,
+                enableMouseEvents: true,
                 bellStyle: "none",
                 theme: {
                     foreground: window.theme.terminal.foreground,
@@ -147,6 +157,40 @@ class Terminal {
             });
             let fitAddon = new FitAddon();
             this.term.loadAddon(fitAddon);
+            // Alternate-screen history capture: vim/htop/less draw into the alt
+            // buffer, which has no scrollback, so the wheel can't scroll them.
+            // While the active buffer is alt, snapshot a frame every 250ms via
+            // SerializeAddon into _altHist (newest first). While _altPaused
+            // (user is paging through history) live writes are swallowed so the
+            // view stays put; the wheel handler below drives the paging.
+            this._ow = this.term.write.bind(this.term);
+            this.term.write = data => {
+                try {
+                    const buf = this.term.buffer && this.term.buffer.active;
+                    if (this._altPaused && (!buf || buf.type !== "alt")) this._altPaused = false;
+                    if (this._altPaused) return;
+                    if (buf && buf.type === "alt") {
+                        const now = Date.now();
+                        if (now - this._altLastT > 250) {
+                            this._altLastT = now;
+                            if (!this._serializeA) {
+                                const { SerializeAddon } = require("xterm-addon-serialize");
+                                this._serializeA = new SerializeAddon();
+                                try { this.term.loadAddon(this._serializeA); } catch (e) {}
+                            }
+                            const frame = this._serializeA ? this._serializeA.serialize() : "";
+                            const prev = this._altHist[0];
+                            if (frame && frame !== prev) {
+                                this._altLast = frame;
+                                this._altHist.unshift(frame);
+                                if (this._altHist.length > 400) this._altHist.pop();
+                                this._altHistIdx = 0;
+                            }
+                        }
+                    }
+                } catch (e) {}
+                this._ow(data);
+            };
             this.term.open(document.getElementById(opts.parentId));
             // Re-fit whenever the terminal container changes size (window
             // resize, module entrance animations, layout shifts), so the
@@ -220,47 +264,84 @@ class Terminal {
             let sockHost = opts.host || "127.0.0.1";
             let sockPort = this.port;
 
-            this.socket = new WebSocket("ws://"+sockHost+":"+sockPort);
-            this.socket.onopen = () => {
-                let attachAddon = new AttachAddon(this.socket);
-                this.term.loadAddon(attachAddon);
-                this.fit();
-                // Re-assert keyboard focus once the pty link is up, so the very
-                // first keystroke after a slow tab spawn isn't lost (#13).
-                try { this.term.focus(); } catch (e) {}
+            // WebSocket reconnect (#67): a suspend (lid close) can freeze the
+            // main-process node-pty / ws server; on resume the socket is dead
+            // and sends silently fail — "page shows but you can't type". Build
+            // the connection through _wsConn() and auto-reconnect 1.5s after an
+            // unexpected close, rebuilding the AttachAddon each time (message
+            // listeners live inside _wsConn so they re-attach on reconnect). The
+            // DOM liveness check stops reconnects for closed tabs (zombie
+            // sockets). resumeFromSuspend calls reconnectNow() on resume.
+            this._closing = false;
+            this._rcT = null;
+            this._attachAddon = null;
+            this.reconnectNow = () => {
+                try {
+                    if (this._rcT) { clearTimeout(this._rcT); this._rcT = null; }
+                    if (this._wsConn) this._wsConn();
+                } catch (e) {}
             };
-            this.socket.onerror = e => {throw JSON.stringify(e)};
-            this.socket.onclose = e => {
-                if (this.onclose) {
-                    this.onclose(e);
-                }
-            };
-
-            this.lastSoundFX = Date.now();
-            this.socket.addEventListener("message", e => {
-                let d = Date.now();
-
-                // muted terminals (the cover session's inert cat pty) must not
-                // chime — the screensaver/lock streams fake content, not real
-                // output, so its stdout sound would be noise (#50).
-                if (!this.muted && d - this.lastSoundFX > 30) {
-                    window.audioManager.stdout.play();
-                    this.lastSoundFX = d;
-                }
-                if (d - this.lastRefit > 10000) {
+            this._wsConn = () => {
+                this.socket = new WebSocket("ws://"+sockHost+":"+sockPort);
+                this.socket.onopen = () => {
+                    try { if (this._attachAddon) this._attachAddon.dispose(); } catch (e) {}
+                    try { this._attachAddon = new AttachAddon(this.socket); } catch (e) { this._attachAddon = null; }
+                    try { this.term.loadAddon(this._attachAddon); } catch (e) {}
                     this.fit();
-                }
+                    // Re-assert keyboard focus once the pty link is up, so the
+                    // very first keystroke after a slow tab spawn isn't lost
+                    // (#13).
+                    try { this.term.focus(); } catch (e) {}
+                };
+                this.socket.onerror = () => { try { this.socket.close(); } catch (e) {} };
+                this.socket.onclose = e => {
+                    if (this.onclose) this.onclose(e);
+                    if (this._closing) return;
+                    // Tab closed? Don't keep a zombie reconnect loop going.
+                    try {
+                        if (!(this.term && this.term.element && document.body.contains(this.term.element))) return;
+                    } catch (e) { return; }
+                    if (this._rcT) clearTimeout(this._rcT);
+                    this._rcT = setTimeout(() => { try { this._wsConn(); } catch (e) {} }, 1500);
+                };
+                this.socket.addEventListener("message", e => {
+                    let d = Date.now();
 
-                // See #397
-                if (!window.settings.experimentalGlobeFeatures) return;
-                let ips = e.data.match(/((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/g);
-                if (ips !== null && ips.length >= 1) {
-                    ips = ips.filter((val, index, self) => { return self.indexOf(val) === index; });
-                    ips.forEach(ip => {
-                        window.mods.globe.addTemporaryConnectedMarker(ip);
-                    });
-                }
-            });
+                    // muted terminals (the cover session's inert cat pty) must
+                    // not chime — the screensaver/lock streams fake content,
+                    // not real output, so its stdout sound would be noise (#50).
+                    if (!this.muted && d - this.lastSoundFX > 30) {
+                        window.audioManager.stdout.play();
+                        this.lastSoundFX = d;
+                    }
+                    // #9 completion chime: after a user-typed command's output
+                    // goes quiet for 1.5s, play the info sound once.
+                    if (this._doneT) clearTimeout(this._doneT);
+                    this._lastOut = d;
+                    this._doneT = setTimeout(() => {
+                        this._doneT = null;
+                        if (!this.muted && this._userIn && Date.now() - this._lastOut >= 1500) {
+                            try { window.audioManager && window.audioManager.info && window.audioManager.info.play(); } catch (_) {}
+                        }
+                    }, 1500);
+
+                    if (d - this.lastRefit > 10000) {
+                        this.fit();
+                    }
+
+                    // See #397
+                    if (!window.settings.experimentalGlobeFeatures) return;
+                    let ips = e.data.match(/((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/g);
+                    if (ips !== null && ips.length >= 1) {
+                        ips = ips.filter((val, index, self) => { return self.indexOf(val) === index; });
+                        ips.forEach(ip => {
+                            window.mods.globe.addTemporaryConnectedMarker(ip);
+                        });
+                    }
+                });
+            };
+            this.lastSoundFX = Date.now();
+            this._wsConn();
 
             let parent = document.getElementById(opts.parentId);
             // Wheel scrolling is owned here so speed/direction can be configured
@@ -270,6 +351,46 @@ class Terminal {
             // the old Math.round(deltaY/10) snapped small trackpad deltas to 0).
             // Deltas are accumulated so smooth trackpad scrolling works.
             parent.addEventListener("wheel", e => {
+                // Alternate screen (vim/htop/less): wheel pages through the
+                // captured frame history. Up enters history view (further up =
+                // older), down goes newer, and scrolling past either end
+                // returns to live output. Exit also auto-clears _altPaused in
+                // the write wrapper when the app leaves the alt buffer.
+                const abuf = this.term && this.term.buffer && this.term.buffer.active;
+                if (abuf && abuf.type === "alt") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const dy = e.deltaY;
+                    if (dy < 0) {
+                        if (this._altPaused) {
+                            if (this._altHistIdx < this._altHist.length - 1) {
+                                this._altHistIdx++;
+                            } else {
+                                this._altPaused = false;
+                                this._altHistIdx = 0;
+                                this.term.reset();
+                                if (this._altLast) this._ow(this._altLast);
+                            }
+                        } else if (this._altHist.length) {
+                            this._altPaused = true;
+                            this._altHistIdx = Math.min(1, this._altHist.length - 1);
+                        }
+                        if (this._altPaused) {
+                            const h = this._altHist[this._altHistIdx];
+                            if (h) { this.term.reset(); this._ow(h); }
+                        }
+                    } else if (dy > 0 && this._altPaused) {
+                        if (this._altHistIdx > 0) {
+                            this._altHistIdx--;
+                        } else {
+                            this._altPaused = false;
+                            this._altHistIdx = 0;
+                            this.term.reset();
+                            if (this._altLast) this._ow(this._altLast);
+                        }
+                    }
+                    return;
+                }
                 e.preventDefault();
                 e.stopPropagation();
                 const sens = Number(window.settings.terminalScrollSensitivity);
@@ -361,6 +482,7 @@ class Terminal {
             };
 
             this.write = cmd => {
+                this._userIn = true;
                 this.socket.send(cmd);
             };
 
@@ -413,6 +535,10 @@ class Terminal {
             this.ondisconnected = () => {};
 
             this._disableCWDtracking = false;
+            // claude's workspace picker is keyboard-interactive: the boot \r
+            // would confirm its default directory before the user can choose
+            // one. Sessions that own their startup input opt out (#67).
+            this._noBootCR = !!opts.noBootCR;
             this._getTtyCWD = tty => {
                 return new Promise((resolve, reject) => {
                     let pid = tty.pid;
@@ -520,13 +646,10 @@ class Terminal {
             this.wss = new this.Websocket({
                 port: this.port,
                 clientTracking: true,
-                verifyClient: info => {
-                    if (this.wss.clients.length >= 1) {
-                        return false;
-                    } else {
-                        return true;
-                    }
-                }
+                // Allow reconnects: after a suspend the old client lingers and a
+                // fresh connection would be refused; the connection handler
+                // closes any older client instead (#67).
+                verifyClient: () => true
             });
             this.Ipc.on("terminal_channel-"+this.port, (e, ...args) => {
                 switch(args[0]) {
@@ -554,14 +677,21 @@ class Terminal {
                 }
             });
             this.wss.on("connection", ws => {
+                // A reconnect arrives as a brand-new client; close any older
+                // one so only the live renderer stays attached (#67).
+                try {
+                    this.wss.clients.forEach(c => { try { if (c !== ws) c.close(); } catch (_) {} });
+                } catch (_) {}
                 this.onopened(this.tty.pid);
                 ws.on("close", (code, reason) => {
                     this.ondisconnected(code, reason);
                 });
                 ws.on("message", msg => {
+                    this._bootIn = true;
                     this.tty.write(msg);
                 });
                 this.tty.onData(data => {
+                    this._bootGot = true;
                     this._nextTickUpdateTtyCWD = true;
                     this._nextTickUpdateProcess = true;
                     try {
@@ -574,9 +704,23 @@ class Terminal {
                 // emitted before any renderer connects and is consumed by
                 // nobody — the MAIN SHELL tab then boots blank. Send an empty
                 // line so the shell redraws its prompt on this fresh connection
-                // (harmless if it is already mid-command). Runs after onData is
-                // wired so the redrawn prompt is not lost again.
-                try { this.tty.write("\r"); } catch (e) {}
+                // (harmless if it is already mid-command). Wait 1.2s first and
+                // skip if the shell already produced output or the user typed,
+                // so an active session never gets a stray Enter. claude's
+                // picker sets noBootCR and skips this entirely (#67).
+                try {
+                    if (!this._noBootCR && !this._booted) {
+                        this._booted = true;
+                        this._bootGot = false;
+                        this._bootIn = false;
+                        this._bootT = setTimeout(() => {
+                            try {
+                                this._bootT = null;
+                                if (!this._bootGot && !this._bootIn) this.tty.write("\r");
+                            } catch (_) {}
+                        }, 1200);
+                    }
+                } catch (e) {}
             });
 
             this.close = () => {
