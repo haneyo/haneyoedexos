@@ -601,12 +601,29 @@ visudo -cf /etc/sudoers.d/edex-user >/dev/null 2>&1 \
 echo "[edex] SSH server: installed and ON by default (settings → network → SSH)"
 # openssh-server is baked into the ISO; default SSH to ON on fresh installs
 # (socket-activated, survives reboot). Toggle off in settings → network → SSH
-# runs `systemctl disable --now ssh ssh.socket`.
-# The settings switch uses `systemctl enable --now ssh ssh.socket` /
-# `disable --now ssh ssh.socket`. Ubuntu 24.04 socket-activates sshd via
-# ssh.socket, so `disable --now ssh` alone stops ssh.service but the socket
-# keeps re-triggering it — the socket must be disabled too.
-systemctl enable --now ssh ssh.socket 2>/dev/null || true
+# runs `systemctl disable --now ssh.socket`.
+# Two bugs in the old `enable --now ssh ssh.socket`, both fixed here:
+#   1) sshd privilege-separation user: the ISO build's openssh-server postinst
+#      can silently skip creating `sshd` (adduser fails inside the build's
+#      proot), so a fresh install boots with `sshd -t` → "Privilege separation
+#      user sshd does not exist" and SSH is dead. Create group/user/dir
+#      idempotently here — this runs in the real target chroot where adduser
+#      works. Order matters: group first, then /run/sshd, then the user (adduser
+#      wants its --home to exist).
+#   2) enable ONLY ssh.socket, not ssh.service: enabling both makes ssh.socket
+#      bind :22 first at boot and ssh.service then fail with "Address already in
+#      use" → red FAILED text. Ubuntu 24.04 socket-activates sshd, so the socket
+#      alone is enough (`--now` can't work in a chroot anyway — no PID 1).
+#      ssh.service must be explicitly disabled, else it fights the socket.
+if ! getent group ssh >/dev/null 2>&1; then addgroup --system ssh || true; fi
+mkdir -p /run/sshd
+if ! getent passwd sshd >/dev/null 2>&1; then
+    adduser --system --ingroup ssh --home /run/sshd --no-create-home --shell /usr/sbin/nologin sshd || true
+fi
+# Regenerate host keys if the skipped postinst left none behind.
+[ -s /etc/ssh/ssh_host_ed25519_key ] || [ -s /etc/ssh/ssh_host_rsa_key ] || ssh-keygen -A 2>/dev/null || true
+systemctl disable ssh.service 2>/dev/null || true
+systemctl enable ssh.socket 2>/dev/null || true
 
 echo "[edex] Flatpak: flathub remote (+ flatpak group, best-effort) for $U"
 # flatpak core + xdg-desktop-portal(-gtk) are baked into the ISO. Wire up the
