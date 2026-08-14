@@ -74,6 +74,12 @@ function scanDesktopDirs() {
         dirs.push("/usr/share/applications");
         dirs.push("/usr/local/share/applications");
         dirs.push(path.join(os.homedir(), ".local", "share", "applications"));
+        // Flatpak apps export their .desktop launchers to these dirs (not copied
+        // into /usr/share/applications), so a flatpak-installed app must be found
+        // here or it never shows up in the GUI-app list. System installs → the
+        // /var/lib path; `--user` installs → the homedir path.
+        dirs.push("/var/lib/flatpak/exports/share/applications");
+        dirs.push(path.join(os.homedir(), ".local", "share", "flatpak", "exports", "share", "applications"));
     }
     const apps = [];
     for (const dir of dirs) {

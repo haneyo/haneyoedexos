@@ -26,8 +26,11 @@ set -euo pipefail
 
 SRC="${1:?usage: patch-appimage.sh <AppImage> [out.AppImage]}"
 [[ -f "$SRC" ]] || { echo "missing AppImage: $SRC"; exit 1; }
-SRC="$(readlink -f "$SRC")"
-if [[ -n "${2:-}" ]]; then OUT="$(readlink -f "$2")"; else OUT="${SRC%.AppImage}.patched.AppImage"; fi
+# macOS 自带 readlink 无 -f,且对不存在的文件不解析(exit 1 → set -e 秒退);
+# 用 python3 os.path.realpath 跨平台(脚本本就依赖 python3 定位 squashfs)。
+RP() { python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$1"; }
+SRC="$(RP "$SRC")"
+if [[ -n "${2:-}" ]]; then OUT="$(RP "$2")"; else OUT="${SRC%.AppImage}.patched.AppImage"; fi
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -765,6 +768,22 @@ const targets = [
       .join('exec:e.value,icon:e.icon||null,custom:!0')
       .split('n.push({name:t.name,value:t.value,added:Date.now()})')
       .join('n.push({name:t.name,value:t.value,icon:"string"==typeof t.icon&&/^[a-z0-9_\\-]{1,48}$/i.test(t.icon)?t.icon:null,added:Date.now()})'),
+  },
+  {
+    name: 'native-apps.js (Flatpak 导出目录扫描:flatpak 应用进 GUI 应用列表)',
+    path: ['appmonitor', 'native-apps.js'],
+    // Flatpak 应用不把 .desktop 拷进 /usr/share/applications,而是导出到
+    // /var/lib/flatpak/exports/share/applications(系统级)与
+    // ~/.local/share/flatpak/exports/share/applications(--user 级)。不扫这两个目录,
+    // flatpak 装的 GUI 应用永远不出现在应用列表。expectIn 用 scanDesktopDirs 的
+    // .local push(pristine 与所有已打部署版都在,scanDesktopDirs 从未被其他 transform
+    // 碰过);expectOut 用 flatpak 导出目录串(打了才出现)→ 独立幂等:即使旧部署已含
+    // #36 标记 icon:e.icon||null,本 target 仍会执行;再跑则 expectOut 命中跳过。
+    expectIn: 'e.push(path.join(os.homedir(),".local","share","applications"))',
+    expectOut: '/var/lib/flatpak/exports/share/applications',
+    transform: c => c
+      .split('e.push("/usr/share/applications"),e.push("/usr/local/share/applications"),e.push(path.join(os.homedir(),".local","share","applications"))')
+      .join('e.push("/usr/share/applications"),e.push("/usr/local/share/applications"),e.push(path.join(os.homedir(),".local","share","applications")),e.push("/var/lib/flatpak/exports/share/applications"),e.push(path.join(os.homedir(),".local","share","flatpak","exports","share","applications"))'),
   },
   {
     name: 'backend.js (#36 GUI 应用 HOME 钉死:Firefox 等复用 ~/.mozilla 配置)',

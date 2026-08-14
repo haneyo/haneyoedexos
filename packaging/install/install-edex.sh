@@ -569,10 +569,11 @@ cat > "/home/$U/CLAUDE.md" <<'RULES'
 ## 系统更新
 - `sudo apt update && sudo apt full-upgrade`;或提示用户用齿轮菜单的"系统更新"按钮。
 
-## Flatpak(需联网,一次性配好源)
-- 首次使用:先跑 `flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo`。
-- 安装:如 `flatpak install flathub dev.vencord.Vesktop`(wiliwili 的 x86_64 只有 flatpak 版)。
-- 装好的应用会出现在终端 tab 4/5 的 app 列表。
+## Flatpak(需联网;装系统时已配好 flathub 源,若当时没网请先跑下面那条)
+- 确保源:先跑 `flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo`。
+- 安装:`sudo flatpak install flathub <app-id>`(如 `sudo flatpak install flathub dev.vencord.Vesktop`;
+  本机自动登录用户已有免密 sudo,这是可靠路径。装好即出现在 tab 4/5 应用列表,点开即全屏运行)。
+- wiliwili 的 x86_64 只有 flatpak 版。
 
 ## 其它
 - 系统自带 Firefox(/opt/firefox)与 eDEX 终端(tab 1/2)与虚拟显示器(tab 4/5)。
@@ -606,6 +607,24 @@ echo "[edex] SSH server: installed and ON by default (settings → network → S
 # ssh.socket, so `disable --now ssh` alone stops ssh.service but the socket
 # keeps re-triggering it — the socket must be disabled too.
 systemctl enable --now ssh ssh.socket 2>/dev/null || true
+
+echo "[edex] Flatpak: flathub remote (+ flatpak group, best-effort) for $U"
+# flatpak core + xdg-desktop-portal(-gtk) are baked into the ISO. Wire up the
+# app source so the system "directly runs Flatpak" (run needs no privileges;
+# the app list auto-scans /var/lib/flatpak/exports/share/applications):
+#   1) best-effort: add the autologin user to the `flatpak` group IF the package
+#      created it (Debian's .pkla era is gone on 24.04; the reliable install
+#      path here is the passwordless sudo the user already has →
+#      `sudo flatpak install flathub <app>`; the group add is harmless);
+#   2) register the flathub remote (best-effort: install may be offline — the
+#      same command is echoed so it can be re-run at first use).
+if getent group flatpak >/dev/null 2>&1; then
+    usermod -aG flatpak "$U" 2>/dev/null || true
+fi
+if ! flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo 2>/dev/null; then
+    echo "[edex] WARN: flathub remote-add failed (offline?) — run later:"
+    echo "         flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo"
+fi
 
 # apt must point at the Ubuntu archive so 'sudo apt update && upgrade' works.
 # Ubuntu 24.04 writes the same repos as /etc/apt/sources.list.d/ubuntu.sources at
