@@ -732,8 +732,11 @@ const targets = [
   {
     name: 'backend.js (openbox --config → --config-file + #5 剪贴板桥 + #7 Xvfb 光标)',
     path: ['appmonitor', 'backend.js'],
-    expectIn: '"openbox",["--config",d,"--sm-disable"]',
+    expectIn: '"openbox",["--config",',
     expectOut: 'edex-clipboard-bridge.sh',
+    // expectIn 与 transform 均不硬编码 terser mangle 字母:变量名(openbox/Xvfb/x11vnc/fcitx5/
+    // array 的 mangle 名)随 minify 的变量计数改变(2026-08: v2.3.11 的 MONITOR_RC=d 在 v2.4 变 l),
+    // 这里全部按结构正则匹配,同一 transform 同时兼容旧版与新版 minified。
     // appmonitor 的 realBackend 用非法参数 --config 启动嵌套 openbox(正确是 --config-file),
     // openbox 秒退 → 虚拟显示器上无 WM → 应用窗口永不最大化。修复:用正确参数。
     // 另:noVNC 直连 ws://127.0.0.1:<rfbPort>/websockify,但 x11vnc 只提供 RFB(无 websocket)
@@ -747,13 +750,16 @@ const targets = [
     // CLIPBOARD(文本)双向同步 → Firefox 复制可在 eDEX 终端粘贴,反之亦然。
     // #7 Xvfb 光标:spawn 的应用 env 加 XCURSOR_THEME=edex,虚拟屏内用 eDEX 风格光标。
     transform: c => c
-      .split('"openbox",["--config",d,"--sm-disable"]').join('"openbox",["--config-file",d,"--sm-disable"]')
-      .split('s=o("x11vnc",["-display",e.display,"-rfbport",String(e.rfbPort),"-shared","-forever","-nopw","-listen","127.0.0.1"],{stdio:"ignore"});r.push(i,t,s);')
-      .join('s=o("x11vnc",["-display",e.display,"-rfbport",String(e.rfbPort+10),"-shared","-forever","-nopw","-listen","127.0.0.1"],{stdio:"ignore"}),w=o("websockify",[String(e.rfbPort),"127.0.0.1:"+String(e.rfbPort+10)],{stdio:"ignore"}),B=o("/usr/local/bin/edex-clipboard-bridge.sh",[e.display],{stdio:"ignore",env:Object.assign({},process.env,{DISPLAY:e.display})});r.push(i,t,s,w,B);')
-      .split('const n=o("fcitx5",["-d","--replace"],{stdio:"ignore",env:Object.assign({},process.env,{DISPLAY:e.display,GTK_IM_MODULE:"fcitx",QT_IM_MODULE:"fcitx",XMODIFIERS:"@im=fcitx"})});r.push(n);')
-      .join('')
-      .split('{DISPLAY:i.display,GTK_IM_MODULE:"fcitx",QT_IM_MODULE:"fcitx",XMODIFIERS:"@im=fcitx"}')
-      .join('{DISPLAY:i.display,GTK_IM_MODULE:"fcitx",QT_IM_MODULE:"fcitx",XMODIFIERS:"@im=fcitx",XCURSOR_THEME:"edex"}')
+      // 1) openbox 用非法参数 --config → 正确参数 --config-file(mangle 无关:变量名通配)。
+      .replace(/"openbox",\["--config",[a-zA-Z_$][\w$]*,"--sm-disable"\]/g, m => m.replace('"--config",', '"--config-file",'))
+      // 2) x11vnc 改监听 rfbPort+10,原 rfbPort 由 websockify 转发;再拉起剪贴板桥。
+      //    $2 = display var(realBackend 形参),$4/$5 = push 里的 Xvfb/openbox 变量。
+      .replace(/([a-zA-Z_$][\w$]*)=o\("x11vnc",\["-display",([a-zA-Z_$][\w$]*)\.display,"-rfbport",String\(\2\.rfbPort\),"-shared","-forever","-nopw","-listen","127\.0\.0\.1"\],\{stdio:"ignore"\}\);([a-zA-Z_$][\w$]*)\.push\(([a-zA-Z_$][\w$]*),([a-zA-Z_$][\w$]*),\1\);/g, '$1=o("x11vnc",["-display",$2.display,"-rfbport",String($2.rfbPort+10),"-shared","-forever","-nopw","-listen","127.0.0.1"],{stdio:"ignore"}),w=o("websockify",[String($2.rfbPort),"127.0.0.1:"+String($2.rfbPort+10)],{stdio:"ignore"}),B=o("/usr/local/bin/edex-clipboard-bridge.sh",[$2.display],{stdio:"ignore",env:Object.assign({},process.env,{DISPLAY:$2.display})});$3.push($4,$5,$1,w,B);')
+      // 3) 删除虚拟屏 fcitx5 spawn 及其 push(独占主屏 dbus name,#144 盲打修复)。
+      .replace(/const ([a-zA-Z_$][\w$]*)=o\("fcitx5"[\s\S]*?\);([a-zA-Z_$][\w$]*)\.push\(\1\);/g, '')
+      // 4) spawn 应用 env 加 XCURSOR_THEME=edex(已有则不重复;fcitx env 已被 #3 移除)。
+      .replace(/\{DISPLAY:[a-zA-Z_$][\w$]*\.display[^{}]*GTK_IM_MODULE:"fcitx",QT_IM_MODULE:"fcitx",XMODIFIERS:"@im=fcitx"\}/g, m => m.includes('XCURSOR_THEME') ? m : m.slice(0, -1) + ',XCURSOR_THEME:"edex"}')
+      // 5) 主屏 :0 的 env 加光标(v2.4 已烘焙进 src,此步为旧版补齐,命中即幂等)。
       .split('{DISPLAY:":0"}')
       .join('{DISPLAY:":0",XCURSOR_THEME:"edex"}'),
   },
@@ -761,7 +767,10 @@ const targets = [
     name: 'backend.js (fullscreen 按 PID 定位窗口:不再 wmctrl :ACTIVE: 误全屏 eDEX)',
     path: ['appmonitor', 'backend.js'],
     expectIn: 'setTimeout(()=>{try{o("wmctrl",["-r",":ACTIVE:","-b","add,fullscreen"],{env:p,stdio:"ignore"})}catch(e){}},1500)',
-    expectOut: 'child_process").spawnSync',
+    expectOut: 'spawnSync',
+    // expectOut 用 mangle 无关的 `spawnSync`:PID 修复已烘焙进 v2.4 src(解构式
+    // `{spawn:o,spawnSync:r}=require("child_process")`),新构建含它 → 幂等 skip;
+    // 旧版(v2.3.x)src 无 spawnSync、仍是 :ACTIVE: 旧代码 → 走下面 transform 打补丁。
     // #34 fullscreen:原实现 wmctrl -r :ACTIVE: 在 +1500ms 把"当时活动窗口"全屏——
     // 但启动应用时 eDEX 仍持有焦点,:ACTIVE: 是 eDEX 主窗,应用缩在后面不动。
     // 改为:轮询 wmctrl -l -p 按 _NET_WM_PID(子进程 pid)找到应用自己的窗口,
