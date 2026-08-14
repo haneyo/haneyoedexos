@@ -675,7 +675,14 @@ const targets = [
     name: 'terminal.class.js (alt-screen 历史滚动 + ws 断线重连 + #9 完成音效)',
     path: ['classes', 'terminal.class.js'],
     expectIn: 'scrollback:1500,',
-    expectOut: 'this._doneT=setTimeout',
+    // #69 expectOut 改 muted 专属锚:_doneT 在 17fix 代就已注入,用它做跳过标记会让 17fix
+    // 老构建被误判"已打"整段跳过,永远拿不到 ws 断线重连 / alt-screen 历史滚动 / 当前 wheel。
+    // muted 只有当前代才有 —— 但 src 新构建的构造器参数是 t(this.muted=!!t.muted),
+    // 老 patch 构建是 e(this.muted=!!e.muted),用带参数名的 `muted=!!e.muted` 会让
+    // src 新构建(CI 上预烘焙)匹配不上 → 目标误跑 → 双重注入 noBootCR 等。故锚取
+    // 参数无关的 `this.muted=!!`:两种当前态都命中跳过,老 12fix/17fix/中代(无 muted)
+    // 全部会跑,靠下方 revert 桥 + 注入链收敛到当前态。
+    expectOut: 'this.muted=!!',
     // Bug3 alt-screen 历史滚动:Claude Code 等 TUI 用 alt-screen buffer,该 buffer 无
     // scrollback,xterm scrollLines 无效 → 滚轮"不能滚动"。修复:写包装器拦截 xterm.write,
     // 当活动 buffer 是 alt 时,每 250ms 用 SerializeAddon 序列化一帧,存进 _altHist
@@ -695,6 +702,33 @@ const targets = [
     // #9 完成音效:终端/Claude 停止输出后静默 1.5s 播放 info.wav(需已启用音频设置;
     // 且用户至少输入过一次,避免启动时空响)。_lastOut 由每条输出刷新,新输出重置定时器。
     transform: c => c
+      // #69 老构建覆盖桥:12fix/17fix 代注入的旧形态先 revert 回 pristine 锚点,当前链才能
+      // 从锚点重打(否则旧守卫/旧 socket 挡在锚点和当前注入串之间,split 匹配不上)。
+      // ① 旧代 wheel 守卫是 `...{return}e.preventDefault()...`;当前链锚 pristine 的
+      //    `{e.preventDefault(),e.stopPropagation();const t=Number(...`,不 revert 则
+      //    alt-screen 历史滚动分支打不上。当前代 wheel 分支是 `{e.preventDefault(),e.stopPropagation();const _d=e.deltaY...`,
+      //    与 `{return}` 形态不同 → 对当前构建天然无匹配(fresh 无旧守卫同样 no-op)。
+      .split('m.addEventListener("wheel",e=>{const _b=this.term&&this.term.buffer&&this.term.buffer.active;if(_b&&"alt"===_b.type){return}e.preventDefault(),e.stopPropagation();const t=Number(window.settings.terminalScrollSensitivity)')
+      .join('m.addEventListener("wheel",e=>{e.preventDefault(),e.stopPropagation();const t=Number(window.settings.terminalScrollSensitivity)')
+      // ② 17fix 代 socket 块已把 #9 doneT 注入进 message 监听器,当前 ws-断线重连(整块重写)
+      //    锚的是 pristine socket → 锚不上。局部 revert:把 doneT 块夹在
+      //    `this.lastSoundFX=t),` 与 `t-this.lastRefit>1e4` 之间的唯一形态拆掉(该序列在 17fix
+      //    旧 socket 与 18fix 的 _wsConn 监听器里同形,一并拆;fresh/12fix 无 doneT 不误伤,
+      //    当前 _wsConn 形态由步骤9重新注入)。
+      .split('this.lastSoundFX=t),this._doneT&&clearTimeout(this._doneT),this._lastOut=Date.now(),this._doneT=setTimeout(()=>{this._doneT=null;if(this._userIn&&Date.now()-this._lastOut>=1500)try{window.audioManager&&window.audioManager.info&&window.audioManager.info.play()}catch(_){}},1500),t-this.lastRefit>1e4')
+      .join('this.lastSoundFX=t),t-this.lastRefit>1e4')
+      // ③ 前缀型注入 revert:这些步骤的锚是"注入串的前缀",对已含注入的旧代/中代重跑会
+      //    二次拼接(enableMouseEvents 双份、_altHist 初始化双份、_noBootCR 双份、boot-CR
+      //    守卫双份、_userIn 双份)。先回退到 pristine 前缀,当前注入链再整体重打一遍。
+      //    对 pristine 这些串不存在 → 全部 no-op;对真·当前构建 expectOut=muted 已跳过。
+      .split('scrollback:1500,enableMouseEvents:!0,').join('scrollback:1500,')
+      .split('this.port=e.port||3e3,this.cwd="",this._altHist=[],this._altHistIdx=0,this._altLast="",this._altPaused=!1,this._altLastT=0,this._serializeA=null')
+      .join('this.port=e.port||3e3,this.cwd=""')
+      .split('this.port=e.port||3e3,this.cwd="",this.muted=!!e.muted,this._altHist=[],this._altHistIdx=0,this._altLast="",this._altPaused=!1,this._altLastT=0,this._serializeA=null')
+      .join('this.port=e.port||3e3,this.cwd=""')
+      .split('this._disableCWDtracking=!1,this._noBootCR=!!e.noBootCR,').join('this._disableCWDtracking=!1,')
+      .split('try{this._noBootCR||this.tty.write("\\r")}catch(e){}}').join('try{this.tty.write("\\r")}catch(e){}}')
+      .split('this.write=e=>{this._userIn=!0;this.socket.send(e)}').join('this.write=e=>{this.socket.send(e)}')
       .split('scrollback:1500,').join('scrollback:1500,enableMouseEvents:!0,')
       .split('this.port=e.port||3e3,this.cwd=""')
       .join('this.port=e.port||3e3,this.cwd="",this._altHist=[],this._altHistIdx=0,this._altLast="",this._altPaused=!1,this._altLastT=0,this._serializeA=null')

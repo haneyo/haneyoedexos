@@ -1939,7 +1939,10 @@ app.on('ready', async () => {
                 login,
                 cwd: tty.tty._cwd || settings.cwd,
                 env,
-                port: port
+                port: port,
+                // claude's workspace picker is keyboard-interactive; the boot \r
+                // would confirm its default directory before the user picks one.
+                noBootCR: !!useClaude
             });
             signale.success(`New terminal back-end initialized at ${port}`);
             term.onclosed = (code, signal) => {
