@@ -328,7 +328,23 @@ class Terminal {
                 // dims; xterm's resize() rejects non-integers with "This API
                 // only accepts integers" (#48). Floor and clamp before touching
                 // the terminal.
-                const cols = Math.max(1, Math.floor(dims.cols));
+                // FitAddon reports a fractional cols that usually floors to the
+                // right value, but on some DPIs it undershoots by one — leaving a
+                // right-hand column of scrollbar gutter, so the browser renders
+                // with black bars on both sides (#75). Re-measure against the real
+                // rendered cell width and, when there's room, bump cols by up to 4.
+                const base = Math.max(1, Math.floor(dims.cols));
+                let cols = base;
+                try {
+                    const parent = this.term.element && this.term.element.parentElement;
+                    const dim = this.term._core && this.term._core._renderService
+                        && this.term._core._renderService.dimensions;
+                    if (parent && dim && dim.actualCellWidth > 0) {
+                        const rect = parent.getBoundingClientRect();
+                        const fitCols = Math.round(rect.width / dim.actualCellWidth);
+                        if (fitCols >= base) cols = Math.min(fitCols, base + 4);
+                    }
+                } catch (x) {}
                 const rows = Math.max(1, Math.floor(dims.rows));
 
                 if (this.term.cols !== cols || this.term.rows !== rows) {

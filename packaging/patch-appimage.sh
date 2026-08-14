@@ -408,12 +408,21 @@ const CLI_PANEL_ROUTE_NEW = 'window.appmonitorA=window.appmonitorB=null,(window.
 const CLI_COVER_METHODS = `beginCoverSession(){if(this._coverSession||this.sessions.__cover__)return this._coverSession||this.sessions.__cover__;const e=this,n="__cover__";this._coverRestoreSel||(this._coverRestoreSel=this.selected||null),this.selected={id:n,name:"AUTH GATE"};const s={id:n,sid:n,starting:!0,term:null,el:null,cover:!0};this.sessions[n]=s;const i=this.container,o=document.createElement("div");o.className="cli_session",o.id=n,i.appendChild(o),o.classList.add("active"),Object.keys(this.sessions).forEach(e=>{e!==n&&this.sessions[e].el&&this.sessions[e].el.classList.remove("active")}),_cliIpc.send("ttyspawn",{cli:["sh","-c","stty raw -echo; exec cat"]}),_cliIpc.once("ttyspawn-reply",(i,r)=>{if(String(r).startsWith("ERROR"))return s.starting=!1,o.parentNode&&o.parentNode.removeChild(o),delete e.sessions[n],void(e._coverSession=null);const d=Number(String(r).substr(9));let c=null;try{c=new Terminal({role:"client",parentId:n,port:d,muted:!0})}catch(e){return s.starting=!1,void(e._coverSession=null)}c.onclose=()=>{try{c.term&&c.term.dispose&&c.term.dispose()}catch(e){}o.parentNode&&o.parentNode.removeChild(o),delete e.sessions[n],e._coverSession=null},s.starting=!1,s.term=c,e._coverSession=s}),s}coverTerm(){const e=this._coverSession||this.sessions.__cover__||null;return e&&e.term?e.term:null}endCoverSession(){const e=this._coverSession||this.sessions.__cover__||null;if(!e)return;if(e.term)try{e.term.onclose&&(e.term.onclose=null),e.term.socket&&"function"==typeof e.term.socket.close&&e.term.socket.close(),e.term.term&&e.term.term.dispose&&e.term.term.dispose()}catch(e){}e.el&&e.el.parentNode&&e.el.parentNode.removeChild(e.el),delete this.sessions.__cover__,this._coverSession=null,this.selected=this._coverRestoreSel||this.selected,this.selected&&this.selected.id==="__cover__"&&(this.selected=null),this._coverRestoreSel=null,this._renderMenu()}`;
 const CLI_PANEL_CLASS_NEW = CLI_PANEL_CLASS_NEW_OLD
   .split('{id:"browsh",name:"browsh",cmd:["browsh","--startup-url","https://lite.duckduckgo.com/lite"],icon:"browser"}')
-  .join('{id:"carbonyl",name:"carbonyl",cmd:["carbonyl","https://lite.duckduckgo.com/lite"],icon:"browser"}')
+  // #58:carbonyl bundles Chromium; Ubuntu 24.04 blocks its userns sandbox
+  // ("No usable sandbox!" FATAL) → always launch --no-sandbox (kiosk device).
+  .join('{id:"carbonyl",name:"carbonyl",cmd:["carbonyl","--no-sandbox","https://lite.duckduckgo.com/lite"],icon:"browser"}')
   // #49:最终应用态去掉 htop(保留 btop)。CLI_PANEL_CLASS_NEW_OLD 仍带 htop —— 它是 #36 部署态的
   // 匹配锚点(桥接 .split(NEW_OLD).join(NEW) 靠它命中),不能在 OLD 里删;derive 出 NEW 后再移除,
   // 锚点不受影响,最终注入的菜单与 src(cliPanel.class.js 无 htop)对齐。
   .split('{id:"htop",name:"htop",cmd:["htop"],icon:"monitor"},')
   .join('')
+  // #75/#74(round-4):1) CSS 注入隐藏 xterm-viewport 滚动条(黑边根因:滚动条留白撑出左右 15px 黑边);
+  // 2) _closeSession 先关 WebSocket(触发后端 ondisconnected 杀进程组,修关闭浏览器后视频声音残留)。
+  // 两处 OLD 锚点均在 CLI_PANEL_CLASS_NEW_OLD 内唯一(_closeSession 用 t.term,cover 用 e.term 不冲突)。
+  .split('.cli_session{position:absolute;inset:0;display:none;overflow:hidden}.cli_session.active{display:block}')
+  .join('.cli_session{position:absolute;inset:0;display:none;overflow:hidden}.cli_session.active{display:block}' + '.xterm .xterm-viewport{overflow-y:hidden!important;scrollbar-width:none!important}.xterm .xterm-viewport::-webkit-scrollbar{width:0!important;height:0!important;display:none!important}')
+  .split('t.term.onclose&&(t.term.onclose=null),t.term.term&&t.term.term.dispose&&t.term.term.dispose()}catch(e){}')
+  .join('t.term.onclose&&(t.term.onclose=null),t.term.socket&&t.term.socket.close&&t.term.socket.close(),t.term.term&&t.term.term.dispose&&t.term.term.dispose()}catch(e){}')
   .split('toggleDevTools(){}}')
   .join('toggleDevTools(){}' + CLI_COVER_METHODS + '}');
 // CLI_PANEL_NEW 注入点是逗号表达式链(appmonitorApi={...},appmonitorA=...,appmonitorB=...,wifiApi=...),
@@ -653,6 +662,11 @@ const targets = [
       .split(TTYSPAWN_OLD).join(TTYSPAWN_NEW)
       .split(POOL_OLD).join(POOL_NEW)
       .split(ALLOC_OLD).join(ALLOC_NEW)
+      // #74(round-4):ttyspawn extra 终端断线时杀整个进程组(音频残留根因 —— 旧实现只 d.close() 关 socket,
+      // carbonyl/浏览器子进程不杀,视频声音驻留)。锚点用 pristine 的 minified 形态(变量 d,extraTtys 条目);
+      // d.tty.pid 即 node-pty 进程(进程组组长),杀 -pid 连带 shell+子进程。幂等:已打新版则 OLD 不在 → no-op。
+      .split('d.ondisconnected=()=>{d.onclosed=()=>{},d.close(),d.wss.close(),extraTtys[d.port]=null,d=null}')
+      .join('d.ondisconnected=()=>{d.onclosed=()=>{};try{process.kill(-d.tty.pid,"SIGKILL")}catch(e){try{d.close()}catch(e){}}d.wss.close(),extraTtys[d.port]=null,d=null}')
       // #8/#9:AXEL 主进程(5 handler)+ clash:ctrl 透传 handler(锚点前缀注入,expectOut 换新防重跑)
       .split(AXEL_BOOT_ANCHOR).join(AXEL_BOOT_NEW + AXEL_BOOT_ANCHOR)
       .split(CLASH_CTRL_ANCHOR).join(CLASH_CTRL_NEW + CLASH_CTRL_ANCHOR),
@@ -690,6 +704,12 @@ const targets = [
       .join('m.addEventListener("wheel",e=>{const _b=this.term&&this.term.buffer&&this.term.buffer.active;if(_b&&"alt"===_b.type){e.preventDefault(),e.stopPropagation();const _d=e.deltaY;if(_d<0){if(this._altPaused){if(this._altHistIdx<this._altHist.length-1)this._altHistIdx++;else this._altPaused=!1,this._altHistIdx=0,this.term.reset(),this._altLast&&this._ow(this._altLast)}else this._altHist.length&&(this._altPaused=!0,this._altHistIdx=Math.min(1,this._altHist.length-1));if(this._altPaused){const h=this._altHist[this._altHistIdx];h&&(this.term.reset(),this._ow(h))}}else if(_d>0&&this._altPaused){if(this._altHistIdx>0)this._altHistIdx--;else this._altPaused=!1,this._altHistIdx=0,this.term.reset(),this._altLast&&this._ow(this._altLast)}return}e.preventDefault(),e.stopPropagation();const t=Number(window.settings.terminalScrollSensitivity)')
       .split('this._disableCWDtracking=!1,').join('this._disableCWDtracking=!1,this._noBootCR=!!e.noBootCR,')
       .split('try{this.tty.write("\\r")}catch(e){}}').join('try{this._noBootCR||this.tty.write("\\r")}catch(e){}}')
+      // #75(round-4):fit() 黑边修复 —— 基础 AppImage 的 fit 直接取 proposeDimensions 的 cols
+      // (被滚动条留白挤窄 → 左右黑边)。改为:proposeDimensions 得基准 cols,再用父容器真实
+      // 像素宽 ÷ actualCellWidth 微调(最多 +4,防超出撑横向滚动)。锚点取基础版 fit 全串
+      // (pristine 唯一,变量字母 h 依基础 AppImage 压缩产物固定)。
+      .split('let e=h.proposeDimensions();e&&void 0!==e.cols&&void 0!==e.rows&&(this.term.cols===e.cols&&this.term.rows===e.rows||this.resize(e.cols,e.rows))')
+      .join('let e=h.proposeDimensions();if(!e||void 0===e.cols||void 0===e.rows)return;const base=Math.max(1,Math.floor(e.cols));let t=base;try{const p=this.term.element&&this.term.element.parentElement,d=this.term._core&&this.term._core._renderService&&this.term._core._renderService.dimensions;if(p&&d&&d.actualCellWidth>0){const r=p.getBoundingClientRect(),c2=Math.round(r.width/d.actualCellWidth);c2>=base&&(t=Math.min(c2,base+4))}}catch(x){}const i=Math.max(1,Math.floor(e.rows));this.term.cols===t&&this.term.rows===i||this.resize(t,i)')
       .split('this.socket=new WebSocket("ws://"+d+":"+w),this.socket.onopen=()=>{let e=new t(this.socket);this.term.loadAddon(e),this.fit();try{this.term.focus()}catch(e){}},this.socket.onerror=e=>{throw JSON.stringify(e)},this.socket.onclose=e=>{this.onclose&&this.onclose(e)},this.lastSoundFX=Date.now(),this.socket.addEventListener("message",e=>{let t=Date.now();if(t-this.lastSoundFX>30&&(window.audioManager.stdout.play(),this.lastSoundFX=t),t-this.lastRefit>1e4&&this.fit(),!window.settings.experimentalGlobeFeatures)return;let i=e.data.match(/((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/g);null!==i&&i.length>=1&&(i=i.filter((e,t,i)=>i.indexOf(e)===t),i.forEach(e=>{window.mods.globe.addTemporaryConnectedMarker(e)}))})')
       .join('this._closing=!1,this._rcT=null,this._attachAddon=null,this.reconnectNow=()=>{try{this._rcT&&(clearTimeout(this._rcT),this._rcT=null),this._wsConn&&this._wsConn()}catch(e){}},this._wsConn=()=>{this.socket=new WebSocket("ws://"+d+":"+w),this.socket.onopen=()=>{try{this._attachAddon&&this._attachAddon.dispose()}catch(e){};try{this._attachAddon=new t(this.socket)}catch(e){this._attachAddon=null}try{this.term.loadAddon(this._attachAddon)}catch(e){}this.fit();try{this.term.focus()}catch(e){}},this.socket.onerror=()=>{try{this.socket.close()}catch(e){}},this.socket.onclose=e=>{this.onclose&&this.onclose(e);if(this._closing)return;try{if(!(this.term&&this.term.element&&document.body.contains(this.term.element)))return}catch(e){return}this._rcT&&clearTimeout(this._rcT),this._rcT=setTimeout(()=>{try{this._wsConn()}catch(e){}},1500)},this.socket.addEventListener("message",e=>{let t=Date.now();if(t-this.lastSoundFX>30&&(window.audioManager.stdout.play(),this.lastSoundFX=t),t-this.lastRefit>1e4&&this.fit(),!window.settings.experimentalGlobeFeatures)return;let i=e.data.match(/((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/g);null!==i&&i.length>=1&&(i=i.filter((e,t,i)=>i.indexOf(e)===t),i.forEach(e=>{window.mods.globe.addTemporaryConnectedMarker(e)}))})},this.lastSoundFX=Date.now(),this._wsConn()')
       .split('this.socket.addEventListener("message",e=>{let t=Date.now();if(t-this.lastSoundFX>30&&(window.audioManager.stdout.play(),this.lastSoundFX=t),')
@@ -1186,6 +1206,21 @@ const targets = [
       .split('.xterm:not(.enable-mouse-events){cursor:text}' + AM_CSS_OLD).join('.xterm:not(.enable-mouse-events){cursor:text}')
       .split('.xterm:not(.enable-mouse-events){cursor:text}')
       .join('.xterm:not(.enable-mouse-events){cursor:text}' + AM_CSS),
+  },
+  {
+    name: 'main_shell.css (注入实心光标:.terminal.xterm 双类选择器)',
+    path: ['assets', 'css', 'main_shell.css'],
+    expectIn: '.xterm:not(.enable-mouse-events){cursor:text}',
+    expectOut: '.terminal.xterm{cursor:url(',
+    // #76(round-4):.terminal 与 .xterm 是**同一元素**上的两个 class(终端 DOM 双类),原
+    // `.terminal .xterm`(后代选择器)匹配不到 → SVG 实心光标不生效(终端内光标透明)。
+    // 基础 AppImage 的 css 里**没有**这条规则(此前笔记本是手工注入),此处直接注入
+    // **修复后**的双类选择器版本:`.terminal.xterm` 命中实心光标,
+    // `body.cursor_hidden .terminal.xterm` 锁屏/屏保闲置时隐藏。幂等:expectOut 用修复后
+    // 标记,已注入则跳过,重跑不叠加。
+    transform: c => c
+      .split('.xterm:not(.enable-mouse-events){cursor:text}')
+      .join('.xterm:not(.enable-mouse-events){cursor:text}' + '.terminal.xterm{cursor:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M5%202%20L5%2020%20L9.5%2016%20L11.5%2022%20L14.5%2021%20L12.5%2015%20L17.5%2015%20Z%22%20fill%3D%22%23ffffff%22%20stroke%3D%22%23000000%22%20stroke-width%3D%221.4%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fsvg%3E") 2 2,default!important}body.cursor_hidden .terminal.xterm{cursor:none!important}'),
   },
   {
     name: 'mod_toplist.css (top processes NAME 列缩短,数字右对齐)',

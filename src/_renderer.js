@@ -51,7 +51,7 @@ window._isHotReload = () => {
 // DOM access happens at call time (set()), never at module load.
 window.cover = (() => {
     const FAKE_TABS = { 0: "MAIN - LAUNCHCTRL", 1: "#2 - GUIDANCE", 2: "KEYHOLDER", 3: "WARHEAD A", 4: "WARHEAD B" };
-    const FALLBACK_TABS = { 0: "MAIN SHELL", 1: "EMPTY", 2: "TERM", 3: "MONITOR A", 4: "MONITOR B" };
+    const FALLBACK_TABS = { 0: "MAIN SHELL", 1: "EMPTY", 2: "EMPTY", 3: "MONITOR A", 4: "MONITOR B" };
     const FAKE_PROCS = ["launch_seq", "targeting_core", "guidance_fuse", "key_custodian",
         "threat_eval", "silo_monitor", "telemetry_relay", "auth_gate",
         "warhead_diag", "perim_alarm"];
@@ -1148,7 +1148,7 @@ async function initUI() {
         <ul id="main_shell_tabs">
             <li id="shell_tab0" onclick="window.focusShellTab(0);" class="active"><p>MAIN SHELL</p></li>
             <li id="shell_tab1" onclick="window.focusShellTab(1);"><p>EMPTY</p></li>
-            <li id="shell_tab2" onclick="window.focusShellTab(2);"><p>TERM</p></li>
+            <li id="shell_tab2" onclick="window.focusShellTab(2);"><p>EMPTY</p></li>
             <li id="shell_tab3" onclick="window.focusShellTab(3);"><p><span id="shell_tab3_label">APP</span> <span class="webapp_chevron" title="Switch app" onclick="event.stopPropagation();window.appmonitorA.toggleMenu(event);">${Icons.chevronDown}</span></p></li>
             <li id="shell_tab4" onclick="window.focusShellTab(4);"><p>${(window.settings.appMonitor||{}).showGui?'<button class="appmonitor_fs_tab" title="Fullscreen" onclick="event.stopPropagation();window.appmonitorB.fullscreenButton()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2 2h20L2 22z"/></svg></button>':''}<span id="shell_tab4_label">APP</span> <span class="webapp_chevron" title="Switch app" onclick="event.stopPropagation();window.appmonitorB.toggleMenu(event);">${Icons.chevronDown}</span></p></li>
         </ul>
@@ -2127,6 +2127,9 @@ async function initUI() {
                 const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
                 set("settingsUpClashVer", (st.clash && st.clash.installed) ? (st.clash.version ? "v" + st.clash.version : "installed") : "–");
                 set("settingsUpClaudeVer", (st.claude && st.claude.version) ? "v" + st.claude.version : "–");
+                set("settingsUpCarbonylVer", (st.carbonyl && st.carbonyl.installed) ? (st.carbonyl.version ? "v" + st.carbonyl.version : "installed") : "–");
+                set("settingsUpBtopVer", (st.btop && st.btop.version) ? "v" + st.btop.version : "–");
+                set("settingsUpAercVer", (st.aerc && st.aerc.version) ? "v" + st.aerc.version : "–");
             }).catch(() => {});
         },
         refreshLastUpdate() {
@@ -3128,6 +3131,9 @@ window.openSettings = async () => {
                     <button type="button" id="settingsUpClashUpdate" class="settings_net_btn">${t("settings.updates.updateBtn")}</button>
                 </div>`),
             settingsRow("settings.updates.claude", `<span id="settingsUpClaudeVer" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.auto")}</span>`),
+            settingsRow("settings.updates.carbonyl", `<span id="settingsUpCarbonylVer" class="settings_net_info">–</span>`),
+            settingsRow("settings.updates.btop", `<span id="settingsUpBtopVer" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.apt")}</span>`),
+            settingsRow("settings.updates.mail", `<span id="settingsUpAercVer" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.apt")}</span>`),
         ].join("") },
         { id: "power", titleKey: "settings.cat.power", html: () => [
             section("settings.cat.power"),
@@ -5155,7 +5161,7 @@ window.screensaver = (() => {
             // tabs / filesystem / IP / process list).
             if (window.cover) window.cover.set(true);
         },
-        hide(immediate, keepCover, keepMatrixRain) {
+        hide(immediate, keepCover, keepMatrixRain, keepCodeStream) {
             if (!active) return;
             active = false;
             document.body.classList.remove("screensaver_on");
@@ -5172,7 +5178,10 @@ window.screensaver = (() => {
                 // borrows the cover session and redraws it with the passcode
                 // box, so it survives when keepCover is set; any other dismissal
                 // destroys it and returns to the pre-cover tab (#50).
-                if (codeTimer) { clearInterval(codeTimer); codeTimer = null; }
+                // keepCodeStream (code → lock handover): keep the code timer
+                // running so the stream continues behind the lock box until it
+                // assembles — the code analogue of keepMatrixRain (#89).
+                if (codeTimer && !keepCodeStream) { clearInterval(codeTimer); codeTimer = null; }
                 if (mTimer && !keepMatrixRain) { clearInterval(mTimer); mTimer = null; }
                 fading = false; fadeTail = 0;
                 if (canvas && !keepMatrixRain) canvas.style.display = "none";
@@ -5290,6 +5299,12 @@ window.screensaver = (() => {
             }, 2500);
         },
         isWindingDown() { return winding; },
+        // True while the code stream is actually running (timer alive), even if
+        // the screensaver has already been hidden into the lock. Used by the
+        // lock screen to tell a screensaver → lock handover (stream kept alive,
+        // box assembles over it) apart from a direct lock (needs a fresh stream
+        // started first) (#89).
+        isCodeStreaming() { return !!codeTimer; },
         // 30s idle timeout back to the screensaver (matrix style): the lock hands
         // its (adopted or own) canvas and drop positions back and the rain picks
         // up where it fell. No timer is passed — a fresh draw timer starts here,
@@ -5341,7 +5356,8 @@ window.screensaver = (() => {
         coverRestoreTab,
         endCover,
         streamCodeIntoCover,
-        stopCodeStream
+        stopCodeStream,
+        isCodeStreaming
     };
 })();
 
@@ -5473,11 +5489,19 @@ const bumpActivity = () => {
             && window.settings.screensaverStyle === "matrix"
             && window.screensaver.isMatrixActive && window.screensaver.isMatrixActive();
         if (willLock && window.settings.screensaverStyle === "code") {
-            // Code → lock: wind the fake code down (closing banner + accelerated
-            // scroll ~1s), then hide into the lock so the passcode box assembles
-            // in over a "finished" terminal (#89). The guard skips repeats while
-            // the transition is already running.
-            if (!window.screensaver.isWindingDown()) {
+            // Code → lock: keep the fake code streaming and let the passcode box
+            // assemble right over it — no wind-down, no restart (#89). The lock
+            // reuses the very cover session the code writes into, and stops the
+            // stream once the box is drawn (they share the terminal grid, so new
+            // lines would otherwise scroll the box away), so the handover reads
+            // as "the lock appears over the running code" — the code analogue of
+            // the matrix keepRain path above (#86). Edge: if the stream isn't up,
+            // fall back to the wind-down handover so the lock never assembles
+            // over a dead terminal.
+            if (window.screensaver.isCodeStreaming()) {
+                window.screensaver.hide(true, true, false, true);
+                window.lockScreen.show();
+            } else if (!window.screensaver.isWindingDown()) {
                 window.screensaver.windDownCodeToLock(() => {
                     window.screensaver.hide(true, true, false);
                     window.lockScreen.show();

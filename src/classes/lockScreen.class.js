@@ -385,7 +385,9 @@ class LockScreen {
         // box for ~1.5s before it assembles. The user's real terminals (0-2) and
         // running CLI sessions are never touched, so nothing needs re-serialising
         // on unlock (#50).
-        const direct = !(window.screensaver && window.screensaver.isActive());
+        const direct = !(window.screensaver && window.screensaver.isActive())
+            && !(window.screensaver && typeof window.screensaver.isCodeStreaming === "function"
+                && window.screensaver.isCodeStreaming());
         if (direct && window.screensaver && typeof window.screensaver.streamCodeIntoCover === "function") {
             window.screensaver.streamCodeIntoCover();
         }
@@ -475,9 +477,13 @@ class LockScreen {
                 this._drawLockBox(true);
             }, 1500);
         } else {
-            // Screensaver → lock: the fake code was already wound down; assemble
-            // the box straight over the "finished" terminal.
+            // Screensaver → lock: the fake code is still streaming on the cover
+            // session (bumpActivity kept the timer alive). Assemble the box over
+            // the running stream, then stop it — they share the terminal grid,
+            // so new lines would otherwise scroll the box away (#89).
             this._drawLockBox(true);
+            const ss = window.screensaver;
+            if (ss && typeof ss.stopCodeStream === "function") ss.stopCodeStream();
         }
     }
 
