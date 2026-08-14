@@ -226,55 +226,21 @@ HandleLidSwitchDocked=ignore
 HandlePowerKey=ignore
 LOGIND
 
-echo "[edex] detecting installed user"
-# Find the REAL user Ubuntu's installer created — the username typed at install
-# time must be the account that owns the desktop. Do NOT take the first
-# uid>=1000 account from /etc/passwd: the live rootfs can carry leftover
-# accounts (e.g. "edex"/"runner" leaked in from the CI builder) that get copied
-# into every install and would win an order-based pick, redirecting the whole
-# desktop to the wrong username while the real /home dir sits unused.
-# Subiquity always puts the account it creates into the admin groups
-# (adm, cdrom, dip, lxd, plugdev, sudo); a leftover account is not in them. So:
-#   1) the first uid>=1000 member of group `adm`,
-#   2) else the first uid>=1000 account,
-#   3) else create the documented kiosk default below.
-# U 探测(2026-08-13 真机安装失败根因):两条命令替换都挂 `|| true`。
-# 原因:`set -euo pipefail` 下,`U="$(getent ... | while ... done)"` 管道只要
-# getent group adm 查不到、或 adm 成员里最后一个被检查的账号 id -u 为空
-# (账号不在 /etc/passwd 或 uid<1000),while 循环体末次退出码即 1 → pipefail
-# 令整管道返回 1 → 命令替换失败 → set -e 掐死 install-edex.sh(卡在
-# "detecting installed user",安装报"完成安装时出现问题")。`|| true` 保证探测
-# 失败也继续落到 getent passwd 兜底;再失败才自愈成默认用户 edex。
-U="$(getent group adm | cut -d: -f4 | tr ',' '\n' | while read -r c; do
-    uid="$(id -u "$c" 2>/dev/null)"
-    [ -n "$uid" ] && [ "$uid" -ge 1000 ] && [ "$uid" -lt 65534 ] && { echo "$c"; break; }
-  done)" || true
-[ -z "$U" ] && U="$(getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1; exit}')" || true
-if [ -z "$U" ]; then
-    # No login user was created — the interactive identity answer can be lost on
-    # an installer restart. Self-heal so the system still boots to a usable
-    # autologin desktop. The password is a documented kiosk default (autologin +
-    # passwordless sudo); the in-app first-run setup (classes/firstRun.class.js)
-    # lets the user set the unlock PIN on the first boot.
-    echo "[edex] WARN: no login user in /etc/passwd — creating default user 'edex'"
-    U="edex"
-    if ! id "$U" >/dev/null 2>&1; then
-        useradd -m -s /bin/bash "$U"
-    fi
-    echo "$U:edex" | chpasswd
-    usermod -aG sudo "$U"
-fi
-# Backlight is owned by the `video` group — the autologin user must be in it or
-# the Fn brightness keys / settings slider fall back to sudo (passwordless).
-usermod -aG video "$U" 2>/dev/null || true
-echo "[edex] configured for user: $U"
+echo "[edex] login-user setup moved to first boot (edex-firstboot.service)"
+# The interactive identity (#174) is created by cloud-init on the INSTALLED
+# system's FIRST boot — AFTER these late-commands run (verified 2026-08-14:
+# user created 16:50 by cloud-init, install-edex ran 16:43). No user-level
+# config can be done here. /usr/local/sbin/edex-firstboot.sh (unit:
+# After=cloud-init.target, Before=lightdm.service) detects the real user and
+# applies autologin / passwordless sudo / seeded settings / folders / fcitx
+# profile once it exists.
 
 # WiFi: wpa_supplicant.service declares Group=netdev. The build-time rootfs
 # addgroup does NOT survive the install — the real machine (2026-08-10) came up
 # missing netdev, so wpa_supplicant failed to start (status=216/GROUP) and the
 # wifi scan returned empty. Ensure the group exists on every installed system.
 getent group netdev >/dev/null 2>&1 || addgroup --system netdev
-usermod -aG netdev "$U" 2>/dev/null || true
+# (the login user is added to video/netdev by edex-firstboot.sh at first boot)
 
 # Audio boot race fix: rtkit-daemon fails to start if the `rtkit` system user is
 # missing ("Failed to find user 'rtkit'") — then every RealtimeKit activation
@@ -294,14 +260,18 @@ systemctl enable rtkit-daemon 2>/dev/null || true
 echo "[edex] fcitx5 profile: keyboard-us + pinyin + Rime, default US (input method #16)"
 # fcitx5 is launched and the IM env is set (edex-session.sh), but without a
 # profile the engine list is EMPTY — so Ctrl+Space has nothing to switch to and
-# the system is stuck on "EN" no matter what. Writing the profile gives fcitx5
-# three input methods: keyboard-us (English, the default), pinyin (libime —
-# instant candidates, no schema compile) and rime (小狼毫, builds its schemas
-# on first activation). pinyin comes FIRST so the EN/中 toggle lands on a
-# candidate window that works out of the box; rime stays available for users
-# who want it. Rime initializes ~/.config/fcitx5/rime on first activation.
-mkdir -p "/home/$U/.config/fcitx5"
-cat > "/home/$U/.config/fcitx5/profile" <<'PROFILE'
+# the system is stuck on "EN" no matter what. The profile is seeded into
+# /etc/skel (NOT the login user): Subiquity defers creating the real user to
+# cloud-init at FIRST BOOT, so /home/<user> doesn't exist at install time.
+# edex-firstboot.sh copies /etc/skel/.config/fcitx5 into the real home after
+# the user is created. Writing the profile gives fcitx5 three input methods:
+# keyboard-us (English, the default), pinyin (libime — instant candidates, no
+# schema compile) and rime (小狼毫, builds its schemas on first activation).
+# pinyin comes FIRST so the EN/中 toggle lands on a candidate window that works
+# out of the box; rime stays available for users who want it. Rime initializes
+# ~/.config/fcitx5/rime on first activation.
+mkdir -p /etc/skel/.config/fcitx5
+cat > /etc/skel/.config/fcitx5/profile <<'PROFILE'
 [Groups/0]
 Name=Default
 Default Layout=us
@@ -330,8 +300,8 @@ PROFILE
 # The colors match the seeded "tron" theme (#144): near-black panel on the
 # terminal's #05080d, accent #aacfd1 text, and the selected candidate as an
 # accent block with dark text — the same dark/cyan look as the rest of the UI.
-mkdir -p "/home/$U/.config/fcitx5/conf"
-cat > "/home/$U/.config/fcitx5/conf/classicui.conf" <<'CUI'
+mkdir -p /etc/skel/.config/fcitx5/conf
+cat > /etc/skel/.config/fcitx5/conf/classicui.conf <<'CUI'
 [Appearance]
 Font="Noto Sans CJK SC 12"
 PerScreenDPI=False
@@ -342,17 +312,8 @@ HighlightBackgroundColor=#aacfd1
 SpellHintColor=#6b7f80
 ShadowColor=#000000
 CUI
-chown -R "$U":"$U" "/home/$U/.config/fcitx5" 2>/dev/null || true
-# seed /etc/skel so any account created later gets the same IM list + UI config
-mkdir -p /etc/skel/.config/fcitx5
-cp -r "/home/$U/.config/fcitx5/profile" "/home/$U/.config/fcitx5/conf" /etc/skel/.config/fcitx5/
-# Best-effort: pre-deploy Rime so the first switch to 中 doesn't stall on the
-# schema build — a stalled/failed deploy degrades Rime to latin pass-through
-# with no candidate window. pinyin above is the reliable default; this only
-# makes Rime usable immediately. Never fail the install over it.
-if command -v rime_deployer >/dev/null 2>&1; then
-    HOME="/home/$U" rime_deployer --build >/dev/null 2>&1 || true
-fi
+# (rime_deployer --build moved to edex-firstboot.sh — it needs the real user's
+#  home, which only exists at first boot.)
 
 echo "[edex] NetworkManager as the network stack (WiFi via nmcli)"
 # CRITICAL: the interactive installer (subiquity) writes /etc/netplan/00-installer-config.yaml
@@ -512,91 +473,18 @@ if ! getent passwd lightdm >/dev/null 2>&1; then
     chown lightdm:lightdm /var/lib/lightdm 2>/dev/null || true
 fi
 
-echo "[edex] lightdm autologin"
-mkdir -p /etc/lightdm/lightdm.conf.d
-# CRITICAL: this file must sort AFTER the lightdm-autologin-greeter package's own
-# /etc/lightdm/lightdm.conf.d/lightdm-autologin-greeter.conf, which ships a
-# placeholder autologin-user=AUTOLOGIN-USER-NOT-CONFIGURED. lightdm reads conf.d
-# files in lexicographic order with later files overriding earlier ones, so a name
-# starting with 'z' (after 'l') guarantees OUR autologin-user wins — otherwise
-# lightdm tries to autologin as the placeholder user, fails, and the installed
-# system drops to a text console instead of eDEX. Pin the greeter explicitly for
-# the same reason (default would be lightdm-gtk-greeter, which is NOT installed).
-cat > /etc/lightdm/lightdm.conf.d/zz-edex-autologin.conf <<CONF
-[Seat:*]
-autologin-user=$U
-autologin-session=edex
-user-session=edex
-greeter-session=lightdm-autologin-greeter
-autologin-user-timeout=0
-CONF
-# Guard against a 0-byte write (older installs hit this when $U was empty under
-# set -u): a 0-byte conf.d file makes lightdm fall back to the package placeholder
-# and the system boots to a text console instead of eDEX. Fail the install loudly
-# rather than ship a bricked boot.
-if [ ! -s /etc/lightdm/lightdm.conf.d/zz-edex-autologin.conf ]; then
-    echo "[edex] FATAL: zz-edex-autologin.conf is empty/missing (autologin would break)" >&2
-    exit 1
-fi
-
-echo "[edex] creating the ~/Applications folder (drop .AppImage files here)"
-mkdir -p "/home/$U/Applications"
-chown "$U":"$U" "/home/$U/Applications" || echo "[edex] WARN: chown ~/Applications failed"
-
-echo "[edex] standard user directories (file-browser tabs)"
-# Ubuntu Server creates none of ~/Desktop, ~/Documents, ... by default; the file
-# browser's default tabs point at them and would report "cannot connect".
-for d in Desktop Documents Downloads Music Pictures Public Templates Videos; do
-    mkdir -p "/home/$U/$d"
-    chown "$U":"$U" "/home/$U/$d" 2>/dev/null || true
-done
-
-# House rules for the built-in Claude Code assistant (~/CLAUDE.md is read
-# automatically): how to install apps, where AppImages go, wifi, updates.
-cat > "/home/$U/CLAUDE.md" <<'RULES'
-# eDEX-OS 系统约定(Claude Code 请遵守)
-
-这是一台 eDEX-OS 演示机(改装 Ubuntu 24.04),单用户,自动登录用户有**免密 sudo**。用户说中文。
-
-## 安装应用
-- AppImage → 下载到 `~/Applications/` 并 `chmod +x`(会自动出现在终端 tab 4/5 的 app 列表)。
-- .deb → `sudo apt install ./xxx.deb`。
-- 其它包 → `sudo apt install <包名>`(需已联网)。
-
-## 联网
-- NetworkManager:`nmcli dev wifi connect <ssid> password <pw>`;或提示用户点右下角 WIFI 按钮。
-
-## 系统更新
-- `sudo apt update && sudo apt full-upgrade`;或提示用户用齿轮菜单的"系统更新"按钮。
-
-## Flatpak(需联网;装系统时已配好 flathub 源,若当时没网请先跑下面那条)
-- 确保源:先跑 `flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo`。
-- 安装:`sudo flatpak install flathub <app-id>`(如 `sudo flatpak install flathub dev.vencord.Vesktop`;
-  本机自动登录用户已有免密 sudo,这是可靠路径。装好即出现在 tab 4/5 应用列表,点开即全屏运行)。
-- wiliwili 的 x86_64 只有 flatpak 版。
-
-## 其它
-- 系统自带 Firefox(/opt/firefox)与 eDEX 终端(tab 1/2)与虚拟显示器(tab 4/5)。
-- 交互时用中文,简洁说明你做了什么。
-RULES
-chown "$U":"$U" "/home/$U/CLAUDE.md" || echo "[edex] WARN: chown ~/CLAUDE.md failed"
-
-# Let the autologin user update the baked-in Firefox and Claude CLI in place
-# (their updaters write into /opt/firefox and the npm global dir).
-chown -R "$U":"$U" /opt/firefox /usr/local/lib/node_modules /usr/local/bin 2>/dev/null || true
-
-echo "[edex] passwordless sudo for $U (single-user demo laptop)"
-echo "$U ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/edex-user
-chmod 440 /etc/sudoers.d/edex-user
-# Guard against a 0-byte write (older installs hit this when $U was empty under
-# set -u): an empty/absent sudoers file breaks every passwordless sudo the UI
-# relies on (settings actions, sshd toggle, apt updates). Fail loudly.
-if [ ! -s /etc/sudoers.d/edex-user ]; then
-    echo "[edex] FATAL: /etc/sudoers.d/edex-user is empty/missing (passwordless sudo broken)" >&2
-    exit 1
-fi
-visudo -cf /etc/sudoers.d/edex-user >/dev/null 2>&1 \
-    || { echo "[edex] FATAL: /etc/sudoers.d/edex-user failed visudo -cf" >&2; exit 1; }
+echo "[edex] lightdm autologin + ALL user-level config → FIRST BOOT (edex-firstboot.service)"
+# The autoinstall keeps the identity step interactive (#174), so Subiquity defers
+# creating the real login user to cloud-init on the INSTALLED system's FIRST BOOT
+# — AFTER this script's late-commands (verified on the 2026-08-14 laptop: user
+# created 16:50 by cloud-init, install-edex ran 16:43). Any user-level config
+# written here (autologin / sudoers / ~/Applications / CLAUDE.md / settings.json)
+# would land on the self-heal 'edex' account while the real user got nothing →
+# lightdm crash-loop (black screen). ALL of it now lives in edex-firstboot.sh,
+# which runs After=cloud-init.target (user exists) and Before=lightdm.service
+# (autologin in place); the systemd unit is installed at the end of this script.
+# System-level lightdm pieces stay here: the lightdm system user is above, and
+# the autologin conf.d 'z' prefix + 0-byte guard logic live in edex-firstboot.sh.
 
 echo "[edex] SSH server: installed and ON by default (settings → network → SSH)"
 # openssh-server is baked into the ISO; default SSH to ON on fresh installs
@@ -625,19 +513,15 @@ fi
 systemctl disable ssh.service 2>/dev/null || true
 systemctl enable ssh.socket 2>/dev/null || true
 
-echo "[edex] Flatpak: flathub remote (+ flatpak group, best-effort) for $U"
+echo "[edex] Flatpak: flathub remote (flatpak group add → edex-firstboot.sh)"
 # flatpak core + xdg-desktop-portal(-gtk) are baked into the ISO. Wire up the
 # app source so the system "directly runs Flatpak" (run needs no privileges;
-# the app list auto-scans /var/lib/flatpak/exports/share/applications):
-#   1) best-effort: add the autologin user to the `flatpak` group IF the package
-#      created it (Debian's .pkla era is gone on 24.04; the reliable install
-#      path here is the passwordless sudo the user already has →
-#      `sudo flatpak install flathub <app>`; the group add is harmless);
-#   2) register the flathub remote (best-effort: install may be offline — the
-#      same command is echoed so it can be re-run at first use).
-if getent group flatpak >/dev/null 2>&1; then
-    usermod -aG flatpak "$U" 2>/dev/null || true
-fi
+# the app list auto-scans /var/lib/flatpak/exports/share/applications). The
+# flatpak group add for the login user moved to edex-firstboot.sh (the real
+# user doesn't exist until first boot). Register the flathub remote here
+# (best-effort: install may be offline — the same command is echoed so it can
+# be re-run at first use; `sudo flatpak install` via the user's passwordless
+# sudo is the reliable install path).
 if ! flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo 2>/dev/null; then
     echo "[edex] WARN: flathub remote-add failed (offline?) — run later:"
     echo "         flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo"
@@ -654,7 +538,143 @@ deb http://security.ubuntu.com/ubuntu noble-security main universe multiverse re
 deb http://archive.ubuntu.com/ubuntu noble-updates main universe multiverse restricted
 SOURCES
 
-echo "[edex] seeding eDEX settings"
+echo "[edex] seeding eDEX settings → FIRST BOOT (edex-firstboot.sh)"
+# settings.json must land in the REAL user's ~/.config/eDEX-UI, which doesn't
+# exist until cloud-init creates the user at first boot — so the seed (template,
+# cwd fix to the real home, chown) moved to edex-firstboot.sh. No lockCode is
+# seeded, so classes/firstRun.class.js shows a code-lock-style setup screen on
+# the first launch and writes the PIN (lockCode / lockOnIdle / language) into
+# settings.json itself. Root password no longer exists — Ubuntu's install set
+# the user password.
+
+# ---------------------------------------------------------------------------
+# first-boot user-setup unit (delivers ALL login-user config once cloud-init
+# has created the real user — see edex-firstboot.sh at the top of the FATAL
+# section for the full WHY). This is the ONLY user-config deliverable.
+# ---------------------------------------------------------------------------
+rm -f /etc/edex-firstboot.done
+cat > /usr/local/sbin/edex-firstboot.sh <<'FBEOF'
+#!/usr/bin/env bash
+# eDEX-OS first-boot user setup.
+#
+# WHY this runs at first boot and NOT at install:
+#   The autoinstall keeps the identity step interactive (#174), so Subiquity
+#   defers creating the real login user to cloud-init on the INSTALLED system's
+#   FIRST BOOT — AFTER install-edex.sh's late-commands have finished (verified on
+#   the 2026-08-14 laptop: user created 16:50 by cloud-init, install-edex ran
+#   16:43). Install-time user detection therefore never sees the real user; what
+#   it did write went to the self-heal 'edex' account while the real user got
+#   nothing → lightdm crash-loop (black screen). This script runs once the user
+#   exists (unit: After=cloud-init.target) and before lightdm (Before=lightdm.service),
+#   and applies ALL user-level config to the real account.
+#
+# Runs once: /etc/edex-firstboot.done is touched on success; the systemd unit
+# skips when the done-file exists, so a failed run retries on the next boot.
+# Idempotent — safe to re-run manually for repair:
+#     sudo /usr/local/sbin/edex-firstboot.sh
+#
+# IMPORTANT: the canonical copy of this script lives in
+# packaging/install/edex-firstboot.sh — keep the two in sync when editing.
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# user detection
+# ---------------------------------------------------------------------------
+# Leftover build/CI accounts that must never be treated as the real user.
+leftover() { # true if $1 is a known leftover name
+    case "$1" in edex|runner|ubuntu) return 0 ;; *) return 1 ;; esac
+}
+
+pick_user() {
+    # 1) the first uid>=1000 member of `adm` — Subiquity's marker (the real user
+    #    is always added to adm/cdrom/sudo/...; the self-heal 'edex' is only in
+    #    sudo, never adm, so it can't win here).
+    local u
+    u="$(getent group adm 2>/dev/null | cut -d: -f4 | tr ',' '\n' \
+        | while read -r c; do
+            [ -n "$c" ] || continue
+            leftover "$c" && continue
+            uid="$(id -u "$c" 2>/dev/null)" || continue
+            [ "$uid" -ge 1000 ] && [ "$uid" -lt 65534 ] && { echo "$c"; break; }
+          done)" || true
+    [ -n "$u" ] && { echo "$u"; return; }
+    # 2) else: the uid>=1000 account whose home-dir is newest — the freshly
+    #    created user wins over any leftover regardless of name. Home comes from
+    #    getent passwd (field 6) so non-/home locations work too.
+    local best="" best_t=0 home t
+    for u in $(getent passwd | awk -F: '$3>=1000 && $3<65534 {print $1}'); do
+        home="$(getent passwd "$u" 2>/dev/null | cut -d: -f6)"
+        home="${home:-/home/$u}"
+        [ -d "$home" ] || continue
+        t="$(stat -c %Y "$home" 2>/dev/null)" || continue
+        [ "$t" -gt "$best_t" ] && { best="$u"; best_t="$t"; }
+    done
+    [ -n "$best" ] && { echo "$best"; return; }
+    return 1
+}
+
+echo "[edex-firstboot] detecting the real login user"
+# Wait up to ~30s for cloud-init to finish creating the login user (normal boot:
+# After=cloud-init.target makes this instant; the poll is insurance only).
+U=""
+for ((i=0; i<10; i++)); do
+    U="$(pick_user)" && break
+    sleep 3
+done
+if [ -z "$U" ]; then
+    echo "[edex-firstboot] WARN: no login user found — creating default user 'edex'"
+    U="edex"
+    id "$U" >/dev/null 2>&1 || useradd -m -s /bin/bash "$U"
+    echo "$U:edex" | chpasswd
+    usermod -aG sudo "$U"
+fi
+echo "[edex-firstboot] configured for user: $U"
+
+# ---------------------------------------------------------------------------
+# critical user config (failure here → no done-file → retry next boot)
+# ---------------------------------------------------------------------------
+
+# Backlight is owned by the `video` group — the Fn keys / settings slider fall
+# back to sudo (passwordless) without it. wpa_supplicant uses `netdev`.
+usermod -aG video "$U" 2>/dev/null || true
+usermod -aG netdev "$U" 2>/dev/null || true
+
+# lightdm autologin. The 'z' prefix must sort AFTER the lightdm-autologin-greeter
+# package's own lightdm-autologin-greeter.conf, which ships a placeholder
+# autologin-user=AUTOLOGIN-USER-NOT-CONFIGURED — later conf.d files win, so OUR
+# value overrides the placeholder and the system boots to eDEX instead of a
+# text console. The greeter is pinned explicitly (default would be
+# lightdm-gtk-greeter, which is NOT installed).
+mkdir -p /etc/lightdm/lightdm.conf.d
+cat > /etc/lightdm/lightdm.conf.d/zz-edex-autologin.conf <<CONF
+[Seat:*]
+autologin-user=$U
+autologin-session=edex
+user-session=edex
+greeter-session=lightdm-autologin-greeter
+autologin-user-timeout=0
+CONF
+if [ ! -s /etc/lightdm/lightdm.conf.d/zz-edex-autologin.conf ]; then
+    echo "[edex-firstboot] FATAL: zz-edex-autologin.conf empty/missing (autologin would break)" >&2
+    exit 1
+fi
+
+# Passwordless sudo for the autologin user (single-user demo laptop). Every
+# privileged UI action (settings toggles, sshd, apt updates, flatpak install)
+# relies on it.
+echo "$U ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/edex-user
+chmod 440 /etc/sudoers.d/edex-user
+if [ ! -s /etc/sudoers.d/edex-user ]; then
+    echo "[edex-firstboot] FATAL: /etc/sudoers.d/edex-user empty/missing (passwordless sudo broken)" >&2
+    exit 1
+fi
+visudo -cf /etc/sudoers.d/edex-user >/dev/null 2>&1 \
+    || { echo "[edex-firstboot] FATAL: /etc/sudoers.d/edex-user failed visudo -cf" >&2; exit 1; }
+
+# Seed eDEX settings. No lockCode yet → the in-app first-run setup
+# (classes/firstRun.class.js) shows a code-lock-style screen on first launch and
+# writes the PIN (lockCode / lockOnIdle / language) into this file itself. Root
+# password no longer exists — Ubuntu's install already set the user password.
 mkdir -p "/home/$U/.config/eDEX-UI"
 cat > "/home/$U/.config/eDEX-UI/settings.json" <<'SETTINGS'
 {
@@ -698,13 +718,100 @@ cat > "/home/$U/.config/eDEX-UI/settings.json" <<'SETTINGS'
 SETTINGS
 # fix the seeded cwd to the real home dir
 sed -i "s|/home/edex|/home/$U|" "/home/$U/.config/eDEX-UI/settings.json" || true
-chown -R "$U":"$U" "/home/$U/.config" || echo "[edex] WARN: chown ~/.config failed"
+chown -R "$U":"$U" "/home/$U/.config" || echo "[edex-firstboot] WARN: chown ~/.config failed"
 
-# The one-time first-boot setup (interface language → timezone → unlock PIN)
-# used to be a bash wizard launched in an xterm here. It now runs INSIDE the
-# app: the seeded settings.json has no lockCode, so classes/firstRun.class.js
-# shows a code-lock-style setup screen on the first launch and writes the PIN
-# (lockCode / lockOnIdle / language) into this settings.json itself. Root
-# password no longer exists — Ubuntu's install already set the user password.
+# ---------------------------------------------------------------------------
+# best-effort user config (failure → WARN, keep going)
+# ---------------------------------------------------------------------------
+
+# fcitx5 profile: install-edex.sh seeds /etc/skel (user-independent content);
+# copy it into the real user so Ctrl+Space has pinyin/rime to switch to.
+if [ -d /etc/skel/.config/fcitx5 ]; then
+    mkdir -p "/home/$U/.config/fcitx5"
+    cp -r /etc/skel/.config/fcitx5/. "/home/$U/.config/fcitx5/" 2>/dev/null || true
+    chown -R "$U":"$U" "/home/$U/.config/fcitx5" 2>/dev/null || true
+fi
+# Best-effort: pre-deploy Rime so the first switch to 中 doesn't stall on the
+# schema build — a stalled/failed deploy degrades Rime to latin pass-through.
+if command -v rime_deployer >/dev/null 2>&1; then
+    HOME="/home/$U" rime_deployer --build >/dev/null 2>&1 || true
+fi
+
+# ~/Applications (drop .AppImage files here) + standard folders (file-browser
+# tabs point at them and would report "cannot connect" otherwise).
+mkdir -p "/home/$U/Applications"
+for d in Desktop Documents Downloads Music Pictures Public Templates Videos; do
+    mkdir -p "/home/$U/$d"
+done
+chown "$U":"$U" "/home/$U/Applications" "/home/$U/Desktop" "/home/$U/Documents" \
+    "/home/$U/Downloads" "/home/$U/Music" "/home/$U/Pictures" "/home/$U/Public" \
+    "/home/$U/Templates" "/home/$U/Videos" 2>/dev/null || true
+
+# House rules for the built-in Claude Code assistant (~/CLAUDE.md is read
+# automatically): how to install apps, where AppImages go, wifi, updates.
+cat > "/home/$U/CLAUDE.md" <<'RULES'
+# eDEX-OS 系统约定(Claude Code 请遵守)
+
+这是一台 eDEX-OS 演示机(改装 Ubuntu 24.04),单用户,自动登录用户有**免密 sudo**。用户说中文。
+
+## 安装应用
+- AppImage → 下载到 `~/Applications/` 并 `chmod +x`(会自动出现在终端 tab 4/5 的 app 列表)。
+- .deb → `sudo apt install ./xxx.deb`。
+- 其它包 → `sudo apt install <包名>`(需已联网)。
+
+## 联网
+- NetworkManager:`nmcli dev wifi connect <ssid> password <pw>`;或提示用户点右下角 WIFI 按钮。
+
+## 系统更新
+- `sudo apt update && sudo apt full-upgrade`;或提示用户用齿轮菜单的"系统更新"按钮。
+
+## Flatpak(需联网;装系统时已配好 flathub 源,若当时没网请先跑下面那条)
+- 确保源:先跑 `flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo`。
+- 安装:`sudo flatpak install flathub <app-id>`(如 `sudo flatpak install flathub dev.vencord.Vesktop`;
+  本机自动登录用户已有免密 sudo,这是可靠路径。装好即出现在 tab 4/5 应用列表,点开即全屏运行)。
+- wiliwili 的 x86_64 只有 flatpak 版。
+
+## 其它
+- 系统自带 Firefox(/opt/firefox)与 eDEX 终端(tab 1/2)与虚拟显示器(tab 4/5)。
+- 交互时用中文,简洁说明你做了什么。
+RULES
+chown "$U":"$U" "/home/$U/CLAUDE.md" || echo "[edex-firstboot] WARN: chown ~/CLAUDE.md failed"
+
+# Let the autologin user update the baked-in Firefox and Claude CLI in place
+# (their updaters write into /opt/firefox and the npm global dir).
+chown -R "$U":"$U" /opt/firefox /usr/local/lib/node_modules /usr/local/bin 2>/dev/null || true
+
+# flatpak group (best-effort; the reliable install path is the passwordless sudo
+# the user already has → `sudo flatpak install flathub <app>`).
+if getent group flatpak >/dev/null 2>&1; then
+    usermod -aG flatpak "$U" 2>/dev/null || true
+fi
+
+touch /etc/edex-firstboot.done
+echo "[edex-firstboot] done — configured for user $U"
+FBEOF
+chmod 755 /usr/local/sbin/edex-firstboot.sh
+cat > /etc/systemd/system/edex-firstboot.service <<'SVC'
+[Unit]
+Description=eDEX-OS first-boot user setup
+# The real login user is created by cloud-init on the installed system's FIRST
+# BOOT (Subiquity defers the interactive identity past install-edex.sh), so this
+# must run After=cloud-init.target — and Before=lightdm.service so the autologin
+# config is in place before the greeter starts. A done-file touched by the script
+# makes a failed run retry on the next boot.
+ConditionPathExists=!/etc/edex-firstboot.done
+After=cloud-init.target systemd-user-sessions.service
+Before=lightdm.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/edex-firstboot.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+SVC
+systemctl daemon-reload
+systemctl enable edex-firstboot.service 2>/dev/null || true
 
 echo "[edex] done"
