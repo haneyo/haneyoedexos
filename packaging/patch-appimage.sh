@@ -1404,11 +1404,11 @@ const targets = [
     expectOut: '__edexCliRowsCeil',
     transform: c => c
       // 先 revert 到 pristine(老代已注入过一次的场景防叠加,幂等入口由 expectOut 保证)
-      .split('const s=Math.max(1,Math.floor(t.rows));try{const e=this.term.element&&this.term.element.parentElement,a=this.term._core&&this.term._core._renderService&&this.term._core._renderService.dimensions;if(e&&a&&a.actualCellHeight>0&&e.classList&&e.classList.contains("cli_session")){const r=e.getBoundingClientRect();s=Math.max(s,Math.ceil(r.height/a.actualCellHeight));window.__edexCliRowsCeil=1}}catch(e){}this.term.cols===i&&this.term.rows===s||this.resize(i,s)')
+      .split('let s=Math.max(1,Math.floor(t.rows));try{const e=this.term.element&&this.term.element.parentElement,a=this.term._core&&this.term._core._renderService&&this.term._core._renderService.dimensions;if(e&&a&&a.actualCellHeight>0&&e.classList&&e.classList.contains("cli_session")){const r=e.getBoundingClientRect();s=Math.max(s,Math.ceil(r.height/a.actualCellHeight));window.__edexCliRowsCeil=1}}catch(e){}this.term.cols===i&&this.term.rows===s||this.resize(i,s)')
       .join('const s=Math.max(1,Math.floor(t.rows));this.term.cols===i&&this.term.rows===s||this.resize(i,s)')
       // 注入:cli_session 容器行数向上取整(见上方注释);锚取 pristine fit 尾串,幂等靠 expectOut。
       .split('const s=Math.max(1,Math.floor(t.rows));this.term.cols===i&&this.term.rows===s||this.resize(i,s)')
-      .join('const s=Math.max(1,Math.floor(t.rows));try{const e=this.term.element&&this.term.element.parentElement,a=this.term._core&&this.term._core._renderService&&this.term._core._renderService.dimensions;if(e&&a&&a.actualCellHeight>0&&e.classList&&e.classList.contains("cli_session")){const r=e.getBoundingClientRect();s=Math.max(s,Math.ceil(r.height/a.actualCellHeight));window.__edexCliRowsCeil=1}}catch(e){}this.term.cols===i&&this.term.rows===s||this.resize(i,s)'),
+      .join('let s=Math.max(1,Math.floor(t.rows));try{const e=this.term.element&&this.term.element.parentElement,a=this.term._core&&this.term._core._renderService&&this.term._core._renderService.dimensions;if(e&&a&&a.actualCellHeight>0&&e.classList&&e.classList.contains("cli_session")){const r=e.getBoundingClientRect();s=Math.max(s,Math.ceil(r.height/a.actualCellHeight));window.__edexCliRowsCeil=1}}catch(e){}this.term.cols===i&&this.term.rows===s||this.resize(i,s)'),
   },
 ];
 
