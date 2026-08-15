@@ -263,6 +263,16 @@ window.cover = (() => {
 // boot animation ends — before initUI builds any UI — without a real-UI flash.
 window.lockScreen = new LockScreen();
 
+// #92: global "is the main UI covered or hidden" flag used by the animation
+// loops (globe, cyberPanel) to skip their canvas redraws. The lock screen and
+// the screensaver both add body.screensaver_on (lockScreen.engage() shows the
+// screensaver first), and a hidden window is a free pass too. Defined before
+// initUI() so every module sees it.
+window.__uiCovered = () =>
+    document.hidden ||
+    (window.lockScreen && window.lockScreen.active) ||
+    document.body.classList.contains("screensaver_on");
+
 // CRT-TV power-off: collapse the screen to a bright horizontal centre line and
 // go dark, like an old tube TV switching off. Called from lockScreen.unlock()
 // after the boot lock and the matrix lock clear. It is a pure overlay that runs
