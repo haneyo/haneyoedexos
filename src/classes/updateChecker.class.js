@@ -81,16 +81,23 @@ class UpdateChecker {
         let sha = assets.find(a => /\.AppImage\.sha256$/i.test(a.name));
         let releaseUrl = release.html_url || release.url || "https://github.com";
 
+        // The button action is embedded into a double-quoted HTML attribute
+        // (modal.class.js: `onclick="${b.action}"`). JSON.stringify emits double
+        // quotes, which would truncate the attribute and break the handler with a
+        // SyntaxError → the global error dialog. Escape the quotes/ampersands to
+        // entities; the HTML parser decodes them back before the onclick runs.
+        let esc = s => JSON.stringify(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+
         let buttons;
         if (appImage && appImage.browser_download_url) {
             buttons = [{
                 label: "Download & Update",
-                action: `window.edexUpdate.start(${JSON.stringify(appImage.browser_download_url)}, ${JSON.stringify(sha ? sha.browser_download_url : "")}, ${JSON.stringify(releaseUrl)})`
+                action: `window.edexUpdate.start(${esc(appImage.browser_download_url)}, ${esc(sha ? sha.browser_download_url : "")}, ${esc(releaseUrl)})`
             }];
         } else {
             buttons = [{
                 label: "Open release page",
-                action: `require("electron").shell.openExternal(${JSON.stringify(releaseUrl)})`
+                action: `require("electron").shell.openExternal(${esc(releaseUrl)})`
             }];
         }
 
