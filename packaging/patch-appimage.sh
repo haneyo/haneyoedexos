@@ -1029,11 +1029,14 @@ const targets = [
     // #60(v2.2 SSH 可靠性):标记再换成 `is-active ssh.socket`。v2.1 部署版(有 beginCoverSession、但
     //   refreshStatus 仍查 `is-active ssh`)→ 无此串 → 整链重跑,SSH_OBJ_NEW_OLD revert 后注入 v2.2;
     //   新态(此串)→ 跳过。src 新构建的 _renderer.js 含此串(刷新状态命令),ISO 烘焙同样 no-op。
-    // v2.3(socket-only 开关):标记换成命令特征串 `"+a+" ssh.socket")`。v2.2 部署版(有 is-active
+    // v2.3(socket-only 开关):标记换成命令特征串 `" ssh.socket"`。v2.2 部署版(有 is-active
     //   ssh.socket、但开关命令仍带 ssh 双 unit)→ 无此串 → 整链重跑,SSH_OBJ_V23_OLD revert 后注入
     //   v2.3(socket-only);新态(此串)→ 跳过。src 新构建的 _renderer.js 含此串(开关命令已改
     //   socket-only),ISO 烘焙同样 no-op。
-    expectOut: '"+a+" ssh.socket")',
+    // 注意:必须是不依赖 minify 变量名的稳定串。此前用 `"+a+" ssh.socket")` 写死了 terser 变量 a,
+    //   v2.4.6 编译后变量变成 e → 标记失效 → 整链在 fresh 构建上误跑 → #19(仅老构建专用)把 tab1
+    //   初始标签注入成 TERM。`" ssh.socket"` 是字符串字面量,任何含拼接式开关命令的构建都命中。
+    expectOut: '" ssh.socket"',
     // 合并成一个 target:多个 _renderer.js target 会相互覆盖,必须合并。
     // 1) 电池图标对准:外框 rect x=1 w=25(rx=2,圆角从 x=24 开始),发光条 x=3 w=23*s/100。
     //    满电时条右端到 x=26 插进右圆角、条整体右偏 1 单位。改 21:条右端恰止于 x=24。
