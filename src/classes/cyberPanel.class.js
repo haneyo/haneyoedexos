@@ -71,9 +71,16 @@ class CyberPanel {
         this._schedulePulse(4000);
 
         // Animation loop
+        // #92: cap at 20fps (the radar only completes one sweep every ~9s, so
+        // 60fps was pure waste). Canvas redraw itself is gated on the UI being
+        // visible inside _tick, so a lock/screensaver/hidden window freezes the
+        // drawings while the data intervals keep running.
         this._lastTick = 0;
         const loop = now => {
-            this._tick(now);
+            if (now - this._lastTick >= 1000 / 20) {
+                this._lastTick = now;
+                this._tick(now);
+            }
             requestAnimationFrame(loop);
         };
         requestAnimationFrame(loop);
@@ -509,8 +516,13 @@ class CyberPanel {
             require("electron").ipcRenderer.send("log", "debug", `CyberPanel active: radar=${this._radarSize}px, wave=${this._waveW}x${this._waveH}px`);
         }
 
-        this._drawRadar();
-        this._drawWaveform();
+        // #92: don't repaint the canvases while the main UI is covered (lock /
+        // screensaver / hidden window) — the radar+waveform were re-rendered at
+        // 60fps unconditionally, one of the animation loops that pegged the CPU.
+        if (!(typeof window.__uiCovered === "function" ? window.__uiCovered() : false)) {
+            this._drawRadar();
+            this._drawWaveform();
+        }
 
         // Refresh the radar telemetry column ~5x/sec with live, animated values
         if (!this._dataTick || now - this._dataTick > 200) {

@@ -68,3 +68,14 @@ section > h3.title:first-child::after {
     bottom: -0.555vh;
     height: 0.46vh;
 }
+/* #92: freeze every CSS animation/transition while the screensaver or lock
+   screen covers the main UI (body.screensaver_on is added by
+   screensaver.show() and by the lock path). The continuous keyframes ran the
+   compositor/GPU flat out at 60fps even with the screen off — this drops that
+   to ~zero whenever nobody can see the desktop. */
+body.screensaver_on *,
+body.screensaver_on *::before,
+body.screensaver_on *::after {
+    animation-play-state: paused !important;
+    transition: none !important;
+}
