@@ -72,10 +72,29 @@ section > h3.title:first-child::after {
    screen covers the main UI (body.screensaver_on is added by
    screensaver.show() and by the lock path). The continuous keyframes ran the
    compositor/GPU flat out at 60fps even with the screen off — this drops that
-   to ~zero whenever nobody can see the desktop. */
+   to ~zero whenever nobody can see the desktop.
+
+   NOTE: this must be `animation: none !important`, NOT `animation-play-state:
+   paused`. Measured on the laptop: paused only marks the animation objects as
+   paused (they still sit in document.getAnimations() and the compositor still
+   consumes them every frame) — renderer stayed at ~47% on the covered UI.
+   `animation: none` removes the objects entirely, dropping covered renderer to
+   ~12%. Lock/screensaver-end removes body.screensaver_on and the CSS
+   definitions kick back in, so the animations resume automatically. */
 body.screensaver_on *,
 body.screensaver_on *::before,
 body.screensaver_on *::after {
-    animation-play-state: paused !important;
+    animation: none !important;
     transition: none !important;
+}
+
+/* #92: with the animations gone the covered renderer drops to ~12%, but the
+   globe WebGL context and the cyberPanel canvases still cost the gpu-process
+   (~17-29%) just by existing on screen. Hide them while covered (visibility,
+   not display: the WebGL context survives, no re-layout on restore, and they
+   come back automatically when body.screensaver_on is removed). */
+body.screensaver_on #mod_globe canvas,
+body.screensaver_on #cyber_radar_canvas,
+body.screensaver_on #cyber_waveform_canvas {
+    visibility: hidden !important;
 }
