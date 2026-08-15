@@ -478,6 +478,9 @@ class Terminal {
                                 && typeof parent.classList !== "undefined"
                                 && parent.classList.contains("cli_session")) {
                             rows = Math.max(rows, Math.ceil(rect.height / dim.actualCellHeight));
+                            // 诊断标记:patch-appimage.sh #89 target 靠它判 fresh-skip
+                            // (老构建无此标记才注入,避免对 fresh 构建重复打补丁)
+                            window.__edexCliRowsCeil = 1;
                         }
                     }
                 } catch (x) {}
