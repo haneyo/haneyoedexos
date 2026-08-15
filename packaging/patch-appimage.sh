@@ -1392,6 +1392,24 @@ const targets = [
       .split('div#mod_conninfo.offline h3:last-child{opacity:1}')
       .join('div#mod_conninfo.offline h3:last-child{opacity:1}div#mod_conninfo i.edex_overload{color:rgba(255,90,90,.9);opacity:1;animation:edex_overload_flash 1.2s ease-in-out infinite}@keyframes edex_overload_flash{0%,100%{color:rgba(255,90,90,.9);opacity:1}50%{color:rgba(255,90,90,.3);opacity:.45}}'),
   },
+  {
+    // #89 CLI 面板底部黑边:.cli_session 负 inset 已把容器底撑到 shell frame 底,
+    // 但 xterm canvas 高 = rows×cellHeight,fit() 向下取整会在容器底留 <1 行高的
+    // 空隙(实测 1080p 差 12px,露出黑色)。修复:仅当终端挂在 .cli_session 下时把
+    // rows 向上取整到覆盖容器底,溢出部分由 .cli_session 自身 overflow:hidden +
+    // clip-path(左下角缺角)裁掉 —— 内容贴 frame 底、缺角保留。普通 tab 不受影响。
+    name: 'terminal.class.js (#89 CLI 面板底部黑边:cli_session 行数向上取整)',
+    path: ['classes', 'terminal.class.js'],
+    expectIn: 'const s=Math.max(1,Math.floor(t.rows));this.term.cols===i&&this.term.rows===s||this.resize(i,s)',
+    expectOut: '__edexCliRowsCeil',
+    transform: c => c
+      // 先 revert 到 pristine(老代已注入过一次的场景防叠加,幂等入口由 expectOut 保证)
+      .split('const s=Math.max(1,Math.floor(t.rows));try{const e=this.term.element&&this.term.element.parentElement,a=this.term._core&&this.term._core._renderService&&this.term._core._renderService.dimensions;if(e&&a&&a.actualCellHeight>0&&e.classList&&e.classList.contains("cli_session")){const r=e.getBoundingClientRect();s=Math.max(s,Math.ceil(r.height/a.actualCellHeight));window.__edexCliRowsCeil=1}}catch(e){}this.term.cols===i&&this.term.rows===s||this.resize(i,s)')
+      .join('const s=Math.max(1,Math.floor(t.rows));this.term.cols===i&&this.term.rows===s||this.resize(i,s)')
+      // 注入:cli_session 容器行数向上取整(见上方注释);锚取 pristine fit 尾串,幂等靠 expectOut。
+      .split('const s=Math.max(1,Math.floor(t.rows));this.term.cols===i&&this.term.rows===s||this.resize(i,s)')
+      .join('const s=Math.max(1,Math.floor(t.rows));try{const e=this.term.element&&this.term.element.parentElement,a=this.term._core&&this.term._core._renderService&&this.term._core._renderService.dimensions;if(e&&a&&a.actualCellHeight>0&&e.classList&&e.classList.contains("cli_session")){const r=e.getBoundingClientRect();s=Math.max(s,Math.ceil(r.height/a.actualCellHeight));window.__edexCliRowsCeil=1}}catch(e){}this.term.cols===i&&this.term.rows===s||this.resize(i,s)'),
+  },
 ];
 
 function getEntry(path) {

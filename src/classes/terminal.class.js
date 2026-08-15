@@ -456,17 +456,31 @@ class Terminal {
                 // rendered cell width and, when there's room, bump cols by up to 4.
                 const base = Math.max(1, Math.floor(dims.cols));
                 let cols = base;
+                let rows = Math.max(1, Math.floor(dims.rows));
                 try {
                     const parent = this.term.element && this.term.element.parentElement;
                     const dim = this.term._core && this.term._core._renderService
                         && this.term._core._renderService.dimensions;
-                    if (parent && dim && dim.actualCellWidth > 0) {
+                    if (parent && dim) {
                         const rect = parent.getBoundingClientRect();
-                        const fitCols = Math.round(rect.width / dim.actualCellWidth);
-                        if (fitCols >= base) cols = Math.min(fitCols, base + 4);
+                        if (dim.actualCellWidth > 0) {
+                            const fitCols = Math.round(rect.width / dim.actualCellWidth);
+                            if (fitCols >= base) cols = Math.min(fitCols, base + 4);
+                        }
+                        // CLI panels: .cli_session bleeds its container past the shell
+                        // padding with negative insets, so the canvas must reach the
+                        // frame bottom. FitAddon floors rows, leaving up to a full row
+                        // of unpainted black at the bottom edge. Round UP here so the
+                        // canvas covers the whole container; the overshoot is clipped
+                        // by .cli_session's own overflow:hidden + clip-path, so the
+                        // corner cut still occludes the content as designed (#89).
+                        if (dim.actualCellHeight > 0
+                                && typeof parent.classList !== "undefined"
+                                && parent.classList.contains("cli_session")) {
+                            rows = Math.max(rows, Math.ceil(rect.height / dim.actualCellHeight));
+                        }
                     }
                 } catch (x) {}
-                const rows = Math.max(1, Math.floor(dims.rows));
 
                 if (this.term.cols !== cols || this.term.rows !== rows) {
                     this.resize(cols, rows);
