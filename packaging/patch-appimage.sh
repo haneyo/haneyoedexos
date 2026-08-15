@@ -985,20 +985,23 @@ const targets = [
       .split('div.modal_popup .mod_wx_week{max-height:30vh').join('div.modal_popup .mod_wx_week{max-height:50vh'),
   },
   {
-    name: 'locationGlobe.class.js (30fps 恢复流畅 + 模块级 3-5 分钟无感重置)',
+    name: 'locationGlobe.class.js (RESET_JS 注入;_dead/fps/__uiCovered 已进 src)',
     path: ['classes', 'locationGlobe.class.js'],
-    expectIn: 'this._animate=()=>{window.mods.globe.globe&&window.mods.globe.globe.tick()',
+    expectIn: 'window.mods.globe.globe.tick()',
     expectOut: '__edexGlobeReset',
-    // 卡顿/鼠标锁死修复(#3.15):globe rAF 30fps 永不停 + 临时连接 pin 只加不清 → 累积 →
-    // 主线程占满 → 鼠标锁死。
-    // 1) _dead 守卫保留:重置 widget 时旧 globe 的 rAF 要能停(widget 重置设 _dead=!0 再 new)。
-    // 2) 帧率:11 修复版临时降到 8fps(1e3/8)被用户否决(动画变慢不值);恢复 30fps(1e3/30)。
-    // 3) 注入 RESET_JS:随机 3/4/5 分钟无感重置 globe 累积状态(模块级 IIFE,见上方定义)。
-    //    锚点是文件尾 module.exports={LocationGlobe}; 行;对已含 __edexGlobeReset 的版本
-    //    再跑会因 expectOut 命中而 no-op。源输入必须含 1e3/8(11 修复版)才能恢复 30fps。
+    // #92:src 的 _animate 已是 20fps + __uiCovered 守卫 + _dead 守卫(见
+    // classes/locationGlobe.class.js),所以 fresh 构建这里只需要补 RESET_JS:
+    // 3/4/5 分钟无感重置 globe 累积状态(模块级 IIFE,见上方定义),防 #3.15 的
+    // 临时连接 pin 只加不清 → 主线程占满 → 鼠标锁死(src 里 addTemporaryConnectedMarker
+    // 的 pin 仍可能泄漏,self-cleaning 的只有 _addRandomActivity)。
+    // expectIn 取新老构建都含的 `window.mods.globe.globe.tick()`(老构建在 _animate
+    // 守卫链内,新构建在 `...||window.mods.globe.globe.tick()` 短路后):
+    //   - 老构建(8fps 时代)照跑 transform:补 _dead 守卫 + 8fps→20fps(对齐 #92)+ 注入 RESET_JS;
+    //   - fresh 构建只命中 RESET_JS(两个 split 因目标串不存在而 no-op),20fps/守卫保留。
+    // 幂等标记仍是 __edexGlobeReset:已注入的版本整体 no-op。
     transform: c => c
       .split('window.mods.globe._animate&&setTimeout').join('window.mods.globe._animate&&!this._dead&&setTimeout')
-      .split('1e3/8)').join('1e3/30)')
+      .split('1e3/8)').join('1e3/20)')
       .split('module.exports={LocationGlobe};').join('module.exports={LocationGlobe};'+RESET_JS),
   },
   {
