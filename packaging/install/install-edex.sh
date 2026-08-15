@@ -809,7 +809,12 @@ ExecStart=/usr/local/sbin/edex-firstboot.sh
 RemainAfterExit=yes
 
 [Install]
-WantedBy=multi-user.target
+# WantedBy=cloud-init.target (NOT multi-user.target) — cloud-init.target itself is
+# After=multi-user.target, so WantedBy=multi-user.target + After=cloud-init.target
+# forms an ordering cycle (multi-user→edex→cloud-init→multi-user) and systemd
+# deletes the start job → firstboot never runs → autologin placeholder → lightdm
+# crash loop. Seen on v2.4.4 fresh install (2026-08-15, laptop aki).
+WantedBy=cloud-init.target
 SVC
 systemctl daemon-reload
 systemctl enable edex-firstboot.service 2>/dev/null || true
