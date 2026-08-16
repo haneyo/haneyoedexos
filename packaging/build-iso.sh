@@ -105,7 +105,7 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     gvfs gvfs-backends libglib2.0-bin \
     fcitx5 fcitx5-rime fcitx5-pinyin fcitx5-chinese-addons librime-bin \
     fcitx5-config-qt fcitx5-frontend-gtk3 fcitx5-frontend-qt5 \
-    p7zip-full intel-microcode \
+    p7zip-full bzip2 intel-microcode \
     plymouth plymouth-theme-spinner xcursor-themes xclip"
 
 # Bake in Node.js LTS (official tarball). The built-in Claude CLI needs
@@ -288,16 +288,24 @@ else
 fi
 
 # Bake in the offline speech-recognition model (sherpa-onnx, streaming Chinese
-# zipformer, int8) so voice input works with zero network at run time.
+# zipformer, int8) so voice input works with zero network at run time. This is a
+# HARD dependency of the terminal's voice button — a silent skip here ships an
+# ISO whose mic button is permanently greyed out ("voice model not found"), so a
+# download/extract failure aborts the build instead of best-effort WARN.
 echo "[edex] baking in offline ASR model (sherpa-onnx, Chinese streaming)"
 # rootfs is root-owned (unsquashfs ran via sudo) — a plain mkdir trips set -e.
 sudo mkdir -p "$WORK/rootfs/opt/edex/models"
+# NB: the tar below MUST be sudo too — the target dir is root-owned, and a
+# non-sudo tar fails every member with "Cannot mkdir: Permission denied"
+# (silently, pre-set -e's visibility, because of the || below). v2.4.9–v2.4.11
+# ISOs shipped without the model for exactly this reason.
 curl -fSL --retry 3 --retry-delay 3 -o "$WORK/zh-asr.tar.bz2" \
-    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-multi-zh-hans-2023-12-12.tar.bz2" \
-    || echo "[edex] WARN: ASR model download failed (best-effort)"
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-multi-zh-hans-2023-12-12.tar.bz2"
 if [ -s "$WORK/zh-asr.tar.bz2" ]; then
-    tar -xjf "$WORK/zh-asr.tar.bz2" -C "$WORK/rootfs/opt/edex/models" \
-        || echo "[edex] WARN: ASR model extract failed"
+    sudo tar -xjf "$WORK/zh-asr.tar.bz2" -C "$WORK/rootfs/opt/edex/models"
+else
+    echo "[edex] ERROR: ASR model download produced an empty file" >&2
+    exit 1
 fi
 
 # Bake the eDEX AppImage straight into the image.
