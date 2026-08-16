@@ -332,6 +332,15 @@ NETPLAN
 chmod 600 /etc/netplan/01-network-manager-all.yaml
 systemctl enable NetworkManager.service 2>/dev/null || true
 
+# Boot-critical: subiquity may enable systemd-networkd (+ wait-online) when the
+# install-time network answer rendered with networkd. This system is pure
+# NetworkManager, and with our netplan gone wait-online has no interface to
+# watch — systemd 255 then blocks boot forever ("A start job is running for
+# systemd-networkd-wait-online.service / no limit") while plymouth shows a frozen
+# logo. Mask it so fresh installs boot straight to the UI.
+systemctl disable systemd-networkd-wait-online.service 2>/dev/null || true
+systemctl mask systemd-networkd-wait-online.service 2>/dev/null || true
+
 echo "[edex] wifi: disable power-save (weak/invisible-signal fix)"
 # Ubuntu ships a default-wifi-powersave-on.conf setting wifi.powersave=3. Power-save
 # makes iwlwifi drop beacons and miss networks entirely on some laptops (the E580
@@ -382,7 +391,10 @@ GRUB_DISTRIBUTOR=`lsb_release -i -s 2>/dev/null || echo Debian`
 # "PCIe Bus Error: Correctable Physical Layer" and never scan; some Broadcom and
 # Intel cards drop off the bus entirely). Disabling it costs a little idle power
 # but makes WiFi across arbitrary hardware far more reliable.
-GRUB_CMDLINE_LINUX_DEFAULT="quiet splash pcie_aspm=off"
+# No "quiet splash": boot logs stream to the console so a hang is diagnosable
+# on the first screen (the splash masked a frozen boot as a still logo on v2.4.9
+# fresh installs). Text boot, no plymouth overlay — user-approved default.
+GRUB_CMDLINE_LINUX_DEFAULT="pcie_aspm=off"
 GRUB_CMDLINE_LINUX=""
 # Dark sci-fi GRUB menu: render in graphical mode at the panel's native
 # resolution and keep the same framebuffer for the kernel, so there is no
