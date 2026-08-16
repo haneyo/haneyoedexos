@@ -263,15 +263,17 @@ window.cover = (() => {
 // boot animation ends — before initUI builds any UI — without a real-UI flash.
 window.lockScreen = new LockScreen();
 
-// #92: global "is the main UI covered or hidden" flag used by the animation
-// loops (globe, cyberPanel) to skip their canvas redraws. The lock screen and
-// the screensaver both add body.screensaver_on (lockScreen.engage() shows the
-// screensaver first), and a hidden window is a free pass too. Defined before
-// initUI() so every module sees it.
+// #92/#93: global "is the main UI covered or hidden" flag used by the animation
+// loops (globe, cyberPanel) to skip their canvas redraws. Counts TRUE
+// invisibility only: a hidden window, or the real screen-off blank (#screen_off,
+// set by showScreenOff() past screenOffIdle). The screensaver and lock screen
+// keep the panel ON and the user watching — their animations (globe/radar) must
+// keep running there (the #93 regression froze radar+globe dead on the lock
+// screen by treating lockScreen.active as covered). Defined before initUI() so
+// every module sees it.
 window.__uiCovered = () =>
     document.hidden ||
-    (window.lockScreen && window.lockScreen.active) ||
-    document.body.classList.contains("screensaver_on");
+    document.body.classList.contains("screen_off");
 
 // CRT-TV power-off: collapse the screen to a bright horizontal centre line and
 // go dark, like an old tube TV switching off. Called from lockScreen.unlock()
@@ -5570,6 +5572,10 @@ const showScreenOff = () => {
     el.id = "screen_off";
     el.className = "screen_off";
     document.body.appendChild(el);
+    // #93: mark true invisibility on <body> so __uiCovered and the screen_off
+    // CSS (animation freeze) can key off it. The screensaver/lock body class
+    // screensaver_on is NOT this — those keep the display on and animated.
+    document.body.classList.add("screen_off");
     // The custom pointer pack would glow through the black — hide the cursor
     // exactly like the screensaver does.
     if (window.cursorTrap) window.cursorTrap.hide();
@@ -5590,6 +5596,7 @@ const showScreenOff = () => {
 window.hideScreenOff = () => {
     const el = screenOffEl();
     if (!el) return;
+    document.body.classList.remove("screen_off");
     if (screenOffPowered) {
         screenOffPowered = false;
         ipc.invoke("power:screen", { action: "on" }).catch(() => {});
