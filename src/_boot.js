@@ -634,8 +634,12 @@ app.on('ready', async () => {
         voiceStream = voiceRecognizer.createStream();
         return { ok: true };
     });
-    ipc.handle("voice:chunk", (e, samples) => {
-        if (!voiceRecognizer || !voiceStream || !samples) return { ok: false };
+    ipc.on("voice:chunk", (e, samples) => {
+        // NB: this MUST be ipc.on (not ipc.handle) — the renderer streams audio
+        // via ipcRenderer.send (fire-and-forget, ~4×/s). handle only answers
+        // invoke, so every chunk was silently dropped and the recognizer stayed
+        // empty (voice input "did nothing" while init/start/stop all worked).
+        if (!voiceRecognizer || !voiceStream || !samples) return;
         try {
             voiceStream.acceptWaveform({ samples: new Float32Array(samples), sampleRate: 16000 });
             while (voiceRecognizer.isReady(voiceStream)) voiceRecognizer.decode(voiceStream);
@@ -643,10 +647,7 @@ app.on('ready', async () => {
             if (r && r.text) {
                 try { win.webContents.send("voice:partial", r.text); } catch (e2) {}
             }
-            return { ok: true };
-        } catch (e) {
-            return { ok: false, error: String((e && e.message) || e) };
-        }
+        } catch (e) {}
     });
     ipc.handle("voice:stop", () => {
         if (!voiceRecognizer || !voiceStream) return { ok: true, text: "" };

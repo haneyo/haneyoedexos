@@ -1273,6 +1273,7 @@ async function initUI() {
             if (!this._recording) return;
             this._recording = false;
             this._setUi(false);
+            if (this._partialEl) this._partialEl.textContent = "";
             try {
                 const r = await ipc.invoke("voice:stop");
                 const text = String((r && r.text) || "").trim();
@@ -1282,10 +1283,13 @@ async function initUI() {
         },
         _insert(text) {
             // write the recognized text into the focused terminal (term shim for
-            // the app-monitor tabs is a no-op, so this targets the real terminals)
+            // the app-monitor tabs is a no-op, so this targets the real terminals).
+            // The Terminal wrapper exposes the live xterm as `.term` — the wrapper
+            // itself has no `.write`, so target `.term.write` (the wrapper-level
+            // `.write` was undefined, silently dropping every recognized result).
             try {
                 const t = window.term[window.currentTerm];
-                if (t && typeof t.write === "function") t.write(text);
+                if (t && t.term && typeof t.term.write === "function") t.term.write(text);
             } catch (e) {}
         },
         _setUi(recording) {
@@ -1312,6 +1316,15 @@ async function initUI() {
     corner.appendChild(micBtn);
     corner.appendChild(imeBtn);
     document.getElementById("main_shell_innercontainer").appendChild(corner);
+    // Real-time ASR feedback: the main process streams partial text on every
+    // audio chunk; render it in a bubble above the mic so words appear while
+    // the user is talking (without this the button looks dead until stop).
+    const partialEl = document.createElement("span");
+    partialEl.id = "edex_voice_partial";
+    partialEl.className = "voice_partial";
+    corner.appendChild(partialEl);
+    window.voiceInput._partialEl = partialEl;
+    ipc.on("voice:partial", (e, text) => { if (partialEl) partialEl.textContent = text || ""; });
     window.edexIME.refresh();
     setInterval(() => window.edexIME.refresh(), 5000);
 

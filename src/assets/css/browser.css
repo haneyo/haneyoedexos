@@ -729,6 +729,28 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
     50% { height: 1.6vh; }
 }
 .appmonitor_voice_btn.voice_disabled { opacity: 0.3; cursor: not-allowed; }
+/* Real-time ASR feedback bubble pinned above the corner mic button; hidden
+   until the main process streams a non-empty partial transcript. */
+.voice_partial {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 0.4vh);
+    max-width: 42vh;
+    padding: 0.4vh 0.8vh;
+    font-size: 1.1vh;
+    line-height: 1.35;
+    color: rgba(170, 207, 209, 0.95);
+    background: rgba(10, 16, 20, 0.9);
+    border: 0.1vh solid rgba(120, 190, 200, 0.35);
+    border-radius: 0.4vh;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(0.3vh);
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    word-break: break-all;
+    white-space: pre-wrap;
+}
+.voice_partial:not(:empty) { opacity: 1; transform: translateY(0); }
 
 /* ---- Module detail/action modals (CLI output + action menus) ---- */
 .mod_cmd_out {
