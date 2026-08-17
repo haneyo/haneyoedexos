@@ -1935,19 +1935,53 @@ async function initUI() {
         start() {
             const pre = document.getElementById("sysup_out");
             if (!pre || pre.dataset.running === "1") return;
+            // #1: disable the Start button while running (label switch) so a
+            // user can't fire a second apt run on top of the first.
+            const setStartBtn = (running) => {
+                const modal = pre.closest(".modal_popup");
+                if (!modal) return;
+                for (const b of modal.lastElementChild.querySelectorAll("button")) {
+                    if (b.textContent === "Start" || b.textContent === "Running…") {
+                        b.disabled = running;
+                        b.textContent = running ? "Running…" : "Start";
+                        return;
+                    }
+                }
+            };
+            setStartBtn(true);
             pre.dataset.running = "1";
             pre.textContent = "Running apt update + full-upgrade…\n";
+            pre.scrollTop = pre.scrollHeight;
             ipc.invoke("system:update").then(r => {
                 pre.textContent += r.ok
                     ? "\n✓ Update complete. Reboot if the kernel changed."
                     : "\n✗ Update failed" + (r.error ? ": " + r.error : "") + ".";
+                pre.scrollTop = pre.scrollHeight;
                 delete pre.dataset.running;
+                if (r.ok) {
+                    // #3: after a successful update, offer an explicit restart
+                    // button (powerAction('reboot') reuses the 7s countdown).
+                    const modal = pre.closest(".modal_popup");
+                    if (modal && !document.getElementById("sysup_restart_btn")) {
+                        const btn = document.createElement("button");
+                        btn.id = "sysup_restart_btn";
+                        btn.textContent = "Restart";
+                        btn.onclick = () => window.powerAction("reboot");
+                        modal.lastElementChild.appendChild(btn);
+                    }
+                } else {
+                    setStartBtn(false);
+                }
             });
         }
     };
     ipc.on("system-update-output", (e, line) => {
         const pre = document.getElementById("sysup_out");
-        if (pre && line) pre.textContent += line + "\n";
+        if (pre && line) {
+            pre.textContent += line + "\n";
+            // #2: keep the log pinned to the newest output while apt streams.
+            pre.scrollTop = pre.scrollHeight;
+        }
     });
 
     // Clash / mihomo proxy (#46): settings category + browser dashboard. All
