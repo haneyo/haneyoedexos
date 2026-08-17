@@ -1667,6 +1667,49 @@ async function initUI() {
         window.eventPlay("power_cancel");
         const el = document.getElementById("power_countdown");
         if (el) el.remove();
+        if (s && s.onCancel) s.onCancel();
+    };
+
+    // Update-restart with the same 7s countdown + cancel as shutdown/reboot, so
+    // the update_done sound finishes before the app relaunches. powerCancel
+    // (Esc / CANCEL button) aborts; the new build then applies on the next
+    // manual restart. Reuses the same #power_countdown overlay / _powerCountdown
+    // timer / _powerEsc mechanism as powerAction, so only one countdown is ever
+    // active.
+    window.updateRestartCountdown = () => {
+        if (document.getElementById("power_countdown")) return; // already counting down
+        const total = 7;
+        const el = document.createElement("div");
+        el.id = "power_countdown";
+        el.style.cssText = "position:fixed;inset:0;z-index:999999;background:rgba(2,6,12,.82);display:flex;align-items:center;justify-content:center;";
+        el.innerHTML = `<div style="text-align:center;font-family:monospace;">
+            <div id="power_cd_num" style="font-size:72px;line-height:1;color:#00c8ff;text-shadow:0 0 18px rgba(0,200,255,.6);">${total}</div>
+            <div style="color:#9fb6c9;letter-spacing:4px;margin:8px 0 22px;">RESTARTING IN…</div>
+            <button onclick="window.powerCancel()" style="min-width:140px;padding:8px 20px;cursor:pointer;background:#1a2634;color:#ff5252;border:1px solid #ff5252;font-size:15px;letter-spacing:2px;">CANCEL</button>
+        </div>`;
+        document.body.appendChild(el);
+        let left = total;
+        window._powerCountdown = {
+            timer: setInterval(() => {
+                left--;
+                const n = document.getElementById("power_cd_num");
+                if (n) n.textContent = String(Math.max(0, left));
+                if (left <= 0) {
+                    clearInterval(window._powerCountdown.timer);
+                    window._powerCountdown = null;
+                    document.removeEventListener("keydown", window._powerEsc, true);
+                    const e = document.getElementById("power_countdown");
+                    if (e) e.remove();
+                    remote.app.relaunch(); remote.app.quit();
+                }
+            }, 1000),
+            onCancel: () => {
+                const pre = document.getElementById("edexup_out");
+                if (pre) pre.textContent += "\n⏸ Restart canceled — the new build applies on the next restart.";
+            }
+        };
+        window._powerEsc = (e) => { if (e.key === "Escape") { e.stopPropagation(); window.powerCancel(); } };
+        document.addEventListener("keydown", window._powerEsc, true);
     };
 
     // Open the POWER menu — shared by the clock click and the OS power button
@@ -2841,7 +2884,7 @@ async function initUI() {
                 if (r && r.ok) {
                     pre.textContent += "\n✓ Update ready. Restarting eDEX…";
                     window.eventPlay("update_done");
-                    setTimeout(() => { remote.app.relaunch(); remote.app.quit(); }, 600);
+                    window.updateRestartCountdown();
                 } else {
                     let msg = (r && r.error) || "unknown error";
                     if (msg === "NOT_APPIMAGE") msg = "not running from an AppImage — open the release page instead.";
