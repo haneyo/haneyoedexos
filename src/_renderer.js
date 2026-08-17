@@ -5143,6 +5143,11 @@ window.screensaver = (() => {
     // so the code never visibly "jumps" to something unrelated. Every file is
     // generated fresh; when one finishes the terminal is reset so the buffer
     // never grows past a single file (no long-session scrollback lag).
+    // One-column right indent for the whole fake-code block: the passcode box
+    // is drawn over this terminal, and code starting at column 0 read too far
+    // left. A leading "\r\n" (opening banner) is a line-break, not a column,
+    // so the space goes after it — not before.
+    const indentCode = l => (l[0] === "\r" ? "\r\n " + l.slice(2) : " " + l);
     let pendingLines = [];
     let sessionFirstFile = true;
     const nextLine = () => {
@@ -5174,7 +5179,7 @@ window.screensaver = (() => {
         // (#50).
         const w = coverTerm();
         if (!w || !w.term || typeof w.term.write !== "function") return;
-        w.term.write(nextLine() + "\r\n");
+        w.term.write(indentCode(nextLine()) + "\r\n");
         // Once a second, force a full repaint from the buffer. The diff renderer
         // only repaints cells it saw change, so when a wrapped long line is
         // overwritten by a shorter one it can leave a stale glyph in the last
@@ -5380,7 +5385,7 @@ window.screensaver = (() => {
                 if (w && w.term && typeof w.term.write === "function") {
                     // Closing banner — the fake ending plays only when the
                     // code disappears (#89).
-                    buildEnding().forEach(l => w.term.write(l + "\r\n"));
+                    buildEnding().forEach(l => w.term.write(indentCode(l) + "\r\n"));
                     let rows = w.term.rows || 24;
                     let scrolled = 0;
                     let scroller = setInterval(() => {
@@ -5439,7 +5444,7 @@ window.screensaver = (() => {
             if (codeTimer) { clearInterval(codeTimer); codeTimer = null; }
             const w = coverTerm();
             if (!w || !w.term || typeof w.term.write !== "function") { winding = false; if (cb) cb(); return; }
-            buildEnding().forEach(l => w.term.write(l + "\r\n"));
+            buildEnding().forEach(l => w.term.write(indentCode(l) + "\r\n"));
             let ticks = 0;
             const accel = setInterval(() => {
                 try {
