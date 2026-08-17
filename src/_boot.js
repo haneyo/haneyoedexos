@@ -76,78 +76,84 @@ try {
 } catch(e) {
     signale.info(`Base config dir is ${electron.app.getPath("userData")}`);
 }
+// Default settings: seed for a fresh install, AND backfill for settings.json
+// files written by older versions — existing installs load with these defaults
+// underneath, so keys added since their file was created get the intended
+// default (e.g. eventAudio: true) instead of undefined.
+const DEFAULT_SETTINGS = {
+    shell: (process.platform === "win32") ? "powershell.exe" : "bash",
+    shellArgs: '',
+    cwd: electron.app.getPath("home"), // start in the home dir like a normal terminal
+    keyboard: "en-US",
+    theme: "tron",
+    termFontSize: 14,
+    audio: true,
+    audioVolume: 1.0,
+    disableFeedbackAudio: false,
+    eventAudio: true,
+    clockHours: 24,
+    pingAddr: "223.5.5.5",
+    port: 3000,
+    nointro: false,
+    nocursor: false,
+    forceFullscreen: true,
+    allowWindowed: false,
+    excludeThreadsFromToplist: true,
+    hideDotfiles: false,
+    fsListView: false,
+    experimentalGlobeFeatures: false,
+    experimentalFeatures: false,
+    weatherLocation: null,
+    fsQuickLinks: null,
+    screensaverEnabled: true,
+    screensaverIdle: 300,
+    screenOffIdle: 1800,                 // seconds without input → blank the display (software screen-off); never below screensaverIdle
+    screensaverStyle: "code",
+    lockCode: "0000",
+    lockOnIdle: true,
+    lockIdleTimeout: 30,               // seconds without input while locked → back to the screensaver
+    showKeyboard: false,
+    appSort: "name-asc",                 // app-monitor list order: name|install|freq + asc|desc
+    bootAnimAfterUnlock: true,           // play the boot animation after a matrix lock/screensaver unlock
+    terminalScrollSensitivity: 1,        // terminal scroll speed multiplier (mouse/trackpad wheel)
+    terminalScrollDirection: "normal",   // "normal" | "reversed"
+    cursorAutoHide: true,                // hide the cursor after cursorAutoHideDelay s of inactivity
+    cursorAutoHideDelay: 10,             // seconds without mouse movement before the cursor hides
+    cursorStyle: "lightech",             // pointer look: "lightech" (bundled WP7 .ani set) | "scifi" (theme chevron)
+    cursorSize: 28,                      // LightechRE pointer size in px (16-64)
+    mouseWheelSpeed: 1,                  // global wheel scroll multiplier (0.25x-4x; 1 = default)
+    cursorSpeed: 1,                      // pointer speed multiplier (0.25x-4x) — applied to the device, not the preview
+    batteryAlways: false,                // show a simulated battery readout on machines without one (desktops/mac mini)
+    performanceMode: "",                 // CPU governor to apply at boot: "powersave" | "schedutil" | "performance" ("" = leave as-is)
+    claude: {
+        enabled: false,
+        provider: "",
+        baseUrl: "",
+        apiKey: "",
+        model: "",
+        haikuModel: ""
+    },
+    appMonitor: {
+        enabled: true,
+        mock: null,                       // null = auto: mock on darwin, real on linux
+        httpPort: 6080,
+        wsPort: 6081,
+        appImageDirs: "~/Applications,~/AppImages",
+        showGui: false                    // experimental: tab 5 = GUI apps (virtual display)
+    },
+    clash: {
+        enabled: false,                   // start the mihomo proxy daemon + system proxy at boot
+        port: 7890,                       // mixed-port (HTTP/SOCKS share it)
+        controller: "127.0.0.1:9090",     // external-controller the dashboard reads from
+        secret: "",                       // controller secret (plaintext, like claude.apiKey)
+        subUrl: "",                       // subscription URL to fetch config.yaml from
+        preProxy: null                    // {method,http,https,ignore} captured before clash took the proxy
+    }
+};
+
 // Create default settings file
 if (!fs.existsSync(settingsFile)) {
-    fs.writeFileSync(settingsFile, JSON.stringify({
-        shell: (process.platform === "win32") ? "powershell.exe" : "bash",
-        shellArgs: '',
-        cwd: electron.app.getPath("home"), // start in the home dir like a normal terminal
-        keyboard: "en-US",
-        theme: "tron",
-        termFontSize: 14,
-        audio: true,
-        audioVolume: 1.0,
-        disableFeedbackAudio: false,
-        eventAudio: true,
-        clockHours: 24,
-        pingAddr: "223.5.5.5",
-        port: 3000,
-        nointro: false,
-        nocursor: false,
-        forceFullscreen: true,
-        allowWindowed: false,
-        excludeThreadsFromToplist: true,
-        hideDotfiles: false,
-        fsListView: false,
-        experimentalGlobeFeatures: false,
-        experimentalFeatures: false,
-        weatherLocation: null,
-        fsQuickLinks: null,
-        screensaverEnabled: true,
-        screensaverIdle: 300,
-        screenOffIdle: 1800,                 // seconds without input → blank the display (software screen-off); never below screensaverIdle
-        screensaverStyle: "code",
-        lockCode: "0000",
-        lockOnIdle: true,
-        lockIdleTimeout: 30,               // seconds without input while locked → back to the screensaver
-        showKeyboard: false,
-        appSort: "name-asc",                 // app-monitor list order: name|install|freq + asc|desc
-        bootAnimAfterUnlock: true,           // play the boot animation after a matrix lock/screensaver unlock
-        terminalScrollSensitivity: 1,        // terminal scroll speed multiplier (mouse/trackpad wheel)
-        terminalScrollDirection: "normal",   // "normal" | "reversed"
-        cursorAutoHide: true,                // hide the cursor after cursorAutoHideDelay s of inactivity
-        cursorAutoHideDelay: 10,             // seconds without mouse movement before the cursor hides
-        cursorStyle: "lightech",             // pointer look: "lightech" (bundled WP7 .ani set) | "scifi" (theme chevron)
-        cursorSize: 28,                      // LightechRE pointer size in px (16-64)
-        mouseWheelSpeed: 1,                  // global wheel scroll multiplier (0.25x-4x; 1 = default)
-        cursorSpeed: 1,                      // pointer speed multiplier (0.25x-4x) — applied to the device, not the preview
-        batteryAlways: false,                // show a simulated battery readout on machines without one (desktops/mac mini)
-        performanceMode: "",                 // CPU governor to apply at boot: "powersave" | "schedutil" | "performance" ("" = leave as-is)
-        claude: {
-            enabled: false,
-            provider: "",
-            baseUrl: "",
-            apiKey: "",
-            model: "",
-            haikuModel: ""
-        },
-        appMonitor: {
-            enabled: true,
-            mock: null,                       // null = auto: mock on darwin, real on linux
-            httpPort: 6080,
-            wsPort: 6081,
-            appImageDirs: "~/Applications,~/AppImages",
-            showGui: false                    // experimental: tab 5 = GUI apps (virtual display)
-        },
-        clash: {
-            enabled: false,                   // start the mihomo proxy daemon + system proxy at boot
-            port: 7890,                       // mixed-port (HTTP/SOCKS share it)
-            controller: "127.0.0.1:9090",     // external-controller the dashboard reads from
-            secret: "",                       // controller secret (plaintext, like claude.apiKey)
-            subUrl: "",                       // subscription URL to fetch config.yaml from
-            preProxy: null                    // {method,http,https,ignore} captured before clash took the proxy
-        }
-    }, "", 4));
+    fs.writeFileSync(settingsFile, JSON.stringify(DEFAULT_SETTINGS, "", 4));
     signale.info(`Default settings written to ${settingsFile}`);
 }
 // Create default shortcuts file
@@ -477,7 +483,7 @@ function exitFullscreenViaMain() {
 
 app.on('ready', async () => {
     signale.pending(`Loading settings file...`);
-    let settings = require(settingsFile);
+    let settings = Object.assign({}, DEFAULT_SETTINGS, require(settingsFile));
     signale.pending(`Resolving shell path...`);
     settings.shell = await which(settings.shell).catch(e => { throw(e) });
     signale.info(`Shell found at ${settings.shell}`);
