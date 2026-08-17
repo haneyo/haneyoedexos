@@ -1785,7 +1785,7 @@ app.on('ready', async () => {
                     try {
                         const rel = JSON.parse(raw);
                         const latest = (rel.tag_name || "").replace(/^v/, "");
-                        const dl = (rel.assets || []).find(a => /linux-amd64\.gz$/i.test(a.name));
+                        const dl = (rel.assets || []).find(a => /^mihomo-linux-amd64-v[0-9][0-9.]*\.gz$/i.test(a.name));
                         resolve({ ok: true, available: true, current, latest, downloadUrl: dl ? dl.browser_download_url : "" });
                     } catch (e) { resolve({ ok: false, available: true, current, error: "FETCH_FAILED" }); }
                 });
