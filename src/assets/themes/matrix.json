@@ -5,7 +5,22 @@
         "b": 17,
         "black": "#0D0208",
         "light_black": "#090B0A",
-        "grey": "#262827"
+        "grey": "#262827",
+        "red": "#d13b4f",
+        "green": "#00ff41",
+        "yellow": "#c8d00a",
+        "blue": "#2f8fd6",
+        "magenta": "#b44fd6",
+        "cyan": "#1fd6a9",
+        "white": "#d8ffd8",
+        "brightBlack": "#17461f",
+        "brightRed": "#f04d63",
+        "brightGreen": "#5dff86",
+        "brightYellow": "#e8f04d",
+        "brightBlue": "#5fb6ef",
+        "brightMagenta": "#d47df0",
+        "brightCyan": "#4df0c9",
+        "brightWhite": "#ffffff"
     },
     "cssvars": {
         "font_main": "United Sans Medium",
