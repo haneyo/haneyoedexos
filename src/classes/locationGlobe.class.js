@@ -53,7 +53,8 @@ class LocationGlobe {
             // _renderer.js), so the old jump-to-Google-Maps is removed.
 
             // Init animations
-            // #92: 30fps → 10fps, and skip the WebGL tick while the main UI is
+            // #92: cap at 30fps (10fps was too choppy for the user; raised back
+            // up on 2026-08-17), and skip the WebGL tick while the main UI is
             // covered (lock screen / screensaver / window hidden) — the globe was
             // burning ~40-50% of a CPU core on a 1248×620 WebGL canvas at full
             // rate with no guard, which is what made the laptop crawl. The loop
@@ -72,7 +73,7 @@ class LocationGlobe {
                             // We probably got caught in a theme change. Print it out but everything should keep running fine.
                             console.warn(e);
                         }
-                    }, 1000 / 10);
+                    }, 1000 / 30);
                 }
             };
             this.globe.init(window.theme.colors.light_black, () => {
