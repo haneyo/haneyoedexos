@@ -66,18 +66,18 @@ class CyberPanel {
         // Data refresh & periodic effects
         setInterval(() => this._updateMetrics(), 2000);
         setInterval(() => this._updateExtra(), 1000);
-        setInterval(() => this._appendLog(), 400); // fast code-like stream
+        setInterval(() => this._appendLog(), 1200); // code-like stream (throttled 3x for CPU, #92)
         setInterval(() => this._spawnBlip(), 2200);
         this._schedulePulse(4000);
 
         // Animation loop
-        // #92: cap at 20fps (the radar only completes one sweep every ~9s, so
+        // #92: cap at 10fps (the radar only completes one sweep every ~9s, so
         // 60fps was pure waste). Canvas redraw itself is gated on the UI being
         // visible inside _tick, so a lock/screensaver/hidden window freezes the
         // drawings while the data intervals keep running.
         this._lastTick = 0;
         const loop = now => {
-            if (now - this._lastTick >= 1000 / 20) {
+            if (now - this._lastTick >= 1000 / 10) {
                 this._lastTick = now;
                 this._tick(now);
             }
