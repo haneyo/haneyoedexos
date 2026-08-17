@@ -45,6 +45,10 @@ for LED in /sys/class/leds/*kbd*backlight /sys/class/leds/*kbd*led; do
     echo "$MAX" | sudo -n tee "$LED/brightness" >/dev/null 2>&1 \
         || echo "$MAX" > "$LED/brightness" 2>/dev/null || true
 done
+# NumLock on by default: X resets lock state to the hardware/BIOS value at every
+# server start (boot or lightdm session restart), and most laptops boot with it
+# off. numlockx forces it on for the eDEX session before the app maps.
+numlockx on 2>/dev/null || true
 # Black the X root window + use the eDEX cursor theme for the gap between the
 # lightdm greeter closing and the eDEX window mapping — this is the "white flash
 # with the default arrow" seen on real hardware at boot. Once eDEX is up it
