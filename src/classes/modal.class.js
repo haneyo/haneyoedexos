@@ -105,6 +105,7 @@ class Modal {
         switch(this.type) {
             case "error":
                 window.audioManager.error.play();
+                window.eventPlay("error_popup");
                 break;
             case "warning":
                 window.audioManager.alarm.play();

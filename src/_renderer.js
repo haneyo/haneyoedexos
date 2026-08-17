@@ -723,6 +723,22 @@ function initSystemInformationProxy() {
 // Init audio
 window.audioManager = new AudioManager();
 
+// Play an event sound (user-provided, "eventAudio" category). Gated by the
+// master audio toggle AND settings.eventAudio; returns true when it played.
+// Existing built-in sounds (granted.wav on unlock, error.wav on error modals)
+// play BEFORE the matching event sound and still play when eventAudio is off —
+// eventPlay only adds the user sound on top when enabled.
+window.eventPlay = (name) => {
+    if (!window.settings || window.settings.audio !== true) return false;
+    if (window.settings.eventAudio === false) return false;
+    const s = window.audioManager && window.audioManager[name];
+    if (s && typeof s.play === "function") {
+        try { s.play(); } catch (e) {}
+        return true;
+    }
+    return false;
+};
+
 // See #223
 remote.app.focus();
 
@@ -986,6 +1002,7 @@ async function initUI() {
     });
 
     greeter.setAttribute("style", "opacity: 1;");
+    window.eventPlay("boot_welcome");
 
     document.getElementById("filesystem").setAttribute("style", "");
     // cyber_panel stays hidden (opacity:0) during the boot welcome - its
@@ -1041,7 +1058,7 @@ async function initUI() {
         };
         // Cross-refresh memory so the graded warnings fire once per transition,
         // not on every 30s tick.
-        const battTrack = { charging: null, lowWarned: false, critWarned: false, fullWarned: false };
+        const battTrack = { charging: null, lowWarned: false, critWarned: false, fullWarned: false, warn40: false };
         const battery = {
             async refresh() {
                 try {
@@ -1073,11 +1090,24 @@ async function initUI() {
                     // One-shot toasts on transitions: plug-in, low, critical,
                     // full. Reset the discharged warnings once back above 20%.
                     if (b.charging && battTrack.charging !== true) {
-                        if (battTrack.charging === false) notifyToast("CHARGING");
+                        if (battTrack.charging === false) {
+                            notifyToast("CHARGING");
+                            window.eventPlay("battery_plug");
+                        }
                         battTrack.charging = true;
                     } else if (!b.charging && battTrack.charging === true) {
                         battTrack.charging = false;
                         battTrack.fullWarned = false;
+                    }
+                    // User event sound: first drop below 40% in a session
+                    // (discharging only), resets once back above 40%.
+                    if (!b.charging) {
+                        if (!battTrack.warn40 && pct < 40) {
+                            window.eventPlay("battery_low40");
+                            battTrack.warn40 = true;
+                        } else if (pct >= 40 && battTrack.warn40) {
+                            battTrack.warn40 = false;
+                        }
                     }
                     if (b.charging) {
                         if (pct >= 99 && !battTrack.fullWarned) {
@@ -1086,9 +1116,11 @@ async function initUI() {
                         }
                     } else if (grade === "critical" && !battTrack.critWarned) {
                         notifyToast("BATTERY CRITICAL");
+                        window.eventPlay("battery_critical");
                         battTrack.critWarned = true;
                     } else if (grade === "low" && !battTrack.lowWarned) {
                         notifyToast("LOW BATTERY " + pct + "%");
+                        window.eventPlay("battery_low20");
                         battTrack.lowWarned = true;
                     } else if (grade === "mid" || grade === "high" || grade === "full") {
                         battTrack.lowWarned = false;
@@ -1586,6 +1618,57 @@ async function initUI() {
         });
     };
 
+    // Shutdown / reboot with a 7s countdown + cancel. The user event sound
+    // (eventAudio) plays first and is longer than the countdown, so the audio
+    // finishes before the machine powers off / reboots. powerCancel aborts
+    // (plays power_cancel); timeout runs the real command.
+    window.powerAction = (kind) => {
+        if (document.getElementById("power_countdown")) return; // already counting down
+        const isReboot = kind === "reboot";
+        const cmd = isReboot ? "sudo systemctl reboot" : "sudo poweroff";
+        window.eventPlay(isReboot ? "power_reboot" : "power_shutdown");
+        const total = 7;
+        const el = document.createElement("div");
+        el.id = "power_countdown";
+        el.style.cssText = "position:fixed;inset:0;z-index:999999;background:rgba(2,6,12,.82);display:flex;align-items:center;justify-content:center;";
+        el.innerHTML = `<div style="text-align:center;font-family:monospace;">
+            <div id="power_cd_num" style="font-size:72px;line-height:1;color:#00c8ff;text-shadow:0 0 18px rgba(0,200,255,.6);">${total}</div>
+            <div style="color:#9fb6c9;letter-spacing:4px;margin:8px 0 22px;">${isReboot ? "RESTARTING IN…" : "SHUTTING DOWN IN…"}</div>
+            <button onclick="window.powerCancel()" style="min-width:140px;padding:8px 20px;cursor:pointer;background:#1a2634;color:#ff5252;border:1px solid #ff5252;font-size:15px;letter-spacing:2px;">CANCEL</button>
+        </div>`;
+        document.body.appendChild(el);
+        let left = total;
+        window._powerCountdown = {
+            timer: setInterval(() => {
+                left--;
+                const n = document.getElementById("power_cd_num");
+                if (n) n.textContent = String(Math.max(0, left));
+                if (left <= 0) {
+                    clearInterval(window._powerCountdown.timer);
+                    window._powerCountdown = null;
+                    document.removeEventListener("keydown", window._powerEsc, true);
+                    const e = document.getElementById("power_countdown");
+                    if (e) e.remove();
+                    window.sysCmd.act(cmd); // closes the open power-menu modal, then runs the command
+                }
+            }, 1000)
+        };
+        window._powerEsc = (e) => { if (e.key === "Escape") { e.stopPropagation(); window.powerCancel(); } };
+        document.addEventListener("keydown", window._powerEsc, true);
+    };
+
+    window.powerCancel = () => {
+        const s = window._powerCountdown;
+        if (!s) return;
+        clearInterval(s.timer);
+        window._powerCountdown = null;
+        document.removeEventListener("keydown", window._powerEsc, true);
+        window._powerEsc = null;
+        window.eventPlay("power_cancel");
+        const el = document.getElementById("power_countdown");
+        if (el) el.remove();
+    };
+
     // Open the POWER menu — shared by the clock click and the OS power button
     // (the main process listens on 127.0.0.1:17322 and sends "show-power-menu").
     window.openPowerMenu = () => {
@@ -1595,10 +1678,10 @@ async function initUI() {
         const alreadyLocked = window.lockScreen && window.lockScreen.active;
         new Modal({ type: "custom", title: "POWER",
             html: `<div class="mod_menu">
-                <button onclick="window.sysCmd.act('sudo systemctl reboot')">Restart</button>
+                <button onclick="window.powerAction('reboot')">Restart</button>
                 ${alreadyLocked ? "" : `<button onclick="window.sysCmd.startScreensaver(true)">Lock Screen</button>`}
                 <button onclick="window.sysCmd.act('sudo systemctl suspend')">Suspend</button>
-                <button class="mod_menu_danger" onclick="window.sysCmd.act('sudo poweroff')">Shutdown</button>
+                <button class="mod_menu_danger" onclick="window.powerAction('shutdown')">Shutdown</button>
             </div>`, closeLabel: "Close" });
     };
 
@@ -1734,6 +1817,29 @@ async function initUI() {
         status: () => ipc.invoke("wifi:status")
     };
     window.wifiPanel = new WifiPanel();
+
+    // Background WiFi watcher — user event sound on connect. Polls wifi:status
+    // every 10s and fires on a not-connected → connected transition; the first
+    // connect observed in this session plays wifi_first, later ones wifi_known.
+    {
+        let wifiPrev = false;      // previous poll: connected?
+        let wifiSeenOnce = false;  // session-first connect flag
+        const wifiWatch = async () => {
+            try {
+                const st = await ipc.invoke("wifi:status");
+                const conn = !!(st && st.ok && st.connected);
+                if (conn && !wifiPrev) {
+                    window.eventPlay(wifiSeenOnce ? "wifi_known" : "wifi_first");
+                    wifiSeenOnce = true;
+                }
+                wifiPrev = conn;
+            } catch (e) {}
+        };
+        // First check slightly delayed so the boot-welcome sound isn't drowned.
+        setTimeout(wifiWatch, 3000);
+        setInterval(wifiWatch, 10000);
+    }
+
     ipc.on("open-wifi-panel", () => { if (window.wifiPanel) window.wifiPanel.open(); });
     ipc.on("lock-screen", () => { if (window.lockScreen) window.lockScreen.engage(); });
     // OS power button → POWER menu (main listens on 127.0.0.1:17322). While
@@ -2116,6 +2222,7 @@ async function initUI() {
         _clashUpdating: false,
         _appUpdatable: false,
         _clashUpdatable: false,
+        _appUpdatePlayed: false,
         refresh() {
             this.checkApp();
             this.refreshBundled();
@@ -2138,10 +2245,15 @@ async function initUI() {
                     else ver.textContent = "v" + current + " (dev)";
                     // Available update → the check button becomes the update button.
                     this._appUpdatable = (c > 0 && r.appImageUrl);
+                    if (this._appUpdatable && !this._appUpdatePlayed) {
+                        window.eventPlay("update_available");
+                        this._appUpdatePlayed = true;
+                    }
                     if (btn) btn.textContent = this._appUpdatable ? t("settings.updates.updateBtn") : t("settings.updates.check");
                 } else {
                     ver.textContent = "v" + current + (r && r.error === "FETCH_FAILED" ? " — GitHub unreachable" : "");
                     this._appUpdatable = false;
+                    this._appUpdatePlayed = false;
                     if (btn) btn.textContent = t("settings.updates.check");
                 }
                 if (manual) this._appManualResult(r, current);
@@ -2293,6 +2405,7 @@ async function initUI() {
                 }
                 if (res && res.ok) {
                     this.toast(t("settings.updates.updated") + (r.latest ? " v" + r.latest : ""));
+                    window.eventPlay("cliapp_update");
                     window.clash.refreshStatus();
                     this.checkClashUpdate();
                 } else {
@@ -2727,6 +2840,7 @@ async function initUI() {
                 if (!pre) return;
                 if (r && r.ok) {
                     pre.textContent += "\n✓ Update ready. Restarting eDEX…";
+                    window.eventPlay("update_done");
                     setTimeout(() => { remote.app.relaunch(); remote.app.quit(); }, 600);
                 } else {
                     let msg = (r && r.error) || "unknown error";
@@ -3021,6 +3135,10 @@ window.openSettings = async () => {
                 <option>${window.settings.disableFeedbackAudio}</option>
                 <option>${!window.settings.disableFeedbackAudio}</option>
             </select>`, "settings.disableFeedbackAudio.help"),
+            settingsRow("settings.eventAudio", `<select id="settingsEditor-eventAudio">
+                <option>${window.settings.eventAudio}</option>
+                <option>${!window.settings.eventAudio}</option>
+            </select>`, "settings.eventAudio.help"),
             settingsRow("settings.power.volume", `<select id="settingsPowerVolume">${numOptions(0, 100, 5, v => v + "%", 70)}</select>`, "settings.power.volume.help"),
             section("settings.cat.display"),
             settingsRow("settings.power.brightness", `<select id="settingsPowerBrightness">${numOptions(0, 100, 5, v => v + "%", 50)}</select>`, "settings.power.brightness.help"),
@@ -3335,7 +3453,7 @@ window.openSettings = async () => {
                 <h6 id="settingsEditorStatus">${t("settings.loadedStatus")}</h6>`,
         buttons: [
             {label: t("settings.btn.openExternal"), action:`electron.shell.openPath('${settingsFile}');electronWin.minimize();`},
-            {label: t("settings.btn.save"), action: "window.writeSettingsFile()"},
+            {label: t("settings.btn.save"), action: "window.eventPlay('settings_save');window.writeSettingsFile()"},
             {label: t("settings.btn.shortcuts"), action: "window.openShortcutsHelp()"},
             {label: t("settings.btn.reload"), action: "window.location.reload(true);"},
             {label: t("settings.btn.restart"), action: "remote.app.relaunch();remote.app.quit();"}
@@ -3454,7 +3572,7 @@ window.openSettings = async () => {
             if (window.updates._appUpdatable) window.updates.updateApp();
             else window.updates.checkApp(true);
         });
-        bindUpd("settingsUpSystemBtn", () => window.updates.systemUpdate());
+        bindUpd("settingsUpSystemBtn", () => { window.eventPlay("apt_check"); window.updates.systemUpdate(); });
         bindUpd("settingsUpClashCheck", () => {
             if (window.updates._clashUpdatable) window.updates.updateClash();
             else window.updates.checkClashUpdate(true);
@@ -4276,6 +4394,7 @@ window.writeSettingsFile = () => {
     s.audio = (document.getElementById("settingsEditor-audio").value === "true");
     s.audioVolume = Number(document.getElementById("settingsEditor-audioVolume").value);
     s.disableFeedbackAudio = (document.getElementById("settingsEditor-disableFeedbackAudio").value === "true");
+    s.eventAudio = (document.getElementById("settingsEditor-eventAudio").value === "true");
     s.clockHours = Number(document.getElementById("settingsEditor-clockHours").value);
     s.nointro = (document.getElementById("settingsEditor-nointro").value === "true");
     s.nocursor = (document.getElementById("settingsEditor-nocursor").value === "true");
@@ -5254,6 +5373,8 @@ window.screensaver = (() => {
                 return;
             }
             active = true;
+            // User event sound on screensaver entry.
+            window.eventPlay("screensaver");
             // Timestamp so bumpActivity can tell input that STARTED this
             // screensaver (power-menu "Lock Screen", Win+L) apart from input
             // that comes later to dismiss it into the lock (#73).
@@ -5685,17 +5806,19 @@ const bumpActivity = () => {
             // over a dead terminal.
             if (window.screensaver.isCodeStreaming()) {
                 window.screensaver.hide(true, true, false, true);
+                window.eventPlay("lock_show");
                 window.lockScreen.show();
             } else if (!window.screensaver.isWindingDown()) {
                 window.screensaver.windDownCodeToLock(() => {
                     window.screensaver.hide(true, true, false);
+                    window.eventPlay("lock_show");
                     window.lockScreen.show();
                 });
             }
             return;
         }
         window.screensaver.hide(true, willLock, matrixToMatrix);
-        if (willLock) window.lockScreen.show();
+        if (willLock) { window.eventPlay("lock_show"); window.lockScreen.show(); }
     }
 };
 ["mousemove", "mousedown", "keydown", "wheel", "touchstart", "click"].forEach(ev =>

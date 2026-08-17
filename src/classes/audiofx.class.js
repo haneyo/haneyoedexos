@@ -48,6 +48,37 @@ class AudioManager {
                 src: [path.join(__dirname, "assets", "audio", "error.wav")]
             });
 
+            // ---- Event sounds (user-provided, played via window.eventPlay) ----
+            // Gated at play-time by settings.eventAudio (the master settings.audio
+            // toggle is the constructor gate above). Each maps to a system event;
+            // see eventPlay call sites in _renderer.js.
+            const eventSounds = {
+                boot_welcome:      "boot_welcome.wav",       // 开机 Welcome 文字
+                battery_plug:      "battery_plug.wav",       // 插上电源
+                battery_low40:     "battery_low40.wav",      // 电量 < 40%
+                battery_low20:     "battery_low20.wav",      // 电量 ≤ 20%
+                battery_critical:  "battery_critical.wav",   // 电量 ≤ 5% 即将关机
+                wifi_first:        "wifi_first.wav",         // 会话内首次连网
+                wifi_known:        "wifi_known.wav",         // 连接已知网络
+                screensaver:       "screensaver.wav",        // 进入屏保
+                lock_show:         "lock_show.wav",          // 屏保 → 锁屏
+                unlock_ok:         "unlock_ok.wav",          // 解锁成功
+                power_shutdown:    "power_shutdown.wav",     // 按下关机
+                power_cancel:      "power_cancel.wav",       // 取消关机/重启
+                power_reboot:      "power_reboot.wav",       // 按下重启
+                settings_save:     "settings_save.wav",      // 设置保存到磁盘
+                apt_check:         "apt_check.wav",          // 检查更新 ubuntu
+                update_available:  "update_available.wav",   // 检测到可用升级
+                update_done:       "update_done.wav",        // 升级完成待重启
+                cliapp_update:     "cliapp_update.wav",      // 内置 cli app 更新完成
+                error_popup:       "error_popup.wav"         // 报错弹窗出现
+            };
+            for (const [name, file] of Object.entries(eventSounds)) {
+                this[name] = new Howl({
+                    src: [path.join(__dirname, "assets", "audio", file)]
+                });
+            }
+
             Howler.volume(window.settings.audioVolume);
         } else {
             Howler.volume(0.0);
