@@ -913,6 +913,7 @@ class LockScreen {
         if (this._codeBuf === code) {
             this._codeBuf = "";
             if (window.audioManager) window.audioManager.granted.play();
+            window.eventPlay("unlock_ok");
             if (term) this._redrawBox(0, false, "ACCESS GRANTED");
             // Grant animation: the passcode input turns to noise, then the whole
             // box dissolves before the lock is lifted (#87). The pre-lock
@@ -1145,6 +1146,7 @@ class LockScreen {
         const err = document.getElementById("lock_err");
         if (input.value === code) {
             if (window.audioManager) window.audioManager.granted.play();
+            window.eventPlay("unlock_ok");
             // No longer need the 30s idle timeout once the passcode matches.
             if (this._idleTimer) { clearInterval(this._idleTimer); this._idleTimer = null; }
             // CRT-TV power-off after the boot/matrix lock clears. It is a
