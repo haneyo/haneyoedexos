@@ -105,7 +105,7 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     gvfs gvfs-backends libglib2.0-bin \
     fcitx5 fcitx5-rime fcitx5-pinyin fcitx5-chinese-addons librime-bin \
     fcitx5-config-qt fcitx5-frontend-gtk3 fcitx5-frontend-qt5 \
-    p7zip-full bzip2 intel-microcode \
+    p7zip-full bzip2 intel-microcode numlockx \
     plymouth plymouth-theme-spinner xcursor-themes xclip"
 
 # Bake in Node.js LTS (official tarball). The built-in Claude CLI needs
