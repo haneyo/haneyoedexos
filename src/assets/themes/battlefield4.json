@@ -1,8 +1,8 @@
 {
     "colors": {
-        "r": 77,
-        "g": 159,
-        "b": 224,
+        "r": 160,
+        "g": 200,
+        "b": 245,
         "black": "#000000",
         "light_black": "#101820",
         "grey": "#22303e",
@@ -31,13 +31,13 @@
         "cursorStyle": "block",
         "foreground": "#d5e2ef",
         "background": "#101820",
-        "cursor": "#4d9fe0",
+        "cursor": "#a0c8f5",
         "cursorAccent": "#ff9000",
-        "selection": "rgba(255,144,0,0.3)"
+        "selection": "rgba(160,200,245,0.3)"
     },
     "globe": {
         "base": "#000000",
-        "marker": "#4d9fe0",
+        "marker": "#a0c8f5",
         "pin": "#ff9000",
         "satellite": "#9bd75a"
     }

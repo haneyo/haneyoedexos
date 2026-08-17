@@ -1,18 +1,18 @@
 {
     "colors": {
-        "r": 255,
-        "g": 122,
-        "b": 26,
+        "r": 77,
+        "g": 184,
+        "b": 255,
         "black": "#000000",
         "light_black": "#10171c",
         "grey": "#1f2c33",
         "red": "#d94a4a",
         "green": "#8ecb7f",
         "yellow": "#f5d04a",
-        "blue": "#7fb3d9",
+        "blue": "#4db8ff",
         "magenta": "#c77fd0",
         "cyan": "#6fd3cf",
-        "white": "#cfe0e8",
+        "white": "#e8f0f4",
         "brightBlack": "#4a5a63",
         "brightRed": "#e86a6a",
         "brightGreen": "#a8e09a",
@@ -31,14 +31,14 @@
         "cursorStyle": "block",
         "foreground": "#cfe0e8",
         "background": "#10171c",
-        "cursor": "#ff7a1a",
-        "cursorAccent": "#7fb3d9",
-        "selection": "rgba(255,122,26,0.3)"
+        "cursor": "#4db8ff",
+        "cursorAccent": "#e8f0f4",
+        "selection": "rgba(77,184,255,0.3)"
     },
     "globe": {
         "base": "#000000",
-        "marker": "#ff7a1a",
-        "pin": "#7fb3d9",
+        "marker": "#4db8ff",
+        "pin": "#d94a4a",
         "satellite": "#e8e4da"
     }
 }
