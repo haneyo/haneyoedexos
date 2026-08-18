@@ -1432,6 +1432,24 @@ const targets = [
       .split('"timeout",[String(').join('"bluetoothctl",["--timeout",String(')
       .split(',"bluetoothctl","scan"').join(',"scan"'),
   },
+  {
+    // 设置页 WiFi/蓝牙长列表滚动(2026-08 实机 #127):列表内容过长时内部
+    // overflow-y:auto 滚动,滚到边界后滚轮继续滚,overscroll 默认 auto 会把
+    // 事件串到 #settingsEditor 的页滚动,于是列表框整体跟着"翻上去"。
+    // 修复:三个滚动容器都加 overscroll-behavior:contain,列表内滚动到
+    // 顶/底即止,不再 chain 给外层。锚点全是压缩 CSS 字符串字面量。
+    name: 'modal.css (#127 设置 WiFi/蓝牙长列表 overscroll 不串滚)',
+    path: ['assets', 'css', 'modal.css'],
+    expectIn: '#settingsEditor{flex:1 1 auto;min-width:0;overflow-y:auto;',
+    expectOut: 'overscroll-behavior:contain',
+    transform: c => c
+      .split('#settingsEditor{flex:1 1 auto;min-width:0;overflow-y:auto;')
+      .join('#settingsEditor{flex:1 1 auto;min-width:0;overflow-y:auto;overscroll-behavior:contain;')
+      .split('.settings_net_log{font-family:var(--font_terminal),monospace;font-size:1.3vh;line-height:1.5;white-space:pre-wrap;word-break:break-all;max-height:22vh;overflow-y:auto;')
+      .join('.settings_net_log{font-family:var(--font_terminal),monospace;font-size:1.3vh;line-height:1.5;white-space:pre-wrap;word-break:break-all;max-height:22vh;overflow-y:auto;overscroll-behavior:contain;')
+      .split('.settings_net_list{display:flex;flex-direction:column;gap:.4vh;max-height:22vh;overflow-y:auto;')
+      .join('.settings_net_list{display:flex;flex-direction:column;gap:.4vh;max-height:22vh;overflow-y:auto;overscroll-behavior:contain;'),
+  },
 ];
 
 function getEntry(path) {
