@@ -639,6 +639,14 @@ const LOCK1_PASS_OLD = 'try{const pi=document.createElement("input");pi.id="lock
 const NEW_LOCK2_PREFIX = '_teardownLock(e){this._term&&this._origSend&&(this._term.socket.send=this._origSend),this._suppressOutput=!1,window.screensaver&&window.screensaver.stopCodeStream&&window.screensaver.stopCodeStream(),window.screensaver&&window.screensaver.endCover&&window.screensaver.endCover(!e),this._term&&this._term.term&&(this._term.term=null),this.active=!1,';
 
 
+// #128 语音快捷键:F9 → Win 键按住说话/松开结束(带 250ms hold delay,短按/组合键不误触发)。
+// expectIn/expectOut 均用 mangle 无关的字符串字面量(patch-expectout-minify-trap:winVoiceTimer、
+// termFocused 会被 minify 改名,不可作幂等标记)。expectOut = e.key==="Meta"(字符串不被 minify 改名);
+// 新构建已烘焙 Meta 代码(含 expectOut)→ skip;旧部署版含 F9 → transform 跑。IIFE 自包含,
+// 内联 termFocused 判断,不依赖部署版任何 mangle 变量名。
+const VOICE_F9_REGEX = /document\.addEventListener\("keydown",([a-zA-Z_$][\w$]*)=>\{"F9"===\1\.key&&!\1\.repeat&&([a-zA-Z_$][\w$]*)\(\)&&\(\1\.preventDefault\(\),\1\.stopPropagation\(\),window\.voiceInput\.start\(\)\)\}\),document\.addEventListener\("keyup",\1=>\{"F9"===\1\.key&&\2\(\)&&\(\1\.preventDefault\(\),\1\.stopPropagation\(\),window\.voiceInput\.stop\(\)\)\}\)/;
+const VOICE_WIN_NEW = `(()=>{let winVoiceTimer=null;document.addEventListener("keydown",e=>{e.metaKey&&!(e.key==="Meta"||e.code==="MetaLeft"||e.code==="MetaRight")&&winVoiceTimer&&(clearTimeout(winVoiceTimer),winVoiceTimer=null),(e.key==="Meta"||e.code==="MetaLeft"||e.code==="MetaRight")&&!e.repeat&&"term"===window.shellSlotKinds[window.currentTerm]&&(e.preventDefault(),e.stopPropagation(),clearTimeout(winVoiceTimer),winVoiceTimer=setTimeout(()=>{winVoiceTimer=null,window.voiceInput.start()},250))}),document.addEventListener("keyup",e=>{(e.key==="Meta"||e.code==="MetaLeft"||e.code==="MetaRight")&&"term"===window.shellSlotKinds[window.currentTerm]&&(e.preventDefault(),e.stopPropagation(),winVoiceTimer&&(clearTimeout(winVoiceTimer),winVoiceTimer=null),window.voiceInput.stop())}),window.addEventListener("blur",()=>{winVoiceTimer&&(clearTimeout(winVoiceTimer),winVoiceTimer=null),window.voiceInput&&window.voiceInput._recording&&window.voiceInput.stop()})})()`;
+
 const targets = [
   {
     name: '_boot.js (win+L 锁屏快捷键 + 系统级 idle 推送)',
@@ -1177,6 +1185,19 @@ const targets = [
       .split(APPMGR_CAT_FULL).join(APPMGR_CAT_ANCHOR)
       .split(APPMGR_ANCHOR).join(APPMGR_CTRL_FULL)
       .split(APPMGR_CAT_ANCHOR).join(APPMGR_CAT_FULL),
+  },
+  {
+    name: '_renderer.js (#128 语音快捷键:F9 → Win 键按住说话/松开结束)',
+    path: ['_renderer.js'],
+    expectIn: '"F9"===',
+    expectOut: 'e.key==="Meta"',
+    transform: c => c
+      // F9 keydown/keyup 整块 → Win-key push-to-talk IIFE。结构正则,mangle 无关:
+      // \1=事件 handler 参数名,\2=termFocused(部署版 w),两者随 minify 漂移,正则通配捕获。
+      // IIFE 自包含(内联 termFocused 判断),不引用任何 mangle 变量名。
+      .replace(VOICE_F9_REGEX, VOICE_WIN_NEW)
+      // 标题 hold F9 → hold the Win key(字符串字面量,mangle 无关)。
+      .split('hold F9').join('hold the Win key'),
   },
   {
     name: 'appmonitorPanel.class.js (#3 apps 态:默认应用列表,不含 Firefox,加 WEBAPPS 管理)',
