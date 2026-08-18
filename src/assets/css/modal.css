@@ -250,6 +250,9 @@ div.modal_popup #settingsEditor {
     flex: 1 1 auto;
     min-width: 0;
     overflow-y: auto;
+    /* stop the pane's own scroll from chaining to the page behind the modal
+       when it hits its top/bottom edge */
+    overscroll-behavior: contain;
     padding: 0 0.4vh 0.6vh 0;
 }
 
@@ -441,6 +444,9 @@ div.modal_popup #settingsEditor .settings_net_log {
     word-break: break-all;
     max-height: 22vh;
     overflow-y: auto;
+    /* don't chain the log's scroll to the settings pane — the box stays put
+       while its content scrolls */
+    overscroll-behavior: contain;
     padding: 0.5vh;
     margin: 0;
     opacity: 0.9;
@@ -455,6 +461,10 @@ div.modal_popup #settingsEditor .settings_net_list {
     gap: 0.4vh;
     max-height: 22vh;
     overflow-y: auto;
+    /* a long list scrolls inside this fixed-height box only — when it hits its
+       top/bottom edge the wheel must NOT chain to the settings pane, or the
+       whole box appears to scroll up with the list (2026-08 real-machine bug) */
+    overscroll-behavior: contain;
     /* clip stray horizontal overflow (scrollbars on this box were adding a
        few px) and keep the list compact instead of stretching the control */
     overflow-x: hidden;
