@@ -1,34 +1,71 @@
 #!/usr/bin/env node
-// cur2xcursor.js — convert Windows .cur cursor resources into XCursor files.
-// Reads each 32x32 32bpp .cur (ICONDIR + BITMAPINFOHEADER DIB, hotspot in the
-// ICO entry's planes/bitcount fields) and writes the XCursor binary format
-// (magic "Xcur", ARGB top-down pixels) that X11/GTK/Chromium render system-wide.
+// cur2xcursor.js — convert Windows cursor resources (.cur or .ani) into XCursor files.
+// Reads a single 32bpp DIB frame (ICONDIR + BITMAPINFOHEADER, height doubled for
+// the AND mask) and writes the XCursor binary format (magic "Xcur", ARGB top-down
+// pixels) that X11/GTK/Chromium render system-wide.
 //
-// Usage: node cur2xcursor.js <input.cur> <output> [nominalSize]
-// Hotspot comes from the .cur itself; nominal size defaults to the image width.
+// Usage: node cur2xcursor.js <input.cur|input.ani> <output> [nominalSize] [hotX hotY]
+//   - .cur carries its hotspot in the ICO entry; .ani frames do NOT, so the
+//     click point must be passed explicitly as the hotX/hotY arguments.
+//   - nominal size defaults to the image width (32 for the WP7 pack).
+//
+// Examples:
+//   node cur2xcursor.js Arrow.cur default            # hotspot read from the .cur
+//   node cur2xcursor.js WP7Cursor.ani default 32 2 5 # .ani: hotspot (2,5) pinned
 
 const fs = require("fs");
 
-function readCur(buf) {
-    if (buf.length < 6) throw new Error("too small for ICONDIR");
+// Resolve a cursor resource to its ICONDIR, returning {dv, count} or null.
+// Accepts a Windows .cur (ICONDIR at offset 0) and an animated .ani — a RIFF
+// "ACON" wrapper whose first "icon" chunk holds a self-contained ICONDIR.
+function _iconDir(buf) {
     const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-    if (dv.getUint16(0, true) !== 0 || dv.getUint16(2, true) !== 2) {
-        throw new Error("not a .cur (expected ICONDIR reserved=0 type=2)");
+    // .cur / .ico — ICONDIR right at the start
+    if (dv.getUint16(0, true) === 0 && dv.getUint16(2, true) === 2) {
+        return { dv, count: dv.getUint16(4, true) };
     }
-    const count = dv.getUint16(4, true);
-    if (count < 1) throw new Error("empty .cur");
+    // .ani — RIFF "ACON" wrapper; the frames live as "icon" sub-chunks inside a
+    // LIST ("fram") chunk. Walk the top level, then descend into any LIST.
+    if (dv.getUint32(0, true) === 0x46464952 && dv.getUint32(8, true) === 0x4e4f4341) {
+        let off = 12;
+        const end = dv.byteLength;
+        while (off + 8 <= end) {
+            const id = dv.getUint32(off, true);
+            const size = dv.getUint32(off + 4, true);
+            if (id === 0x5453494c) {                    // "LIST" → "fram" frames
+                const subEnd = off + 8 + size;
+                let sub = off + 12;                     // skip the 4-byte form type
+                while (sub + 8 <= subEnd) {
+                    const sid = dv.getUint32(sub, true);
+                    const ssize = dv.getUint32(sub + 4, true);
+                    if (sid === 0x6e6f6369) {           // "icon" — first frame wins
+                        const c = new DataView(dv.buffer.slice(sub + 8, sub + 8 + ssize));
+                        if (c.getUint16(0, true) === 0 && c.getUint16(2, true) === 2) {
+                            return { dv: c, count: c.getUint16(4, true) };
+                        }
+                    }
+                    sub += 8 + ssize + (ssize & 1);
+                }
+            }
+            off += 8 + size + (size & 1);               // RIFF chunks are word-aligned
+        }
+    }
+    return null;
+}
+
+// Decode the first 32bpp DIB frame of an ICONDIR into top-down ARGB pixels.
+function _decodeFrame(icon) {
+    if (!icon || icon.count < 1) throw new Error("empty cursor resource");
     const off = 6;
-    const w = dv.getUint8(off) || 256;
-    const h = dv.getUint8(off + 1) || 256;
-    const xhot = dv.getUint16(off + 4, true);
-    const yhot = dv.getUint16(off + 6, true);
-    const bytesInRes = dv.getUint32(off + 8, true);
-    const imgOff = dv.getUint32(off + 12, true);
-    if (imgOff + 40 > buf.length) throw new Error("BITMAPINFOHEADER out of range");
+    const w = icon.dv.getUint8(off) || 256;
+    const h = icon.dv.getUint8(off + 1) || 256;
+    const imgOff = icon.dv.getUint32(off + 12, true);
+    const dv = icon.dv;
+    if (imgOff + 40 > dv.byteLength) throw new Error("BITMAPINFOHEADER out of range");
     const base = imgOff;
     if (dv.getUint32(base, true) < 40) throw new Error("not a BITMAPINFOHEADER");
     const iw = dv.getInt32(base + 4, true);
-    const ih = dv.getInt32(base + 8, true) / 2; // height doubled for AND mask
+    const ih = dv.getInt32(base + 8, true) / 2;         // height doubled for AND mask
     if (iw !== w || ih !== h) throw new Error(`size mismatch (${iw}x${ih} vs ${w}x${h})`);
     if (dv.getUint16(base + 12, true) !== 1) throw new Error("planes != 1");
     if (dv.getUint16(base + 14, true) !== 32) throw new Error("not 32bpp");
@@ -49,7 +86,7 @@ function readCur(buf) {
             pixels[di + x] = ((a << 24) | (r << 16) | (g << 8) | b) >>> 0;
         }
     }
-    return { w: iw, h: ih, xhot, yhot, pixels };
+    return { w: iw, h: ih, pixels };
 }
 
 function buildXcursor({ w, h, xhot, yhot, pixels }, nominal) {
@@ -83,13 +120,34 @@ function buildXcursor({ w, h, xhot, yhot, pixels }, nominal) {
     return file;
 }
 
-const [, , input, output, nominalArg] = process.argv;
+const [, , input, output, nominalArg, hotXArg, hotYArg] = process.argv;
 if (!input || !output) {
-    console.error("usage: node cur2xcursor.js <in.cur> <out> [nominalSize]");
+    console.error("usage: node cur2xcursor.js <in.cur|in.ani> <out> [nominalSize] [hotX hotY]");
     process.exit(1);
 }
-const cur = readCur(fs.readFileSync(input));
-const nominal = nominalArg ? parseInt(nominalArg, 10) : cur.w;
-const out = buildXcursor(cur, nominal);
+
+const buf = fs.readFileSync(input);
+const dv0 = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+const isAni = dv0.getUint32(0, true) === 0x46464952 && dv0.getUint32(8, true) === 0x4e4f4341;
+const icon = _iconDir(buf);
+if (!icon) throw new Error(`${input}: not a .cur or .ani cursor resource`);
+
+const frame = _decodeFrame(icon);
+
+let xhot, yhot;
+if (hotXArg != null && hotYArg != null) {
+    xhot = parseInt(hotXArg, 10);
+    yhot = parseInt(hotYArg, 10);
+} else if (isAni) {
+    console.error(`${input}: .ani frames carry no hotspot — pass hotX hotY (e.g. 32 2 5)`);
+    process.exit(1);
+} else {
+    // .cur — hotspot lives in the ICO entry's planes/hotX + bitcount/hotY fields
+    xhot = icon.dv.getUint16(6 + 4, true);
+    yhot = icon.dv.getUint16(6 + 6, true);
+}
+
+const nominal = nominalArg ? parseInt(nominalArg, 10) : frame.w;
+const out = buildXcursor({ ...frame, xhot, yhot }, nominal);
 fs.writeFileSync(output, out);
-console.error(`[cur2xcursor] ${input} ${cur.w}x${cur.h} hot(${cur.xhot},${cur.yhot}) → ${output} (${out.length}B, nominal ${nominal})`);
+console.error(`[cur2xcursor] ${input} ${frame.w}x${frame.h} hot(${xhot},${yhot}) → ${output} (${out.length}B, nominal ${nominal})`);
