@@ -31,9 +31,17 @@ export QT_IM_MODULE=fcitx
 export XMODIFIERS=@im=fcitx
 # Wake the wireless radio: rfkill can leave it soft-blocked right after a fresh
 # install (and some EFI firmware settings hard-block it). NetworkManager handles
-# scanning from here on; the WIFI button in eDEX drives nmcli.
-rfkill unblock all 2>/dev/null || true
+# scanning from here on; the WIFI button in eDEX drives nmcli. The rfkill write
+# needs root — a plain call from the display user silently fails (the keyboard
+# backlight below uses the same sudo -n pattern).
+sudo -n rfkill unblock all 2>/dev/null || true
 nmcli radio wifi on 2>/dev/null || true
+# Realtek RTL8821CE combo card: the Bluetooth half is powered by the ThinkPad
+# ACPI radio switch, and rfkill can't flip tpacpi_bluetooth_sw (it stays soft-
+# blocked). Write the ACPI + sysfs enable directly so the BT USB device
+# enumerates and hci0 registers before eDEX's Bluetooth panel reads it.
+sudo -n sh -c 'echo enable > /proc/acpi/ibm/bluetooth' 2>/dev/null || true
+sudo -n sh -c 'echo 1 > /sys/devices/platform/thinkpad_acpi/bluetooth_enable' 2>/dev/null || true
 # Turn on the keyboard backlight: many laptops boot with it off. The sysfs node
 # is root-owned (leds subsystem), so a plain echo from the display user silently
 # fails — use passwordless sudo (like edex-brightness.sh), with a direct write as
