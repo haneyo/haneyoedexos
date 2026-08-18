@@ -431,28 +431,30 @@ const scifiCursor = () => {
     return "url(\"data:image/svg+xml;utf8," + encodeURIComponent(svg) + "\") 2 2, default";
 };
 
-// ---- Windows pointer set (assets/cursors/*.cur) ----
-// The bundled .cur files are single-frame Windows cursor resources: a 32bpp
-// DIB (BITMAPINFOHEADER with the height doubled for the AND mask). Chromium can
-// load one via `cursor: url()`, but then the pointer size is chosen by the OS,
-// not the user. So each frame is parsed here, blitted to a canvas at the
-// configured size (settings.cursorSize), and emitted as a data-URI PNG with the
-// hotspot scaled proportionally. A `#cursor_style` block then maps the pointer
-// roles (default / hand / text / …) to those data URIs. Native CSS cursors mean
-// the OS still does the hit-testing — no overlay div.
+// ---- Windows pointer set (assets/cursors/*.ani) ----
+// The bundled .ani files are WP7 animated Windows cursors; only the 32×32
+// 32bpp DIB first frame is used here (BITMAPINFOHEADER with the height doubled
+// for the AND mask). Chromium can load a still via `cursor: url()`, but then
+// the pointer size is chosen by the OS, not the user. So each frame is parsed
+// here, blitted to a canvas at the configured size (settings.cursorSize), and
+// emitted as a data-URI PNG with the hotspot scaled proportionally. A
+// `#cursor_style` block then maps the pointer roles (default / hand / text / …)
+// to those data URIs. Native CSS cursors mean the OS still does the
+// hit-testing — no overlay div.
 const CURSOR_ROLES = {
-    // .cur files carry their own hotspot in the ICO entry, so the click point
-    // is read from the file (hotX/hotY omitted → falls back to entry.hotX/Y).
-    default:     { file: "Arrow.cur" },
-    hand:        { file: "Hand.cur" },
-    text:        { file: "IBeam.cur" },
-    crosshair:   { file: "Cross.cur" },
-    notallowed:  { file: "NO.cur" },
-    move:        { file: "SizeAll.cur" },
-    ns:          { file: "SizeNS.cur" },
-    ew:          { file: "SizeWE.cur" },
-    nwse:        { file: "SizeNWSE.cur" },
-    nesw:        { file: "SizeNESW.cur" }
+    // .ani frames carry no hotspot in the ICO entries (that lives in the ACON
+    // header), so each role's click point is pinned here instead of read from
+    // the file (measured from the 32×32 first frame of the WP7 pack).
+    default:     { file: "WP7Cursor.ani", hotX: 2, hotY: 5 },
+    hand:        { file: "WP7Links.ani", hotX: 2, hotY: 5 },
+    text:        { file: "WP7Text.ani", hotX: 6, hotY: 11 },
+    crosshair:   { file: "WP7Precision.ani", hotX: 10, hotY: 10 },
+    notallowed:  { file: "WP7Unavail.ani", hotX: 15, hotY: 15 },
+    move:        { file: "WP7Move.ani", hotX: 13, hotY: 13 },
+    ns:          { file: "WP7Vert.ani", hotX: 13, hotY: 13 },
+    ew:          { file: "WP7Hor.ani", hotX: 13, hotY: 13 },
+    nwse:        { file: "WP7Nwse.ani", hotX: 20, hotY: 10 },
+    nesw:        { file: "WP7Nesw.ani", hotX: 10, hotY: 10 }
 };
 
 // Pick the frame closest to (but ≥) the target size — downscaling from a
