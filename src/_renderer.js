@@ -1339,7 +1339,7 @@ async function initUI() {
     micBtn.id = "edex_voice_btn";
     micBtn.className = "appmonitor_ime_btn appmonitor_voice_btn";
     micBtn.innerHTML = '<svg class="voice_icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><span class="voice_eq"><i></i><i></i><i></i><i></i><i></i></span>';
-    micBtn.title = "Voice input (click to talk, or hold F9)";
+    micBtn.title = "Voice input (click to talk, or hold the Win key)";
     micBtn.addEventListener("click", e => { e.stopPropagation(); window.voiceInput.toggle(); });
 
     // Corner button stack pinned flush to the terminal/content area's bottom-right.
@@ -1360,22 +1360,41 @@ async function initUI() {
     window.edexIME.refresh();
     setInterval(() => window.edexIME.refresh(), 5000);
 
-    // F9 (hold) = voice input, mirroring the mic button. Only when a real
-    // terminal is focused (not a browser/app monitor), and the key is swallowed
-    // so it never reaches the terminal's app or a webview (F5 would clash with
-    // browser refresh, so the less-used F9 was chosen).
+    // Win key (hold) = voice input push-to-talk, replacing the old F9 shortcut
+    // (F9 was unreliable — xterm also escapes it into \x1b[19~ for the shell).
+    // The Win key is a modifier: openbox here has no Super binding so its
+    // keydown reaches the page, and a lone Meta is not sent to the shell as
+    // input. A short hold delay (250ms) starts recording so a quick tap or a
+    // Win combo (e.g. Win+L lock) never trips it; releasing the key stops.
     const termFocused = () => (window.shellSlotKinds[window.currentTerm] === "term");
+    const isWinKey = e => (e.key === "Meta" || e.code === "MetaLeft" || e.code === "MetaRight");
+    let winVoiceTimer = null;
     document.addEventListener("keydown", e => {
-        if (e.key === "F9" && !e.repeat && termFocused()) {
+        // Any other key pressed while Win is held (e.g. Win+L lock, Win+R …)
+        // cancels the pending talk timer — never start recording mid-combo.
+        if (e.metaKey && !isWinKey(e) && winVoiceTimer) { clearTimeout(winVoiceTimer); winVoiceTimer = null; }
+        if (isWinKey(e) && !e.repeat && termFocused()) {
             e.preventDefault(); e.stopPropagation();
-            window.voiceInput.start();
+            clearTimeout(winVoiceTimer);
+            winVoiceTimer = setTimeout(() => {
+                winVoiceTimer = null;
+                window.voiceInput.start();
+            }, 250);
         }
     });
     document.addEventListener("keyup", e => {
-        if (e.key === "F9" && termFocused()) {
+        if (isWinKey(e) && termFocused()) {
             e.preventDefault(); e.stopPropagation();
+            if (winVoiceTimer) { clearTimeout(winVoiceTimer); winVoiceTimer = null; }
             window.voiceInput.stop();
         }
+    });
+    window.addEventListener("blur", () => {
+        // If the Win key is released while focus leaves the window (e.g.
+        // Alt+Tab mid-recording), the keyup would be lost and the mic would
+        // stay open — stop on blur so push-to-talk can never wedge the mic.
+        if (winVoiceTimer) { clearTimeout(winVoiceTimer); winVoiceTimer = null; }
+        if (window.voiceInput && window.voiceInput._recording) window.voiceInput.stop();
     });
 
     // ---- Module click → detail/action modals (all CLI-backed) ----
