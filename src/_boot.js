@@ -941,12 +941,15 @@ app.on('ready', async () => {
             });
         });
     }));
-    // Scan for new devices. bluetoothctl scan stays active; run it under a timeout
-    // so a single call discovers for N seconds then returns (UI polls devices).
+    // Scan for new devices. `bluetoothctl --timeout N scan on` keeps the process
+    // alive for N seconds holding the discovery session, then exits cleanly. A
+    // bare `timeout N bluetoothctl scan on` exits the moment the command is
+    // dispatched (non-TTY stdin), and that D-Bus disconnect stops discovery
+    // before the scan ever runs — every device comes up empty.
     ipc.handle("bluetooth:scan", (e, sec) => new Promise(resolve => {
         const s = Math.max(2, Math.min(15, parseInt(sec) || 8));
         if (process.platform !== "linux") { mockBtScanned = true; return resolve(btMock({ scanning: true })); }
-        execFile("timeout", [String(s), "bluetoothctl", "scan", "on"], { timeout: (s + 5) * 1000 }, () => {});
+        execFile("bluetoothctl", ["--timeout", String(s), "scan", "on"], { timeout: (s + 5) * 1000 }, () => {});
         resolve({ ok: true, scanning: true });
     }));
     ipc.handle("bluetooth:pair", (e, { address }) => new Promise(resolve => {

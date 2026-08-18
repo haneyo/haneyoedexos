@@ -1416,6 +1416,22 @@ const targets = [
       .split('const s=Math.max(1,Math.floor(t.rows));this.term.cols===i&&this.term.rows===s||this.resize(i,s)')
       .join('let s=Math.max(1,Math.floor(t.rows));try{const e=this.term.element&&this.term.element.parentElement,a=this.term._core&&this.term._core._renderService&&this.term._core._renderService.dimensions;if(e&&a&&a.actualCellHeight>0&&e.classList&&e.classList.contains("cli_session")){const r=e.getBoundingClientRect();s=Math.max(s,Math.ceil(r.height/a.actualCellHeight));window.__edexCliRowsCeil=1}}catch(e){}this.term.cols===i&&this.term.rows===s||this.resize(i,s)'),
   },
+  {
+    // 蓝牙扫描扫不出设备(2026-08 实机):bluetooth:scan 原来 spawn
+    // `timeout N bluetoothctl scan on`。非 TTY(stdin 关闭)下 bluetoothctl 发出
+    // StartDiscovery 后立即退出 → D-Bus 断连 → bluez 的 discovery_disconnect
+    // 在 bluetoothd 的 2s start_discovery_timeout 完成前就把 discovery 停掉
+    // (debug 日志实证),所以扫描从未真正运行。改用 bluetoothctl 自带 --timeout:
+    // 进程存活 N 秒持有 discovery 会话,扫满 N 秒再退出,设备留在 bluez 缓存里
+    // (bluetoothctl devices 持续可见)。锚点全是字符串字面量,无 minify 变量名。
+    name: '_boot.js (蓝牙扫描:bluetoothctl --timeout 保活 discovery)',
+    path: ['_boot.js'],
+    expectIn: ',"bluetoothctl","scan","on"]',
+    expectOut: '"--timeout"',
+    transform: c => c
+      .split('"timeout",[String(').join('"bluetoothctl",["--timeout",String(')
+      .split(',"bluetoothctl","scan"').join(',"scan"'),
+  },
 ];
 
 function getEntry(path) {
