@@ -41,6 +41,10 @@ class WifiPanel {
                     <div class="wifi_pw" id="wifi_pw_wrap" style="display:none">
                         <input type="password" id="wifi_password" placeholder="Password">
                     </div>
+                    <div class="wifi_saved_wrap" id="wifi_saved_wrap">
+                        <div class="wifi_saved_title">Saved networks</div>
+                        <div class="wifi_saved_list" id="wifi_saved_list"></div>
+                    </div>
                 </div>`,
             buttons: [
                 { label: "Refresh", action: "window.wifiPanel.refresh()" },
@@ -118,6 +122,10 @@ class WifiPanel {
             : "Not connected — pick a network below";
         status.className = "wifi_status" + (this.connectedSsid ? " ok" : "");
         this._renderList(list);
+        // Load the saved networks section (forget / auto-join toggle) in
+        // parallel with the scan — it never blocks the list above.
+        const savedRes = await window.wifiApi.saved();
+        this._renderSaved(savedRes && savedRes.ok ? (savedRes.saved || []) : null);
         // Hand the keyboard a starting point: focus the first network row so
         // ↑/↓/Enter work immediately after the panel opens (unless the user has
         // already picked one, e.g. after a manual Refresh).
@@ -125,6 +133,40 @@ class WifiPanel {
             const first = list.querySelector(".wifi_net");
             if (first) first.focus();
         }
+    }
+
+    // Saved networks section: one row per known network with an auto-join
+    // toggle and a Forget button. Both go through the same IPC as the settings
+    // page; actions re-render the list so the new state shows immediately.
+    _renderSaved(saved) {
+        const wrap = this._el("wifi_saved_wrap");
+        const list = this._el("wifi_saved_list");
+        if (!wrap || !list) return;
+        if (!saved || !saved.length) { wrap.style.display = "none"; return; }
+        wrap.style.display = "";
+        list.innerHTML = "";
+        saved.forEach(s => {
+            const row = document.createElement("div");
+            row.className = "wifi_saved_net";
+            row.innerHTML = `<span class="wifi_name">${this._esc(s.name)}</span>
+                <button type="button" class="wifi_saved_act" data-act="auto" data-name="${this._esc(s.name)}">${s.autoconnect ? "Auto-join: on" : "Auto-join: off"}</button>
+                <button type="button" class="wifi_saved_act danger" data-act="forget" data-name="${this._esc(s.name)}">Forget</button>`;
+            row.querySelectorAll("button").forEach(btn => {
+                btn.onclick = async () => {
+                    const name = btn.dataset.name;
+                    if (btn.dataset.act === "forget") {
+                        const r = await window.wifiApi.forget(name);
+                        this._notify(r && r.ok ? "Forgotten: " + name : "Failed: " + ((r && r.error) || "unknown"));
+                    } else {
+                        const cur = s.autoconnect;
+                        const r = await window.wifiApi.setAutoconnect(name, !cur);
+                        this._notify(r && r.ok ? "Auto-join updated" : "Failed");
+                    }
+                    this.refresh();
+                };
+            });
+            list.appendChild(row);
+        });
     }
 
     selectNetwork(n, focusRow) {
