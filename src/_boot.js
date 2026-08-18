@@ -907,7 +907,14 @@ app.on('ready', async () => {
     }));
     ipc.handle("bluetooth:set-power", (e, on) => new Promise(resolve => {
         if (process.platform !== "linux") return resolve(btMock({ powered: !!on }));
-        bt(["power", on ? "on" : "off"], 8000, r => resolve(r.ok ? { ok: true, powered: on } : r));
+        const run = () => bt(["power", on ? "on" : "off"], 8000, r => resolve(r.ok ? { ok: true, powered: on } : r));
+        if (!on) return run();
+        // RTL8821CE (ThinkPad ACPI): the radio can be powered down at the ACPI
+        // layer, which de-enumerates the BT USB device so `bluetoothctl power on`
+        // has no controller to address. rfkill can't flip tpacpi_bluetooth_sw —
+        // re-write the ACPI + sysfs enable before powering on (sudo -n, same as
+        // the clash updater; the boot path does the same in edex-session.sh).
+        execFile("sudo", ["-n", "sh", "-c", "echo enable > /proc/acpi/ibm/bluetooth 2>/dev/null; echo 1 > /sys/devices/platform/thinkpad_acpi/bluetooth_enable 2>/dev/null"], { timeout: 5000 }, () => run());
     }));
     // Devices cache: all / connected / paired device rows merged (Linux).
     ipc.handle("bluetooth:devices", () => new Promise(resolve => {
