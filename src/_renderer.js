@@ -1876,9 +1876,24 @@ async function initUI() {
     window.wifiApi = {
         list: () => ipc.invoke("wifi:list"),
         connect: (ssid, password) => ipc.invoke("wifi:connect", { ssid, password }),
-        status: () => ipc.invoke("wifi:status")
+        status: () => ipc.invoke("wifi:status"),
+        saved: () => ipc.invoke("wifi:saved"),
+        forget: (name) => ipc.invoke("wifi:forget", { name }),
+        setAutoconnect: (name, auto) => ipc.invoke("wifi:set-autoconnect", { name, auto })
     };
     window.wifiPanel = new WifiPanel();
+
+    // Bluetooth device panel (Linux + bluetoothctl) — settings popup.
+    window.btApi = {
+        status: () => ipc.invoke("bluetooth:status"),
+        devices: () => ipc.invoke("bluetooth:devices"),
+        scan: (sec) => ipc.invoke("bluetooth:scan", sec),
+        pair: (address) => ipc.invoke("bluetooth:pair", { address }),
+        connect: (address) => ipc.invoke("bluetooth:connect", { address }),
+        disconnect: (address) => ipc.invoke("bluetooth:disconnect", { address }),
+        forget: (address) => ipc.invoke("bluetooth:forget", { address })
+    };
+    window.btPanel = new BtPanel();
 
     // Background WiFi watcher — user event sound on connect. Polls wifi:status
     // every 10s and fires on a not-connected → connected transition; the first
@@ -3362,13 +3377,7 @@ window.openSettings = async () => {
                 settingsRow("settings.network.wifiStatus", `<span id="settingsNetWifiStatus" class="settings_net_status">–</span>`),
                 settingsRow("settings.network.wifiInfo", `<div id="settingsNetWifiInfo" class="settings_net_info"></div>`, "settings.network.wifiInfo.help"),
                 settingsRow("settings.network.wifiDisconnect", `<button type="button" id="settingsNetWifiDisconnect" class="settings_net_btn">${t("settings.network.btDisc")}</button>`),
-                settingsRow("settings.network.available", `<div id="settingsNetWifiList" class="settings_net_list" augmented-ui="bl-clip tr-clip exe"></div>
-                    <div class="settings_net_pw"><input type="password" id="settingsNetWifiPassword" placeholder="${t("settings.network.pwPh")}"></div>
-                    <div class="settings_net_actions">
-                        <button type="button" id="settingsNetWifiConnect" class="settings_net_btn">${t("settings.network.connect")}</button>
-                        <button type="button" id="settingsNetWifiScan" class="settings_net_btn">${t("settings.network.scan")}</button>
-                    </div>`, "settings.network.available.help"),
-                settingsRow("settings.network.saved", `<div id="settingsNetWifiSaved" class="settings_net_list" augmented-ui="bl-clip tr-clip exe"></div>`, "settings.network.saved.help"),
+                settingsRow("settings.network.available", `<button type="button" id="settingsNetWifiOpen" class="settings_net_btn">${t("settings.network.openWifi")}</button>`, "settings.network.available.help"),
                 settingsRow("settings.network.proxy", `<div id="settingsNetProxy" class="settings_net_proxy">
                         <select id="settingsNetWifiProxyMethod">
                             <option value="auto">${t("settings.network.proxy.auto")}</option>
@@ -3382,8 +3391,7 @@ window.openSettings = async () => {
                 section("settings.network.bt"),
                 settingsRow("settings.network.btPower", netOnOff("settingsNetBtPower", true), "settings.network.btPower.help"),
                 settingsRow("settings.network.btStatus", `<span id="settingsNetBtStatus" class="settings_net_status">–</span>`),
-                settingsRow("settings.network.btDevices", `<div id="settingsNetBtList" class="settings_net_list" augmented-ui="bl-clip tr-clip exe"></div>
-                    <div class="settings_net_actions"><button type="button" id="settingsNetBtScan" class="settings_net_btn">${t("settings.network.btScan")}</button></div>`, "settings.network.btDevices.help"),
+                settingsRow("settings.network.btDevices", `<button type="button" id="settingsNetBtOpen" class="settings_net_btn">${t("settings.network.openBt")}</button>`, "settings.network.btDevices.help"),
                 section("settings.cat.ssh"),
                 settingsRow("settings.ssh.enabled", netOnOff("settingsSshEnabled", true), "settings.ssh.enabled.help"),
             ].join("");
@@ -4093,6 +4101,13 @@ window.populatePowerControls = () => {
         ipc.invoke("wifi:list").then(r => { if (r && r.ok) renderWifiList(r.networks || []); }).catch(() => {});
         ipc.invoke("wifi:saved").then(r => { if (r && r.ok) renderWifiSaved(r.saved || []); }).catch(() => {});
     };
+    // WiFi / Bluetooth list rows were replaced by "open panel" buttons — the
+    // old list elements are gone, so refreshWifi/renderWifiList/renderWifiSaved
+    // all hit their `if (!container) return` guards and become no-ops.
+    const netWifiOpen = document.getElementById("settingsNetWifiOpen");
+    if (netWifiOpen) netWifiOpen.addEventListener("click", () => { if (window.wifiPanel) window.wifiPanel.open(); });
+    const netBtOpen = document.getElementById("settingsNetBtOpen");
+    if (netBtOpen) netBtOpen.addEventListener("click", () => { if (window.btPanel) window.btPanel.open(); });
     if (netWifiPower) {
         const w = ddWrap(netWifiPower);
         if (w) {

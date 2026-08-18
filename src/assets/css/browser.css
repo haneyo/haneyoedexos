@@ -1156,6 +1156,81 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
     padding: 0.6vh 0.8vh; margin-top: 0.8vh; outline: none;
 }
 
+/* Saved networks inside the WiFi panel: a compact section under the scan
+   list. Kept short (max-height + overflow) so a long list can't blow up the
+   modal; hidden entirely when there are no known networks. */
+.wifi_saved_wrap {
+    margin-top: 1vh; border-top: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.25);
+    padding-top: 0.8vh;
+}
+.wifi_saved_title {
+    font-size: 1.1vh; letter-spacing: 0.15em; opacity: 0.7;
+    margin-bottom: 0.5vh; color: rgb(var(--color_r), var(--color_g), var(--color_b));
+}
+.wifi_saved_list { max-height: 16vh; overflow-y: auto; }
+.wifi_saved_net {
+    display: flex; align-items: center; gap: 0.8vh;
+    padding: 0.45vh 0.4vh; font-size: 1.15vh;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b)); letter-spacing: 0.05em;
+}
+.wifi_saved_net:hover { background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.1); }
+.wifi_saved_act {
+    flex-shrink: 0; cursor: pointer;
+    font-family: var(--font_main_light); font-size: 1vh; letter-spacing: 0.08em;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.12);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.4);
+    padding: 0.25vh 0.7vh;
+}
+.wifi_saved_act:hover { background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.25); }
+.wifi_saved_act:disabled { opacity: 0.5; cursor: default; }
+.wifi_saved_act.danger { color: #ff4d4d; border-color: rgba(255, 77, 77, 0.5); }
+
+/* ---- Bluetooth panel (settings popup) ---- */
+.bt_panel { min-width: 46vh; max-height: 52vh; overflow: hidden; }
+.bt_status {
+    font-size: 1.2vh; letter-spacing: 0.15em; opacity: 0.85;
+    margin-bottom: 1vh; color: rgb(var(--color_r), var(--color_g), var(--color_b));
+}
+.bt_status.ok { color: #00ff9f; opacity: 1; }
+.bt_status.err { color: #ff4d4d; opacity: 1; }
+.bt_list { max-height: 38vh; overflow-y: auto; }
+.bt_net {
+    display: flex; align-items: center; gap: 1vh;
+    padding: 0.6vh 0.6vh; font-size: 1.2vh; letter-spacing: 0.05em;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    border-left: 0.3vh solid transparent;
+}
+.bt_net:hover { background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.12); }
+.bt_net.connected { border-left-color: #00ff9f; }
+.bt_net.connected .bt_name { color: #00ff9f; }
+.bt_net:focus {
+    outline: 0.1vh dashed rgba(var(--color_r), var(--color_g), var(--color_b), 0.7);
+    outline-offset: 0.1vh;
+}
+.bt_name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bt_badge {
+    flex-shrink: 0;
+    font-size: 0.9vh; letter-spacing: 0.15em;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    padding: 0.1vh 0.5vh; opacity: 0.8;
+}
+.bt_badge.connected { color: #00ff9f; border-color: #00ff9f; }
+.bt_actions { display: flex; gap: 0.5vh; flex-shrink: 0; }
+.bt_act {
+    cursor: pointer;
+    font-family: var(--font_main_light); font-size: 1vh; letter-spacing: 0.08em;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.12);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.4);
+    padding: 0.25vh 0.7vh;
+}
+.bt_act:hover { background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.25); }
+.bt_act:disabled { opacity: 0.5; cursor: default; }
+.bt_act.danger { color: #ff4d4d; border-color: rgba(255, 77, 77, 0.5); }
+.bt_empty { color: rgb(var(--color_r), var(--color_g), var(--color_b)); opacity: 0.6; font-size: 1.1vh; padding: 0.6vh; }
+
 /* ---- System update modal output ---- */
 .sysup_out {
     min-width: 60vh; max-width: 80vw; height: 34vh; overflow-y: auto;
