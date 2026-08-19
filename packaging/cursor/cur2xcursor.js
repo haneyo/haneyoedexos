@@ -11,7 +11,7 @@
 //
 // Examples:
 //   node cur2xcursor.js Arrow.cur default            # hotspot read from the .cur
-//   node cur2xcursor.js WP7Cursor.ani default 32 2 5 # .ani: hotspot (2,5) pinned
+//   node cur2xcursor.js WP7CursorBG.ani default 32 2 5 # .ani: hotspot (2,5) pinned
 
 const fs = require("fs");
 
