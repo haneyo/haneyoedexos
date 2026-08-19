@@ -410,7 +410,9 @@ const CLI_PANEL_CLASS_NEW = CLI_PANEL_CLASS_NEW_OLD
   .split('{id:"browsh",name:"browsh",cmd:["browsh","--startup-url","https://lite.duckduckgo.com/lite"],icon:"browser"}')
   // #58:carbonyl bundles Chromium; Ubuntu 24.04 blocks its userns sandbox
   // ("No usable sandbox!" FATAL) → always launch --no-sandbox (kiosk device).
-  .join('{id:"carbonyl",name:"carbonyl",cmd:["carbonyl","--no-sandbox","https://lite.duckduckgo.com/lite"],icon:"browser"}')
+  // #136:start page = local dark search page (search bar + switchable engine),
+  // installed next to the AppImage at /opt/edex/cli-start.html (see build-iso.sh).
+  .join('{id:"carbonyl",name:"carbonyl",cmd:["carbonyl","--no-sandbox","file:///opt/edex/cli-start.html"],icon:"browser"}')
   // #49:最终应用态去掉 htop(保留 btop)。CLI_PANEL_CLASS_NEW_OLD 仍带 htop —— 它是 #36 部署态的
   // 匹配锚点(桥接 .split(NEW_OLD).join(NEW) 靠它命中),不能在 OLD 里删;derive 出 NEW 后再移除,
   // 锚点不受影响,最终注入的菜单与 src(cliPanel.class.js 无 htop)对齐。
@@ -766,6 +768,27 @@ const targets = [
       // 才补发一次 \r(兜底极少数"提示符丢失"竞态),正常情况不再多回车。
       .split('this.wss.on("connection",e=>{try{this.wss.clients.forEach(c=>{try{c!==e&&c.close()}catch(_){}})}catch(_){}this.onopened(this.tty.pid),e.on("close",(e,t)=>{this.ondisconnected(e,t)}),e.on("message",e=>{this.tty.write(e)}),this.tty.onData(t=>{this._nextTickUpdateTtyCWD=!0,this._nextTickUpdateProcess=!0;try{e.send(t)}catch(e){}});try{this._noBootCR||this.tty.write("\\r")}catch(e){}})')
       .join('this.wss.on("connection",e=>{try{this.wss.clients.forEach(c=>{try{c!==e&&c.close()}catch(_){}})}catch(_){}this.onopened(this.tty.pid),e.on("close",(e,t)=>{this.ondisconnected(e,t)}),e.on("message",e=>{this._bootIn=!0;this.tty.write(e)}),this.tty.onData(t=>{this._bootGot=!0;this._nextTickUpdateTtyCWD=!0,this._nextTickUpdateProcess=!0;try{e.send(t)}catch(e){}});try{if(!this._noBootCR&&!this._booted){this._booted=!0,this._bootGot=!1,this._bootIn=!1,this._bootT=setTimeout(()=>{try{this._bootT=null;if(!this._bootGot&&!this._bootIn)this.tty.write("\\r")}catch(_){}},1200)}}catch(e){}})'),
+  },
+  {
+    name: 'terminal.class.js (carbonyl 鼠标 SGR y+1 补偿)',
+    path: ['classes', 'terminal.class.js'],
+    // #136 carbonyl 点击偏上一行:bridge.rs 用 row-0.5 缩放(应 +0.5),所有 SGR 点击落在
+    // 上一行/行 0 映射到终端上方。修复在 src 已完成;这里镜像给不含 _sgrMouseFix 的构建。
+    // 主 terminal 条目(expectOut='this.muted=!!')对 src 预烘焙的当前代构建整段跳过,所以
+    // 本条目在它之后独立注入,两条变换:
+    //  ① _sgrMouseFix 标志:锚 `this.muted=!!` 用正则捕获参数字母(t=src 预烘焙/e=patch 链),
+    //     注入 `this._sgrMouseFix=/^carbonyl_/.test(<字母>.parentId||"")`,参数无关、两种字母都对。
+    //  ② socket.send 包装器:锚 `_wsConn` 里的 socket 创建行(d/w 是 src 与 patch 链共同的
+    //     minify 字母),紧接其后把 send 换成"先重写 SGR 鼠标 y+1 再透传"的包装器,只在
+    //     _sgrMouseFix=true(carbonyl 会话)时改写,btop/claude/shell 原样透传。
+    // _wsConn 每次连接都跑 → 重连时新 socket 每次重新包一层,天然无重复包装。
+    // src 新版(已含修复)由 expectOut=_sgrMouseFix 跳过,绝不二次注入。
+    expectIn: 'this._wsConn=()=>{this.socket=new WebSocket("ws://"+d+":"+w)',
+    expectOut: '_sgrMouseFix',
+    transform: c => c
+      .replace(/this\.muted=!!(.)\.muted/, 'this.muted=!!$1.muted,this._sgrMouseFix=/^carbonyl_/.test($1.parentId||"")')
+      .split('this._wsConn=()=>{this.socket=new WebSocket("ws://"+d+":"+w)')
+      .join('this._wsConn=()=>{this.socket=new WebSocket("ws://"+d+":"+w),this.socket.send=(_s=>n=>{if(this._sgrMouseFix&&"string"==typeof n&&n.indexOf("\\x1b[<")>=0)n=n.replace(/\\x1b\\[<(\\d+);(\\d+);(\\d+)([Mm])/g,(_,b,x,y,t)=>"\\x1b[<"+b+";"+x+";"+(parseInt(y,10)+1)+t);return _s(n)})(this.socket.send.bind(this.socket))'),
   },
   {
     name: 'lockScreen.class.js (code 锁屏用 CliPanel cover session + 框加大 + 主题配色)',
