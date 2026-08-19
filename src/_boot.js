@@ -133,6 +133,7 @@ const DEFAULT_SETTINGS = {
         model: "qwen2.5-0.5b-instruct-q4_k_m",
         haikuModel: "qwen2.5-0.5b-instruct-q4_k_m"
     },
+    voiceMicMode: "input",             // mic button / Win-key voice input target: "input" (ASR→terminal) | "chat" (AI chat)
     appMonitor: {
         enabled: true,
         mock: null,                       // null = auto: mock on darwin, real on linux
@@ -1295,6 +1296,172 @@ app.on('ready', async () => {
     ipc.handle("llm:set-enabled", (e, { enabled }) =>
         enabled ? llmStart().then(r => ({ ok: !!r.ok })) : llmStop().then(() => ({ ok: true })));
 
+    // ---- AI chat + voice replies (#151) ----
+    // The mic button / Win-key doubles as an AI-chat trigger
+    // (settings.voiceMicMode === "chat"). The backend reuses the claude settings
+    // block (labelled "AI 功能" in the UI) so users point it at the bundled local
+    // llama-server or any Anthropic-compatible cloud API. Replies are streamed to
+    // the renderer (ai-token events) and spoken via sherpa-onnx OfflineTts — the
+    // same runtime as the ASR recognizer above, so no extra daemon or Python.
+    let aiChatBusy = false;
+    let aiChatAbort = null;
+    let ttsEngine = null;
+    let ttsInitPromise = null;
+    const aiChatHistoryFile = path.join(electron.app.getPath("userData"), "ai-chat.json");
+    const aiChatHistory = () => {
+        try {
+            const arr = JSON.parse(fs.readFileSync(aiChatHistoryFile, "utf8"));
+            return Array.isArray(arr) ? arr : [];
+        } catch (e) { return []; }
+    };
+    const aiChatPush = (user, assistant) => {
+        let h = aiChatHistory();
+        h.push({ user, assistant, ts: Date.now() });
+        if (h.length > 50) h.splice(0, h.length - 50);
+        try { fs.writeFileSync(aiChatHistoryFile, JSON.stringify(h, "", 4)); } catch (e) {}
+    };
+    // TTS model dirs mirror voiceModelDirs() above — same bake layout, own dir.
+    // build-iso.sh extracts the tarball into /opt/edex/models/ keeping the
+    // archive's "vits-zh-hf-fanchen-C/" prefix (same as the ASR model).
+    const ttsModelDirs = () => {
+        const candidates = [
+            path.join(__dirname, "..", "..", "models", "vits-zh-hf-fanchen-C"),
+            "/opt/edex/models/vits-zh-hf-fanchen-C",
+            path.join(electron.app.getPath("userData"), "models", "vits-zh-hf-fanchen-C")
+        ];
+        return candidates.find(p => fs.existsSync(path.join(p, "vits-zh-hf-fanchen-C.onnx"))) || null;
+    };
+    const ttsInit = () => {
+        if (ttsEngine) return Promise.resolve({ ok: true });
+        if (ttsInitPromise) return ttsInitPromise;
+        ttsInitPromise = (async () => {
+            const sherpa = require("sherpa-onnx-node");
+            const dir = ttsModelDirs();
+            if (!dir) return { ok: false, error: "TTS_MODEL_NOT_FOUND" };
+            ttsEngine = await sherpa.OfflineTts.createAsync({
+                model: { vits: {
+                    model: path.join(dir, "vits-zh-hf-fanchen-C.onnx"),
+                    tokens: path.join(dir, "tokens.txt"),
+                    lexicon: path.join(dir, "lexicon.txt")
+                }},
+                numThreads: 2,
+                debug: 0
+            });
+            signale.success("Offline TTS ready (sherpa-onnx vits-zh-hf-fanchen-C)");
+            return { ok: true };
+        })().catch(e => { ttsInitPromise = null; return { ok: false, error: String((e && e.message) || e) }; });
+        return ttsInitPromise;
+    };
+    // Float32 PCM (-1..1) → 16-bit mono WAV, base64-encoded for the renderer.
+    const floatToWavBase64 = (samples, sampleRate) => {
+        const n = samples.length;
+        const buf = Buffer.alloc(44 + n * 2);
+        buf.write("RIFF", 0); buf.writeUInt32LE(36 + n * 2, 4); buf.write("WAVE", 8);
+        buf.write("fmt ", 12); buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20); buf.writeUInt16LE(1, 22);
+        buf.writeUInt32LE(sampleRate, 24); buf.writeUInt32LE(sampleRate * 2, 28); buf.writeUInt16LE(2, 32); buf.writeUInt16LE(16, 34);
+        buf.write("data", 36); buf.writeUInt32LE(n * 2, 40);
+        for (let i = 0; i < n; i++) {
+            const s = Math.max(-1, Math.min(1, samples[i]));
+            buf.writeInt16LE(s < 0 ? s * 0x8000 : s * 0x7fff, 44 + i * 2);
+        }
+        return buf.toString("base64");
+    };
+    ipc.handle("tts:status", () => ttsInit().then(r => ({
+        ok: true,
+        available: ttsModelDirs() !== null,
+        ready: !!ttsEngine,
+        error: r.error
+    })));
+    ipc.handle("tts:speak", (e, { text }) => ttsInit().then(r => {
+        if (!r.ok) return { ok: false, error: r.error };
+        return ttsEngine.generateAsync({ text, sid: 0, speed: 1 }).then(audio => ({
+            ok: true,
+            wav: floatToWavBase64(audio.samples, audio.sampleRate)
+        }));
+    }).catch(err => ({ ok: false, error: String((err && err.message) || err) })));
+    ipc.handle("ai:chat", async (e, { text }) => {
+        if (aiChatBusy) return { ok: false, error: "BUSY" };
+        aiChatBusy = true;
+        aiChatAbort = new AbortController();
+        const sendToken = t => { try { if (win && !win.isDestroyed()) win.webContents.send("ai-token", t); } catch (e2) {} };
+        try {
+            // Re-read settings.json every call so a provider change in the settings
+            // pane applies immediately, without restarting the app.
+            let cfg = { provider: "local", baseUrl: "http://127.0.0.1:8080", apiKey: "local", model: "qwen2.5-0.5b-instruct-q4_k_m" };
+            try { cfg = Object.assign(cfg, (JSON.parse(fs.readFileSync(settingsFile, "utf8")).claude) || {}); } catch (e3) {}
+            const isLocal = cfg.provider === "local";
+            if (isLocal) {
+                if (!LLM_GGUF) return { ok: false, error: "LOCAL_MODEL_MISSING" };
+                if (!await llmHealth()) {
+                    const r = await llmStart();
+                    if (!r.ok) return { ok: false, error: "LLM_NOT_READY" };
+                    let ready = false;
+                    for (let i = 0; i < 20; i++) { // ≤10s for the model to load
+                        if (await llmHealth()) { ready = true; break; }
+                        await new Promise(r2 => setTimeout(r2, 500));
+                    }
+                    if (!ready) return { ok: false, error: "LLM_NOT_READY" };
+                }
+            }
+            const baseUrl = (cfg.baseUrl || "http://127.0.0.1:8080").replace(/\/+$/, "");
+            const key = cfg.apiKey || "";
+            const resp = await fetch(baseUrl + "/v1/messages", {
+                method: "POST",
+                headers: {
+                    "content-type": "application/json",
+                    "x-api-key": key,
+                    "authorization": "Bearer " + key,
+                    "anthropic-version": "2023-06-01"
+                },
+                body: JSON.stringify({
+                    model: cfg.model || "qwen2.5-0.5b-instruct-q4_k_m",
+                    max_tokens: 1024,
+                    stream: true,
+                    system: "你是一个内置于 eDEX-OS 的语音助手。用简洁的中文直接回答，不要寒暄，不要解释你是 AI。",
+                    messages: [{ role: "user", content: text }]
+                }),
+                signal: aiChatAbort.signal
+            });
+            if (!resp.ok || !resp.body) return { ok: false, error: "NETWORK" };
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = "", full = "", doneFlag = false;
+            for (;;) {
+                if (doneFlag) break; // [DONE] sentinel ends the whole stream
+                const { done, value } = await reader.read();
+                if (done) break;
+                buf += decoder.decode(value, { stream: true });
+                let idx;
+                while ((idx = buf.indexOf("\n")) >= 0) {
+                    const line = buf.slice(0, idx).trim();
+                    buf = buf.slice(idx + 1);
+                    if (!line.startsWith("data:")) continue;
+                    const data = line.slice(5).trim();
+                    if (data === "[DONE]") { buf = ""; doneFlag = true; break; }
+                    let evt;
+                    try { evt = JSON.parse(data); } catch (e4) { continue; }
+                    if (evt.type === "content_block_delta" && evt.delta && typeof evt.delta.text === "string") {
+                        full += evt.delta.text;
+                        sendToken(evt.delta.text);
+                    }
+                }
+            }
+            if (full.trim()) aiChatPush(text, full);
+            return { ok: true, text: full };
+        } catch (err) {
+            return err && err.name === "AbortError" ? { ok: false, error: "ABORTED" } : { ok: false, error: "NETWORK" };
+        } finally {
+            aiChatBusy = false;
+            aiChatAbort = null;
+        }
+    });
+    ipc.on("ai:chat-abort", () => { if (aiChatAbort) aiChatAbort.abort(); });
+    ipc.handle("ai:history", () => ({ ok: true, history: aiChatHistory() }));
+    ipc.handle("ai:history-clear", () => {
+        try { fs.writeFileSync(aiChatHistoryFile, JSON.stringify([], "", 4)); } catch (e) {}
+        return { ok: true };
+    });
+
     // System update: sudo apt update && full-upgrade, streaming output to the
     // renderer (needs passwordless sudo + network — both set up at install).
     ipc.handle("system:update", () => new Promise(resolve => {
@@ -1942,11 +2109,13 @@ app.on('ready', async () => {
     // best-effort: a missing binary or invalid config just logs and stays off.
     if (clashConf().enabled) clashStart().then(r => { if (!r.ok) clashLogLine("[clash auto-start skipped: " + r.error + "]"); });
 
-    // Bundled local LLM auto-start (#144). Spawns at boot only when the claude
-    // tab is enabled AND pointed at the local model, so cloud-provider users
-    // never pay the ~1.5GB RSS for an unused model. A missing binary/model just
-    // logs and stays off, like clash.
-    if (claudeConf.enabled && claudeConf.provider === "local" && LLM_GGUF) {
+    // Bundled local LLM auto-start (#144). Spawns at boot when the claude tab is
+    // enabled AND pointed at the local model, or when the mic button is switched
+    // to AI-chat mode (which routes through the same local backend), so
+    // cloud-provider users never pay the ~1.5GB RSS for an unused model. A
+    // missing binary/model just logs and stays off, like clash.
+    if (LLM_GGUF && claudeConf.provider === "local" &&
+        (claudeConf.enabled || settings.voiceMicMode === "chat")) {
         llmStart().then(r => { if (!r.ok) llmLogLine("[llm auto-start skipped: " + r.error + "]"); });
     }
 

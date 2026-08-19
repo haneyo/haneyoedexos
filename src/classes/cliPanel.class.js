@@ -21,7 +21,11 @@ const _cliIpc = require("electron").ipcRenderer;
 // Entry icons come from window.iconLibrary (shared set, see iconLibrary.class.js).
 // Custom entries store an icon id; unknown / missing ids fall back to "terminal".
 
-window.cliApps = [
+// The app list is just {icon, name, launch cmd} per entry, so every entry —
+// including the built-ins — is user-editable. User edits live in localStorage
+// `edex_cli_apps`, where an entry whose id matches a built-in id OVERRIDES that
+// built-in, { _deleted: true } hides it, and any other entry is a custom app.
+const _CLI_BUILTIN = [
     { id: "claude", name: "Claude", cmd: ["claude"], icon: "ai" },
     // carbonyl bundles Chromium; Ubuntu 24.04 blocks its user-namespace sandbox
     // ("No usable sandbox!" FATAL), so the browser only runs with --no-sandbox
@@ -33,14 +37,35 @@ window.cliApps = [
     { id: "btop", name: "BTOP", cmd: ["btop"], icon: "monitor" }
 ];
 
-// Merge custom apps the user added via the "+ ADD APP" dialog.
-try {
-    const _u = JSON.parse(localStorage.getItem("edex_cli_apps") || "[]");
-    if (Array.isArray(_u)) _u.forEach(_a => {
-        if (_a && _a.cmd && _a.cmd[0] && !window.cliApps.some(_x => _x.id === _a.id))
-            window.cliApps.push({ id: _a.id, name: _a.name || _a.cmd[0], cmd: _a.cmd, icon: _a.icon || null });
+// (re)build the live app list: built-ins in order (overrides / tombstones
+// applied), then custom apps in add order. Called at load and after every
+// add / edit / delete.
+function _cliRebuildList() {
+    let _u = [];
+    try { _u = JSON.parse(localStorage.getItem("edex_cli_apps") || "[]"); } catch (e) {}
+    if (!Array.isArray(_u)) _u = [];
+    const _out = [];
+    _CLI_BUILTIN.forEach(_b => {
+        const _e = _u.find(_x => _x && _x.id === _b.id);
+        if (_e && _e._deleted) return;                  // tombstone → hidden
+        if (_e && _e.cmd && _e.cmd[0])                   // override → replaces built-in
+            _out.push({ id: _b.id, name: _e.name || _b.name, cmd: _e.cmd, icon: _e.icon || null });
+        else _out.push(Object.assign({}, _b));
     });
-} catch (e) {}
+    _u.forEach(_e => {                                   // custom apps, in add order
+        if (!_e || _e._deleted || !_e.cmd || !_e.cmd[0]) return;
+        if (_CLI_BUILTIN.some(_b => _b.id === _e.id)) return;
+        _out.push({ id: _e.id, name: _e.name || _e.cmd[0], cmd: _e.cmd, icon: _e.icon || null });
+    });
+    return _out;
+}
+window.cliApps = _cliRebuildList();
+
+// Row-action icons (theme-stroked inline SVG, same visual language as
+// iconLibrary) + a tiny HTML-attribute escaper for the edit modal.
+const _IC_EDIT = '<svg class="appmonitor_act_ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
+const _IC_DEL = '<svg class="appmonitor_act_ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>';
+const _esc = s => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 // ADD APP icon-picker callback: writes the chosen id into the hidden field and
 // reflects it on the picker button. Kept as a window helper so the modal's
@@ -91,6 +116,12 @@ class CliPanel {
             if (!_i) _t.closeMenu();
         });
         this.menu.addEventListener("keydown", e => {
+            // A real button (edit / delete / close-session) holds focus after
+            // Tab: let Enter/Space fire it natively; keep Escape closing.
+            if (e.target && e.target.closest && e.target.closest("button")) {
+                if (e.key === "Escape") { e.preventDefault(); _t.closeMenu(); }
+                return;
+            }
             const _o = _t.menu.querySelectorAll(".appmonitor_opt");
             if (!_o.length) return;
             e.stopPropagation();
@@ -183,14 +214,31 @@ class CliPanel {
             _nm.className = "appmonitor_name";
             _nm.textContent = _a.name;
             _opt.appendChild(_nm);
+            // Row actions, right-aligned: close session (running only), edit,
+            // delete. stopPropagation so they never launch the app.
+            const _acts = document.createElement("span");
+            _acts.className = "appmonitor_acts";
             if (_run && _run.term) {
                 const _cl = document.createElement("button");
                 _cl.className = "webapp_menu_del";
                 _cl.textContent = "×";
                 _cl.title = "关闭会话";
                 _cl.onclick = e => { e.stopPropagation(); this._closeSession(_a.id); };
-                _opt.appendChild(_cl);
+                _acts.appendChild(_cl);
             }
+            const _ed = document.createElement("button");
+            _ed.className = "appmonitor_act";
+            _ed.title = "编辑 " + _a.name;
+            _ed.innerHTML = _IC_EDIT;
+            _ed.onclick = e => { e.stopPropagation(); this._openEditor(_a); };
+            _acts.appendChild(_ed);
+            const _dl = document.createElement("button");
+            _dl.className = "appmonitor_act appmonitor_act_del";
+            _dl.title = "删除 " + _a.name;
+            _dl.innerHTML = _IC_DEL;
+            _dl.onclick = e => { e.stopPropagation(); this._askDelete(_a); };
+            _acts.appendChild(_dl);
+            _opt.appendChild(_acts);
             _opt.onclick = e => { e.stopPropagation(); this.select(_a); this.closeMenu(); };
             this.menu.appendChild(_opt);
         });
@@ -286,21 +334,29 @@ class CliPanel {
         this._renderMenu();
     }
 
-    _addApp() {
+    // Shared add / edit modal. app == null → add mode (empty fields, id derived
+    // from the command); else edit mode with name / command / icon pre-filled.
+    _openEditor(app) {
         this.closeMenu();
+        this._editingApp = app || null;
         try { if (window.cliAddModal && window.cliAddModal.close) window.cliAddModal.close(); } catch (_e) {}
         const _pn = "a" === this.monitorId ? "A" : "B";
+        const _editing = !!app;
         window.cliAddModal = new Modal({
             type: "custom",
-            title: "ADD APP",
+            title: _editing ? "EDIT: " + _esc(app.name) : "ADD APP",
             html: '<div class="appmonitor_add">'
-                + '<label>名称</label><input type="text" id="cli_add_name" placeholder="如 ncmpcpp" style="width:100%">'
-                + '<label>启动命令</label><input type="text" id="cli_add_cmd" placeholder="如 btop 或 ncmpcpp" style="width:100%">'
-                + '<label>图标</label><button type="button" id="cli_add_icon_btn" class="settings_net_btn" onclick="window.iconLibrary&&window.iconLibrary.pickerModal(window._cliPickIcon)">选择图标…</button>'
-                + '<input type="hidden" id="cli_add_icon" value="">'
+                + '<label>名称</label><input type="text" id="cli_add_name" placeholder="如 ncmpcpp" value="' + _esc(app && app.name) + '" style="width:100%">'
+                + '<label>启动命令</label><input type="text" id="cli_add_cmd" placeholder="如 btop 或 ncmpcpp" value="' + _esc(app && app.cmd.join(" ")) + '" style="width:100%">'
+                + '<label>图标</label><button type="button" id="cli_add_icon_btn" class="settings_net_btn" onclick="window.iconLibrary&&window.iconLibrary.pickerModal(window._cliPickIcon)">' + (app && app.icon ? "已选: " + _esc(app.icon) : "选择图标…") + '</button>'
+                + '<input type="hidden" id="cli_add_icon" value="' + _esc(app && app.icon) + '">'
                 + '</div>',
-            buttons: [{ label: "Add", action: "window.cliAddModal&&window.cliAddModal.close();window.appmonitor" + _pn + ".submitCliAdd()" }]
+            buttons: [{ label: _editing ? "Save" : "Add", action: "window.cliAddModal&&window.cliAddModal.close();window.appmonitor" + _pn + ".submitCliAdd()" }]
         });
+    }
+
+    _addApp() {
+        this._openEditor(null);
     }
 
     submitCliAdd() {
@@ -308,18 +364,70 @@ class CliPanel {
         const _in = document.getElementById("cli_add_cmd");
         const _icn = document.getElementById("cli_add_icon");
         if (!_in || !_in.value || !_in.value.trim()) { this._notify("请输入启动命令"); return; }
-        const _c = _in.value.trim().split(/\s+/), _id = "cli_" + _c[0].replace(/[^a-zA-Z0-9_-]/g, "");
+        const _c = _in.value.trim().split(/\s+/);
         const _name = (_nm && _nm.value && _nm.value.trim()) ? _nm.value.trim() : _c[0];
         const _icon = (_icn && _icn.value) ? _icn.value : null;
+        const _editing = this._editingApp || null;
+        const _id = _editing ? _editing.id : "cli_" + _c[0].replace(/[^a-zA-Z0-9_-]/g, "");
         let _u = [];
         try { _u = JSON.parse(localStorage.getItem("edex_cli_apps") || "[]"); } catch (_e) {}
         if (!Array.isArray(_u)) _u = [];
-        if (!_u.some(_x => _x.id === _id)) {
-            _u.push({ id: _id, name: _name, cmd: _c, icon: _icon });
-            try { localStorage.setItem("edex_cli_apps", JSON.stringify(_u)); } catch (_e) {}
-            window.cliApps.push({ id: _id, name: _name, cmd: _c, icon: _icon });
+        const _rec = { id: _id, name: _name, cmd: _c, icon: _icon };
+        if (_editing) {
+            // Editing: update the record (built-in override or custom), creating
+            // it on first edit of a never-persisted built-in.
+            const _hit = _u.find(_x => _x && _x.id === _id);
+            if (_hit) Object.assign(_hit, _rec);
+            else _u.push(_rec);
+        } else {
+            const _dup = _u.find(_x => _x && _x.id === _id);
+            if (_dup && !_dup._deleted) { this._notify("该应用已存在"); return; }
+            if (_dup) Object.assign(_dup, _rec, { _deleted: false });   // restore a deleted built-in
+            else _u.push(_rec);
         }
-        this._notify("已添加 " + _name);
+        try { localStorage.setItem("edex_cli_apps", JSON.stringify(_u)); } catch (_e) {}
+        this._editingApp = null;
+        window.cliApps = _cliRebuildList();
+        this._notify(_editing ? "已保存 " + _name : "已添加 " + _name);
+        this._renderMenu();
+    }
+
+    // Confirm before removing an app from the list. Built-ins are tombstoned
+    // (hidden) rather than hard-deleted, so re-adding the same command restores
+    // them with their original identity.
+    _askDelete(_a) {
+        this.closeMenu();
+        try { if (window.cliAddModal && window.cliAddModal.close) window.cliAddModal.close(); } catch (_e) {}
+        const _pn = "a" === this.monitorId ? "A" : "B";
+        const _isBuiltin = _CLI_BUILTIN.some(_b => _b.id === _a.id);
+        window.cliAddModal = new Modal({
+            type: "custom",
+            title: "删除 " + _esc(_a.name),
+            html: '<p style="margin:0 0 1vh;font-family:var(--font_main_light);font-size:1.2vh">'
+                + (_isBuiltin ? "从列表中移除内置应用 <b>" + _esc(_a.name) + "</b>?" : "删除应用 <b>" + _esc(_a.name) + "</b>?")
+                + "</p>",
+            buttons: [{ label: "删除", action: "window.cliAddModal&&window.cliAddModal.close();window.appmonitor" + _pn + ".confirmDelete('" + _a.id + "')" }],
+            closeLabel: "取消"
+        });
+    }
+
+    confirmDelete(_id) {
+        const _a = window.cliApps.find(_x => _x && _x.id === _id);
+        if (_a && this.sessions[_id]) this._closeSession(_id);
+        let _u = [];
+        try { _u = JSON.parse(localStorage.getItem("edex_cli_apps") || "[]"); } catch (_e) {}
+        if (!Array.isArray(_u)) _u = [];
+        if (_CLI_BUILTIN.some(_b => _b.id === _id)) {
+            const _hit = _u.find(_x => _x && _x.id === _id);
+            if (_hit) { Object.assign(_hit, { _deleted: true }); _hit.cmd = undefined; _hit.name = undefined; }
+            else _u.push({ id: _id, _deleted: true });
+        } else {
+            _u = _u.filter(_x => _x && _x.id !== _id);
+        }
+        try { localStorage.setItem("edex_cli_apps", JSON.stringify(_u)); } catch (_e) {}
+        window.cliApps = _cliRebuildList();
+        if (this.selected && this.selected.id === _id && this.labelEl) this.labelEl.textContent = this._label();
+        this._notify("已删除 " + (_a ? _a.name : _id));
         this._renderMenu();
     }
 
