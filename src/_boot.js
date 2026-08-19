@@ -1374,7 +1374,11 @@ app.on('ready', async () => {
     })));
     ipc.handle("tts:speak", (e, { text }) => ttsInit().then(r => {
         if (!r.ok) return { ok: false, error: r.error };
-        return ttsEngine.generateAsync({ text, sid: 0, speed: 1 }).then(audio => ({
+        // enableExternalBuffer: false — Electron ≥v21 forbids N-API external
+        // buffers (napi_no_external_buffers_allowed); sherpa's zero-copy result
+        // samples would throw "External buffers are not allowed" on the main
+        // thread (uncaught → crash). Ask for a plain copied ArrayBuffer instead.
+        return ttsEngine.generateAsync({ text, sid: 0, speed: 1, enableExternalBuffer: false }).then(audio => ({
             ok: true,
             wav: floatToWavBase64(audio.samples, audio.sampleRate)
         }));
