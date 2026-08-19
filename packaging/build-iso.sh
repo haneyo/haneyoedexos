@@ -195,14 +195,20 @@ for m in /proc /sys /dev; do sudo umount "$WORK/rootfs$m" 2>/dev/null || true; d
 # download/install FAILS the build instead of shipping an ISO whose browser tab
 # dies on launch.
 echo "[edex] installing carbonyl (Chromium terminal browser)"
-CARBONYL_VER="v0.0.3"
-if ! curl -fsSL --retry 2 -o "$WORK/carbonyl.zip" \
-        "https://github.com/fathyb/carbonyl/releases/download/$CARBONYL_VER/carbonyl.linux-amd64.zip"; then
+# jmagly/carbonyl fork (Chromium M147) — 0.0.3 (M111) is abandoned upstream and
+# its input layer fails to dispatch clicks/Enter to the page in the embedded
+# panel; the maintained fork carries the newer engine + input handling.
+CARBONYL_VER="v0.2.0-alpha.18"
+CARBONYL_ARCH="x86_64-unknown-linux-gnu"
+CARBONYL_TGZ="carbonyl-${CARBONYL_VER#v}-${CARBONYL_ARCH}.tgz"
+if ! curl -fsSL --retry 2 -o "$WORK/carbonyl.tgz" \
+        "https://github.com/jmagly/carbonyl/releases/download/$CARBONYL_VER/$CARBONYL_TGZ"; then
     echo "[edex] ERROR: carbonyl download failed — cannot build an ISO without the browser"; exit 1
 fi
 sudo rm -rf "$WORK/carbonyl-root"
-if ! sudo unzip -q "$WORK/carbonyl.zip" -d "$WORK/carbonyl-root"; then
-    echo "[edex] ERROR: carbonyl zip extract failed"; exit 1
+sudo mkdir -p "$WORK/carbonyl-root"
+if ! sudo tar xzf "$WORK/carbonyl.tgz" -C "$WORK/carbonyl-root"; then
+    echo "[edex] ERROR: carbonyl tgz extract failed"; exit 1
 fi
 # The zip layout is not documented — locate the executable defensively. Carbonyl
 # resolves its bundled Chromium resources relative to the binary, so we keep the
@@ -323,6 +329,10 @@ fi
 sudo mkdir -p "$WORK/rootfs/opt/edex"
 sudo cp "$EDEX_TO_BAKE" "$WORK/rootfs/opt/edex/eDEX-UI.AppImage"
 sudo chmod 755 "$WORK/rootfs/opt/edex/eDEX-UI.AppImage"
+# #136:carbonyl CLI 浏览器主页 = 本地深色搜索页(搜索栏 + 可更换搜索引擎),
+# carbonyl 启动 URL 指向 file:///opt/edex/cli-start.html(见 cliPanel.class.js)。
+sudo install -m 644 "$REPO_DIR/src/assets/browser/cli-start.html" "$WORK/rootfs/opt/edex/cli-start.html"
+echo "[edex] cli-start.html (carbonyl search page) OK"
 # Never ship a pre-created /home: a leftover directory from the build host (e.g.
 # /home/runner on a GitHub Actions runner) would leak into the squashfs, get
 # copied to every target disk, and then be mistaken for the real user by naive
