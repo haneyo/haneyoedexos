@@ -127,11 +127,11 @@ const DEFAULT_SETTINGS = {
     performanceMode: "",                 // CPU governor to apply at boot: "powersave" | "schedutil" | "performance" ("" = leave as-is)
     claude: {
         enabled: false,
-        provider: "",
-        baseUrl: "",
-        apiKey: "",
-        model: "",
-        haikuModel: ""
+        provider: "local",
+        baseUrl: "http://127.0.0.1:8080",
+        apiKey: "local",
+        model: "qwen2.5-0.5b-instruct-q4_k_m",
+        haikuModel: "qwen2.5-0.5b-instruct-q4_k_m"
     },
     appMonitor: {
         enabled: true,
@@ -500,12 +500,43 @@ app.on('ready', async () => {
     // service / API into every terminal's environment.
     const claudeConf = settings.claude || {};
     const claudeShell = await which("claude", { path: cleanEnv.PATH }).catch(() => null);
+    // Bundled local LLM (#144): /opt/edex/llm/ holds llama-server + the
+    // quantized GGUF, baked into the ISO by build-iso.sh. Absent on macOS
+    // preview and on installs that predate the feature, so every consumer must
+    // guard on LLM_GGUF being non-null.
+    const LLM_DIR = "/opt/edex/llm";
+    const LLM_BIN = process.platform === "linux" && fs.existsSync(path.join(LLM_DIR, "llama-server"))
+        ? path.join(LLM_DIR, "llama-server") : null;
+    const LLM_GGUF = LLM_BIN && fs.existsSync(path.join(LLM_DIR, "qwen2.5-0.5b-instruct-q4_k_m.gguf"))
+        ? path.join(LLM_DIR, "qwen2.5-0.5b-instruct-q4_k_m.gguf") : null;
     const claudeEnv = {};
     if (claudeConf.enabled) {
-        if (claudeConf.baseUrl) claudeEnv.ANTHROPIC_BASE_URL = claudeConf.baseUrl;
-        if (claudeConf.apiKey) claudeEnv.ANTHROPIC_API_KEY = claudeConf.apiKey;
-        if (claudeConf.model) claudeEnv.ANTHROPIC_MODEL = claudeConf.model;
-        if (claudeConf.haikuModel) claudeEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL = claudeConf.haikuModel;
+        // provider=local points the claude CLI at the bundled llama-server.
+        // If the model is missing (macOS preview / pre-#144 install) skip the
+        // injection entirely so claude falls back to its own defaults instead
+        // of erroring on a dead 127.0.0.1 endpoint.
+        const isLocal = claudeConf.provider === "local";
+        const llmReady = isLocal && !!LLM_GGUF;
+        if (!isLocal || llmReady) {
+            if (claudeConf.baseUrl) claudeEnv.ANTHROPIC_BASE_URL = claudeConf.baseUrl;
+            if (claudeConf.apiKey) claudeEnv.ANTHROPIC_API_KEY = claudeConf.apiKey;
+            if (claudeConf.model) claudeEnv.ANTHROPIC_MODEL = claudeConf.model;
+            if (claudeConf.haikuModel) claudeEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL = claudeConf.haikuModel;
+        }
+        // Offline hardening: claude's autoupdater/telemetry/org checks hit
+        // api.anthropic.com directly and would stall a no-network boot; the
+        // experimental-beta header is rejected by llama-server. The context cap
+        // must match llama-server's --ctx-size: claude sends its ~20k system
+        // prompt + conversation, and a default 8192 would 400 "exceeds context".
+        if (llmReady) {
+            claudeEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
+            claudeEnv.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = "1";
+            claudeEnv.CLAUDE_CODE_SKIP_FAST_MODE_NETWORK_ERRORS = "1";
+            claudeEnv.DISABLE_AUTOUPDATER = "1";
+            claudeEnv.CLAUDE_CODE_MAX_CONTEXT_TOKENS = "32768";
+        } else if (isLocal) {
+            signale.warn("claude provider=local but bundled model not found at " + LLM_DIR + " — skipping local env injection");
+        }
     }
 
     Object.assign(cleanEnv, {
@@ -1192,6 +1223,78 @@ app.on('ready', async () => {
         });
     }));
 
+    // ---- Bundled local LLM daemon (llama-server, #144) ----
+    // Mirrors the clash daemon: plain spawn of the baked binary with a log ring
+    // buffer pushed to the renderer. Started when settings.claude.provider ==
+    // "local" so the offline assistant works without network. On macOS preview
+    // there is no binary, so every handler reports the unavailable state.
+    let llmProc = null;
+    let llmRunning = false;
+    let llmLog = [];
+    const llmLogLine = line => {
+        llmLog.push(line);
+        if (llmLog.length > 400) llmLog.splice(0, llmLog.length - 400);
+        if (win && !win.isDestroyed()) win.webContents.send("llm-log", line);
+    };
+    // llama-server /health returns {"status":"ok"} once the model is loaded and
+    // serving. Poll it to report readiness without a fixed startup sleep.
+    const llmHealth = () => new Promise(resolve => {
+        const http = require("http");
+        const req = http.get({ host: "127.0.0.1", port: 8080, path: "/health", timeout: 1500 }, res => {
+            let d = ""; res.on("data", c => d += c);
+            res.on("end", () => resolve(String(d).includes("ok")));
+        });
+        req.on("error", () => resolve(false));
+        req.on("timeout", () => { req.destroy(); resolve(false); });
+    });
+    const llmStart = () => new Promise(resolve => {
+        if (!LLM_GGUF) return resolve({ ok: false, error: "NO_MODEL" });
+        if (llmRunning) return resolve({ ok: true, already: true });
+        // If the user already runs their own server on the port, adopt it.
+        llmHealth().then(healthy => {
+            if (healthy) { llmRunning = true; llmLogLine("[llama-server already up on :8080, adopting]"); return resolve({ ok: true }); }
+            const { spawn } = require("child_process");
+            const proc = spawn(LLM_BIN, ["-m", LLM_GGUF, "--host", "127.0.0.1", "--port", "8080",
+                // claude CLI 每次请求带 ~20k token 系统提示(ctx 必须 ≥32k 否则 400 exceeds context);
+                // KV q8_0 压 RSS ~0.7GB;--parallel 1 让单 slot 始终持有 warm 前缀,同目录重复会话命中 LCP 缓存
+                // (实测:M1 上首条 prefill 19.5k≈52s,缓存命中后只 prefill ~1.4k≈8s)
+                "--threads", "2", "--parallel", "1", "--ctx-size", "32768",
+                "--cache-type-k", "q8_0", "--cache-type-v", "q8_0",
+                "--alias", "qwen2.5-0.5b-instruct-q4_k_m"],
+                { stdio: ["ignore", "pipe", "pipe"] });
+            const pump = d => String(d).split("\n").forEach(l => l.trim() && llmLogLine(l.trim()));
+            proc.stdout.on("data", pump);
+            proc.stderr.on("data", pump);
+            proc.on("exit", code => { llmRunning = false; llmProc = null; llmLogLine("[llama-server exited, code " + code + "]"); });
+            proc.on("error", e => { llmRunning = false; llmProc = null; llmLogLine("[llama-server spawn error: " + e.message + "]"); resolve({ ok: false, error: "SPAWN_FAILED" }); });
+            global.llmProc = llmProc = proc;
+            llmRunning = true;
+            llmLogLine("[llama-server started " + LLM_BIN + "]");
+            resolve({ ok: true });
+        });
+    });
+    const llmStop = () => new Promise(resolve => {
+        if (llmProc) { try { llmProc.kill("SIGTERM"); } catch (e) {} }
+        llmProc = null; global.llmProc = null; llmRunning = false;
+        resolve({ ok: true });
+    });
+    ipc.handle("llm:status", () => new Promise(async resolve => {
+        const cfg = (settings.claude) || {};
+        resolve({
+            ok: true,
+            available: !!LLM_GGUF,
+            running: llmRunning,
+            ready: await llmHealth(),
+            port: 8080,
+            model: cfg.model || "qwen2.5-0.5b-instruct-q4_k_m",
+            log: llmLog.slice(-200)
+        });
+    }));
+    ipc.handle("llm:start", () => llmStart());
+    ipc.handle("llm:stop", () => llmStop());
+    ipc.handle("llm:set-enabled", (e, { enabled }) =>
+        enabled ? llmStart().then(r => ({ ok: !!r.ok })) : llmStop().then(() => ({ ok: true })));
+
     // System update: sudo apt update && full-upgrade, streaming output to the
     // renderer (needs passwordless sudo + network — both set up at install).
     ipc.handle("system:update", () => new Promise(resolve => {
@@ -1838,6 +1941,14 @@ app.on('ready', async () => {
     // Clash proxy daemon auto-start (settings.clash.enabled). Deliberately
     // best-effort: a missing binary or invalid config just logs and stays off.
     if (clashConf().enabled) clashStart().then(r => { if (!r.ok) clashLogLine("[clash auto-start skipped: " + r.error + "]"); });
+
+    // Bundled local LLM auto-start (#144). Spawns at boot only when the claude
+    // tab is enabled AND pointed at the local model, so cloud-provider users
+    // never pay the ~1.5GB RSS for an unused model. A missing binary/model just
+    // logs and stays off, like clash.
+    if (claudeConf.enabled && claudeConf.provider === "local" && LLM_GGUF) {
+        llmStart().then(r => { if (!r.ok) llmLogLine("[llm auto-start skipped: " + r.error + "]"); });
+    }
 
     // Re-apply the saved CPU performance mode (governor) on every boot.
     if (settings.performanceMode) {

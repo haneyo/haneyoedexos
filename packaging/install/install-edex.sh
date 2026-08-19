@@ -774,10 +774,11 @@ cat > "/home/$U/.config/eDEX-UI/settings.json" <<'SETTINGS'
     },
     "claude": {
         "enabled": true,
-        "baseUrl": "",
-        "apiKey": "",
-        "model": "",
-        "haikuModel": ""
+        "provider": "local",
+        "baseUrl": "http://127.0.0.1:8080",
+        "apiKey": "local",
+        "model": "qwen2.5-0.5b-instruct-q4_k_m",
+        "haikuModel": "qwen2.5-0.5b-instruct-q4_k_m"
     },
     "webapps": []
 }

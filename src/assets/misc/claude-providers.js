@@ -30,6 +30,16 @@ window.CLAUDE_PROVIDERS = [
         haikuModel: ""
     },
     {
+        id: "local",
+        label: "内置本地",
+        labelEn: "Built-in Local",
+        baseUrl: "http://127.0.0.1:8080",
+        models: ["qwen2.5-0.5b-instruct-q4_k_m"],
+        haikuModels: ["qwen2.5-0.5b-instruct-q4_k_m"],
+        model: "qwen2.5-0.5b-instruct-q4_k_m",
+        haikuModel: "qwen2.5-0.5b-instruct-q4_k_m"
+    },
+    {
         id: "anthropic",
         label: "Anthropic 官方",
         labelEn: "Anthropic Official",
