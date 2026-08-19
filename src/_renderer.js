@@ -1311,7 +1311,16 @@ async function initUI() {
             try {
                 const r = await ipc.invoke("voice:stop");
                 const text = String((r && r.text) || "").trim();
-                if (text) this._insert(text);
+                if (text) {
+                    // #151: with the mic switched to AI-chat mode the recognized
+                    // text goes to the assistant (typed toast + spoken reply)
+                    // instead of the terminal. A busy AI is aborted first so a
+                    // repeat press naturally starts a fresh exchange.
+                    if ((window.settings.voiceMicMode || "input") === "chat" && window.aiChat) {
+                        if (window.aiChat._busy) window.aiChat.cancel();
+                        window.aiChat.ask(text);
+                    } else this._insert(text);
+                }
                 return text;
             } catch (e) { return ""; }
         },
@@ -1333,6 +1342,14 @@ async function initUI() {
             b.title = recording ? "Listening… (click to stop)" : "Voice input (click to talk)";
         },
         toggle() {
+            // #151: in chat mode a click while the AI is replying aborts it
+            // (so a second click starts a fresh question) instead of recording
+            // over a busy assistant.
+            if ((window.settings.voiceMicMode || "input") === "chat" &&
+                window.aiChat && window.aiChat._busy) {
+                window.aiChat.cancel();
+                return;
+            }
             if (this._recording) this.stop();
             else this.start();
         }
@@ -1398,6 +1415,145 @@ async function initUI() {
         if (winVoiceTimer) { clearTimeout(winVoiceTimer); winVoiceTimer = null; }
         if (window.voiceInput && window.voiceInput._recording) window.voiceInput.stop();
     });
+
+    // ---- AI chat (#151): mic in "chat" mode ----
+    // When settings.voiceMicMode === "chat", the recognized text goes to the
+    // AI instead of the terminal. The reply streams in via ai-token events, is
+    // typed out letter-by-letter in a small toast above the mic (auto-dismisses
+    // ~6s after the last token), and complete sentences are spoken with the
+    // bundled sherpa-onnx TTS. `_gen` invalidates stale async completions so a
+    // cancel() racing a fresh ask() can never repaint the old reply.
+    window.aiChat = {
+        _busy: false, _gen: 0, _buf: "", _shown: 0, _flushFrom: 0,
+        _timer: null, _toast: null, _label: null, _text: null,
+        _queue: [], _playing: false, _audio: null, _dismiss: null,
+        ask(text) {
+            if (this._busy) { this._showErr("busy"); return; }
+            const gen = ++this._gen;
+            this._busy = true;
+            this._buf = ""; this._shown = 0; this._flushFrom = 0; this._queue = [];
+            this._playing = false; // a cancelled playback may have left _playing stuck true
+            this._stopAudio();
+            this._ensureToast();
+            if (this._label) this._label.textContent = window.t("ai.thinking");
+            if (this._text) this._text.textContent = "";
+            ipc.invoke("ai:chat", { text }).then(r => {
+                if (gen !== this._gen) return; // superseded by cancel()/a newer ask
+                this._busy = false;
+                this._stopType();
+                this._shown = this._buf.length;
+                if (this._text) this._text.textContent = this._buf;
+                if (r && r.ok) {
+                    this._flushTail();
+                    this._scheduleDismiss(6000);
+                } else {
+                    this._flushTail();
+                    this._showErr((r && r.error) || "network");
+                }
+            });
+            this._startType();
+        },
+        cancel() {
+            ++this._gen;                       // invalidate the pending invoke's .then
+            try { ipc.send("ai:chat-abort"); } catch (e) {}
+            this._busy = false;
+            this._stopType();
+            this._playing = false; // _stopAudio() detaches the onended fin callback, so reset the serial lock here
+            this._stopAudio();
+            this._queue = [];
+            this._scheduleDismiss(1500);
+        },
+        _ensureToast() {
+            if (this._toast) return;
+            const toast = document.createElement("div");
+            toast.id = "edex_ai_toast";
+            toast.className = "browser_toast show";
+            const label = document.createElement("span");
+            label.className = "ai_toast_label";
+            const text = document.createElement("span");
+            text.className = "ai_toast_text";
+            toast.appendChild(label);
+            toast.appendChild(text);
+            document.body.appendChild(toast);
+            this._toast = toast; this._label = label; this._text = text;
+        },
+        _startType() {
+            if (this._timer) return;
+            this._timer = setInterval(() => {
+                if (this._shown < this._buf.length) {
+                    this._shown++;
+                    if (this._text) this._text.textContent = this._buf.slice(0, this._shown);
+                    this._flushSentences();
+                }
+            }, 25);
+        },
+        _stopType() { if (this._timer) { clearInterval(this._timer); this._timer = null; } },
+        // Queue complete sentences (terminated by 。！？!?. or a newline) for TTS
+        // as they scroll past the typewriter's cursor, so speech tracks what is
+        // on screen instead of reading the whole reply ahead of time.
+        _flushSentences() {
+            const typed = this._buf.slice(0, this._shown);
+            const re = /[^。！？!?.\n]+[。！？!?.\n]+/g;
+            re.lastIndex = this._flushFrom;
+            let m;
+            while ((m = re.exec(typed))) {
+                const sent = m[0].trim();
+                this._flushFrom = m.index + m[0].length;
+                if (sent) this._queue.push(sent);
+            }
+            this._playNext();
+        },
+        _flushTail() {
+            const tail = this._buf.slice(this._flushFrom).trim();
+            if (tail) this._queue.push(tail);
+            this._flushFrom = this._buf.length;
+            this._playNext();
+        },
+        _playNext() {
+            if (this._playing || !this._queue.length) return;
+            const sent = this._queue.shift();
+            this._playing = true;
+            ipc.invoke("tts:speak", { text: sent }).then(r => {
+                if (!r || !r.ok || !r.wav) { this._playing = false; this._playNext(); return; }
+                this._playWav(r.wav, () => { this._playing = false; this._playNext(); });
+            }).catch(() => { this._playing = false; this._playNext(); });
+        },
+        _playWav(b64, onEnd) {
+            try {
+                const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+                const url = URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
+                const a = new Audio(url);
+                this._audio = a;
+                const fin = () => { URL.revokeObjectURL(url); this._audio = null; if (onEnd) onEnd(); };
+                a.onended = fin;
+                a.onerror = fin;
+                a.play().catch(fin);
+            } catch (e) { if (onEnd) onEnd(); }
+        },
+        _stopAudio() {
+            if (this._audio) {
+                try { this._audio.pause(); this._audio.onended = null; this._audio.onerror = null; } catch (e) {}
+                this._audio = null;
+            }
+        },
+        _scheduleDismiss(ms) {
+            clearTimeout(this._dismiss);
+            this._dismiss = setTimeout(() => {
+                if (this._toast) this._toast.classList.remove("show");
+            }, ms);
+        },
+        _showErr(code) {
+            const key = code === "LOCAL_MODEL_MISSING" ? "ai.err.localModel"
+                : code === "LLM_NOT_READY" ? "ai.err.llm"
+                : code === "TTS_MODEL_NOT_FOUND" ? "ai.err.ttsModel"
+                : code === "BUSY" ? "ai.busy"
+                : "ai.err.network";
+            if (this._label) this._label.textContent = window.t(key);
+            this._scheduleDismiss(4000);
+        }
+    };
+    // Streamed reply tokens from the main process feed the typewriter buffer.
+    ipc.on("ai-token", (e, text) => { if (window.aiChat && text) window.aiChat._buf += text; });
 
     // ---- Module click → detail/action modals (all CLI-backed) ----
     window.sysCmd = {
@@ -2484,6 +2640,36 @@ async function initUI() {
                 else el.textContent = zh ? "未启动" : "stopped";
             }).catch(() => {});
         },
+        refreshAiTtsStatus() {
+            ipc.invoke("tts:status").then(st => {
+                const el = document.getElementById("settingsAiTtsStatus");
+                if (!el) return;
+                const zh = window.settings.language === "zh";
+                if (st && st.ready) el.textContent = zh ? "已就绪" : "ready";
+                else if (st && st.available) el.textContent = zh ? "模型加载中…" : "loading…";
+                else el.textContent = zh ? "未安装" : "not bundled";
+            }).catch(() => {});
+        },
+        refreshAiHistory() {
+            ipc.invoke("ai:history").then(r => {
+                const box = document.getElementById("settingsAiHistoryList");
+                if (!box) return;
+                const h = (r && r.ok && r.history) || [];
+                if (!h.length) { box.innerHTML = `<span class="settings_net_info">${window.t("settings.ai.history.historyEmpty")}</span>`; return; }
+                box.innerHTML = h.slice().reverse().map((p, i) => `
+                    <div class="appmgr_row ai_hist_row" tabindex="-1">
+                        <span class="ai_hist_role ai_hist_user">${window.t("ai.hist.user")}</span>
+                        <span class="ai_hist_body">${window._escapeHtml(p.user || "")}</span>
+                    </div>
+                    <div class="appmgr_row ai_hist_row" tabindex="-1">
+                        <span class="ai_hist_role ai_hist_ai">${window.t("ai.hist.ai")}</span>
+                        <span class="ai_hist_body">${window._escapeHtml(p.assistant || "")}</span>
+                    </div>`).join("");
+            }).catch(() => {});
+        },
+        clearAiHistory() {
+            ipc.invoke("ai:history-clear").then(() => this.refreshAiHistory());
+        },
         refreshLastUpdate() {
             ipc.invoke("apt:last-update").then(r => {
                 const el = document.getElementById("settingsUpLastUpdate");
@@ -3542,6 +3728,17 @@ window.openSettings = async () => {
                 <div class="mod_loc_list"></div>
             </div>`, "settings.claude.haikuModel.help"),
             section("settings.section.claudeNote"),
+            section("settings.section.aiChat"),
+            settingsRow("settings.voice.micMode", `<select id="settingsEditor-voiceMicMode">
+                <option value="input" ${(window.settings.voiceMicMode || "input") === "input" ? "selected" : ""}>${t("settings.voice.micMode.input")}</option>
+                <option value="chat" ${(window.settings.voiceMicMode || "input") === "chat" ? "selected" : ""}>${t("settings.voice.micMode.chat")}</option>
+            </select>`, "settings.voice.micMode.help"),
+            settingsRow("settings.ai.ttsStatus", `<div class="settings_ver_row"><span id="settingsAiTtsStatus" class="settings_net_info">–</span></div>`, "settings.ai.ttsStatus.help"),
+            settingsRow("settings.ai.history", `<div id="settingsAiHistoryList" class="settings_net_list" augmented-ui="bl-clip tr-clip exe"></div>
+                <div class="settings_net_actions">
+                    <button type="button" id="settingsAiHistoryRefresh" class="settings_net_btn">${t("settings.ai.history.historyRefresh")}</button>
+                    <button type="button" id="settingsAiHistoryClear" class="settings_net_btn">${t("settings.ai.history.historyClear")}</button>
+                </div>`),
         ].join("") },
         { id: "updates", titleKey: "settings.cat.updates", html: () => [
             section("settings.section.updatesApp"),
@@ -3693,6 +3890,34 @@ window.openSettings = async () => {
         if (window.setupSettingsComboboxes) window.setupSettingsComboboxes();
         if (window.sysCmd.applyClaudeProvider) window.sysCmd.applyClaudeProvider(false);
         if (window.sysCmd.refreshLlmStatus) window.sysCmd.refreshLlmStatus();
+        // #151 AI-chat category bindings: TTS status + the chat-history list
+        // (refresh/clear buttons, keyboard-driven rows like the app manager).
+        if (window.sysCmd.refreshAiTtsStatus) window.sysCmd.refreshAiTtsStatus();
+        const bindAi = (id, fn) => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener("click", fn);
+        };
+        bindAi("settingsAiHistoryRefresh", () => window.sysCmd.refreshAiHistory());
+        bindAi("settingsAiHistoryClear", () => window.sysCmd.clearAiHistory());
+        if (window.sysCmd.refreshAiHistory) {
+            window.sysCmd.refreshAiHistory();
+            const histBox = document.getElementById("settingsAiHistoryList");
+            if (histBox) histBox.onkeydown = e => {
+                const rows = histBox.querySelectorAll(".appmgr_row");
+                if (!rows.length) return;
+                if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                    e.preventDefault(); e.stopPropagation();
+                    let idx = -1; rows.forEach((r, i) => { if (r.classList.contains("active")) idx = i; });
+                    idx = e.key === "ArrowDown" ? Math.min(idx + 1, rows.length - 1) : Math.max(idx - 1, 0);
+                    rows.forEach(r => r.classList.remove("active"));
+                    rows[idx].classList.add("active");
+                    try { rows[idx].scrollIntoView({ block: "nearest" }); } catch (e2) {}
+                } else if (e.key === "Escape") {
+                    e.stopPropagation();
+                    rows.forEach(r => r.classList.remove("active"));
+                }
+            };
+        }
         // Clash category bindings: the enabled toggle is live (applies the
         // system proxy now AND persists so boot auto-start sees it); the action
         // buttons map straight onto window.clash; then pull current daemon state.
@@ -4597,6 +4822,8 @@ window.writeSettingsFile = () => {
         model: document.getElementById("settingsEditor-claude-model").value,
         haikuModel: document.getElementById("settingsEditor-claude-haikuModel").value
     };
+    const micModeEl = document.getElementById("settingsEditor-voiceMicMode");
+    if (micModeEl) s.voiceMicMode = micModeEl.value;
     // appMonitor is not rebuilt from the form here: the backend server always
     // runs (it powers tab 5's experimental GUI-app entry) and picks up its
     // defaults / stored values from _boot.js on startup. The one UI-editable

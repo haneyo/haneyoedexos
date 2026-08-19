@@ -157,6 +157,7 @@ cat > "/home/$U/.config/eDEX-UI/settings.json" <<'SETTINGS'
         "model": "",
         "haikuModel": ""
     },
+    "voiceMicMode": "input",
     "webapps": []
 }
 SETTINGS

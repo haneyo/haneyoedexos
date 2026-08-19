@@ -852,6 +852,14 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
     padding: 0.4vh 0;
     font-family: var(--font_main_light);
 }
+.webapp_menu:focus,
+.webapp_menu:focus-visible {
+    /* The menu is deliberately focused on open (tabindex="-1") so arrow keys
+       work; Chromium's :focus-visible ring would otherwise draw a second
+       (white) outline on top of the themed border above. Drop it. */
+    outline: none;
+    box-shadow: none;
+}
 .webapp_menu_opt {
     display: flex;
     align-items: center;
@@ -894,6 +902,38 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
 .webapp_menu_opt .webapp_menu_del:hover {
     opacity: 1;
     color: #ff6b6b;
+}
+/* Right-aligned row action buttons (close session ×, edit, delete app) — same
+   always-visible-but-dimmed affordance as the close-session ×. */
+.appmonitor_acts {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2vh;
+}
+.appmonitor_acts .webapp_menu_del {
+    margin-left: 0;
+}
+.appmonitor_act {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    padding: 0.2vh 0.3vh;
+    opacity: 0.4;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.appmonitor_act:hover {
+    opacity: 1;
+}
+.appmonitor_act_del:hover {
+    color: #ff6b6b;
+}
+.appmonitor_act_ic {
+    width: 1.7vh;
+    height: 1.7vh;
 }
 
 /* ---- App monitor (terminal tabs 4/5) menu extras ---- */
@@ -1020,6 +1060,29 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
 .browser_toast.show {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
+}
+
+/* AI-chat reply toast (#151): reuses the .browser_toast look but wraps long
+   Chinese replies and carries a small caption above the typewriter body. */
+#edex_ai_toast {
+    max-width: 64vh;
+    white-space: pre-wrap;
+    word-break: break-all;
+    text-align: left;
+    line-height: 1.5;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4vh;
+}
+#edex_ai_toast .ai_toast_label {
+    font-size: 1.05vh;
+    letter-spacing: 0.12vh;
+    text-transform: uppercase;
+    opacity: 0.65;
+}
+#edex_ai_toast .ai_toast_text {
+    max-height: 18vh;
+    overflow-y: auto;
 }
 
 /* ---- Floating fullscreen toggle for the webapp view ---- */

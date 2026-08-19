@@ -339,6 +339,24 @@ sudo cp "$WORK/llm-qwen05.gguf" "$WORK/rootfs/opt/edex/llm/qwen2.5-0.5b-instruct
 sudo tar -xzf "$WORK/llama-b10488-ubuntu.tar.gz" -C "$WORK/rootfs/opt/edex/llm" --strip-components=1
 [ -x "$WORK/rootfs/opt/edex/llm/llama-server" ] || { echo "[edex] ERROR: llama-server missing after extract" >&2; exit 1; }
 
+# Bake in the offline Chinese TTS model (sherpa-onnx VITS fanchen) so AI-chat
+# voice replies work with zero network at run time. Same HARD-dependency policy
+# as the ASR/LLM blocks: a download/extract/hash mismatch aborts the build. The
+# archive keeps its "vits-zh-hf-fanchen-C/" prefix (mirroring the ASR extract
+# above) — src/_boot.js ttsModelDirs() resolves that exact path.
+echo "[edex] baking in offline TTS model (sherpa-onnx vits-zh-hf-fanchen-C)"
+TTS_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-hf-fanchen-C.tar.bz2"
+TTS_SHA="523aae3e6cf1bef3c05e2b0105d1ee15d53987a3bb559f78ba84fb7c4f990bd6"
+curl -fSL --retry 3 --retry-delay 5 -o "$WORK/zh-tts.tar.bz2" "$TTS_URL"
+if [ ! -s "$WORK/zh-tts.tar.bz2" ]; then
+    echo "[edex] ERROR: TTS download produced an empty file" >&2
+    exit 1
+fi
+echo "$TTS_SHA  $WORK/zh-tts.tar.bz2" | sha256sum -c - >/dev/null || { echo "[edex] ERROR: TTS model sha256 mismatch" >&2; exit 1; }
+sudo tar -xjf "$WORK/zh-tts.tar.bz2" -C "$WORK/rootfs/opt/edex/models"
+[ -f "$WORK/rootfs/opt/edex/models/vits-zh-hf-fanchen-C/vits-zh-hf-fanchen-C.onnx" ] \
+    || { echo "[edex] ERROR: TTS onnx missing after extract" >&2; exit 1; }
+
 # Bake the eDEX AppImage straight into the image.
 # First apply the keyboard.class.js fix (empty-NodeList TypeError on every Enter)
 # so every shipped ISO carries the patch. Fail soft: a stock AppImage still boots,
