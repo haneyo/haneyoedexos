@@ -358,11 +358,31 @@
     display: flex;
     flex-direction: column;
     width: 30vh;
+    position: relative; /* anchor for the SPECTRUM/WAVEFORM toggle button */
     background: rgba(5, 8, 13, 0.88);
     border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.4);
     border-radius: 0.4vh;
     padding: 0.8vh;
     font-family: var(--font_main_light);
+}
+/* SPECTRUM / WAVEFORM mode toggle, pinned to the controller's top-left. */
+.mini_audio_mode {
+    position: absolute;
+    top: 0.3vh;
+    left: 0.3vh;
+    z-index: 1;
+    background: rgba(5, 8, 13, 0.85);
+    border: 0.1vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    border-radius: 0.3vh;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 1vh;
+    letter-spacing: 0.1vh;
+    padding: 0.25vh 0.6vh;
+    cursor: pointer;
+}
+.mini_audio_mode:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.3);
 }
 .mini_audio_canvas {
     width: 100%;
