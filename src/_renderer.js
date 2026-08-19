@@ -2473,6 +2473,17 @@ async function initUI() {
                 set("settingsUpAercVer", (st.aerc && st.aerc.version) ? "v" + st.aerc.version : "–");
             }).catch(() => {});
         },
+        refreshLlmStatus() {
+            ipc.invoke("llm:status").then(st => {
+                const el = document.getElementById("settingsLlmStatus");
+                if (!el) return;
+                if (!st || !st.available) { el.textContent = (window.settings.language === "zh") ? "未安装" : "not bundled"; return; }
+                const zh = window.settings.language === "zh";
+                if (st.ready) el.textContent = zh ? ("运行中 · :" + st.port) : ("ready · :" + st.port);
+                else if (st.running) el.textContent = zh ? "模型加载中…" : "loading…";
+                else el.textContent = zh ? "未启动" : "stopped";
+            }).catch(() => {});
+        },
         refreshLastUpdate() {
             ipc.invoke("apt:last-update").then(r => {
                 const el = document.getElementById("settingsUpLastUpdate");
@@ -3509,6 +3520,7 @@ window.openSettings = async () => {
             settingsRow("settings.claude.provider", `<select id="settingsEditor-claude-provider" onchange="window.sysCmd.applyClaudeProvider()">
                 ${(window.CLAUDE_PROVIDERS || []).map(p => `<option value="${p.id}"${(window.settings.claude && window.settings.claude.provider === p.id) ? " selected" : ""}>${(window.settings.language === "zh") ? p.label : p.labelEn}</option>`).join("")}
             </select>`, "settings.claude.provider.help"),
+            settingsRow("settings.claude.llmStatus", `<div class="settings_ver_row"><span id="settingsLlmStatus" class="settings_net_info">–</span></div>`, "settings.claude.llmStatus.help"),
             settingsRow("settings.claude.baseUrl", `<input type="text" id="settingsEditor-claude-baseUrl" value="${(window.settings.claude || {}).baseUrl || ''}">`, "settings.claude.baseUrl.help"),
             settingsRow("settings.claude.apiKey", `<div class="settings_api_pw">
                 <input type="password" id="settingsEditor-claude-apiKey" autocomplete="off" value="${(window.settings.claude || {}).apiKey || ''}">
@@ -3680,6 +3692,7 @@ window.openSettings = async () => {
         // clobbered).
         if (window.setupSettingsComboboxes) window.setupSettingsComboboxes();
         if (window.sysCmd.applyClaudeProvider) window.sysCmd.applyClaudeProvider(false);
+        if (window.sysCmd.refreshLlmStatus) window.sysCmd.refreshLlmStatus();
         // Clash category bindings: the enabled toggle is live (applies the
         // system proxy now AND persists so boot auto-start sees it); the action
         // buttons map straight onto window.clash; then pull current daemon state.

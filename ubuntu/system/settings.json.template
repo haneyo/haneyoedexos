@@ -27,11 +27,11 @@
     },
     "claude": {
         "enabled": true,
-        "provider": "deepseek",
-        "baseUrl": "https://api.deepseek.com/anthropic",
-        "apiKey": "<your-api-key>",
-        "model": "deepseek-v4-flash",
-        "haikuModel": "deepseek-v4-flash"
+        "provider": "local",
+        "baseUrl": "http://127.0.0.1:8080",
+        "apiKey": "local",
+        "model": "qwen2.5-0.5b-instruct-q4_k_m",
+        "haikuModel": "qwen2.5-0.5b-instruct-q4_k_m"
     },
     "webapps": [
         {

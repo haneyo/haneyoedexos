@@ -314,6 +314,31 @@ else
     exit 1
 fi
 
+# Bake in the bundled offline LLM (Qwen2.5-0.5B q4_k_m GGUF + llama.cpp
+# llama-server) so the claude tab's "内置本地" provider works with zero network.
+# HARD dependency, same policy as the ASR model: a download/extract/hash
+# mismatch aborts the build — a silently-missing model ships an ISO where the
+# local provider shows "未安装" and claude can't start.
+# Layout must match LLM_DIR="/opt/edex/llm" in src/_boot.js: llama-server + its
+# *.so next to the GGUF, flat (the tarball's "llama-b10488/" prefix is stripped).
+echo "[edex] baking in bundled offline LLM (Qwen2.5-0.5B q4_k_m + llama-server b10488)"
+sudo mkdir -p "$WORK/rootfs/opt/edex/llm"
+LLM_GGUF_URL="https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+LLM_GGUF_SHA="74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db"
+LLM_RUN_URL="https://github.com/ggml-org/llama.cpp/releases/download/b10488/llama-b10488-bin-ubuntu-x64.tar.gz"
+LLM_RUN_SHA="5a7073371d5a9b8e39978b35f49b2ff244f7a064edb92f0326d94e12b52261dd"
+curl -fSL --retry 3 --retry-delay 5 -o "$WORK/llm-qwen05.gguf" "$LLM_GGUF_URL"
+curl -fSL --retry 3 --retry-delay 5 -o "$WORK/llama-b10488-ubuntu.tar.gz" "$LLM_RUN_URL"
+if [ ! -s "$WORK/llm-qwen05.gguf" ] || [ ! -s "$WORK/llama-b10488-ubuntu.tar.gz" ]; then
+    echo "[edex] ERROR: LLM download produced an empty file" >&2
+    exit 1
+fi
+echo "$LLM_GGUF_SHA  $WORK/llm-qwen05.gguf" | sha256sum -c - >/dev/null || { echo "[edex] ERROR: LLM GGUF sha256 mismatch" >&2; exit 1; }
+echo "$LLM_RUN_SHA  $WORK/llama-b10488-ubuntu.tar.gz" | sha256sum -c - >/dev/null || { echo "[edex] ERROR: llama.cpp sha256 mismatch" >&2; exit 1; }
+sudo cp "$WORK/llm-qwen05.gguf" "$WORK/rootfs/opt/edex/llm/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+sudo tar -xzf "$WORK/llama-b10488-ubuntu.tar.gz" -C "$WORK/rootfs/opt/edex/llm" --strip-components=1
+[ -x "$WORK/rootfs/opt/edex/llm/llama-server" ] || { echo "[edex] ERROR: llama-server missing after extract" >&2; exit 1; }
+
 # Bake the eDEX AppImage straight into the image.
 # First apply the keyboard.class.js fix (empty-NodeList TypeError on every Enter)
 # so every shipped ISO carries the patch. Fail soft: a stock AppImage still boots,
