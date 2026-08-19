@@ -165,6 +165,13 @@ case "${1:-}" in
     set)  pactl set-sink-volume @DEFAULT_SINK@ "${2:-50}%" 2>/dev/null || amixer -q sset Master "${2:-50}%" || true ;;
     *)    exit 0 ;;
 esac
+# Read the resulting state and tell the running eDEX UI to show the small OSD
+# toast (volume bar / mute icon) — Fn-key feedback, no-op if the app is not up.
+PCT=$(pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null | grep -oE '[0-9]+%' | head -1 | tr -d '%')
+[ -n "$PCT" ] || PCT=$(amixer sget Master 2>/dev/null | grep -oE '\[[0-9]+%\]' | head -1 | tr -d '[]%')
+MUT=false; pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null | grep -qi yes && MUT=true
+curl -s -m 1 -X POST http://127.0.0.1:17323/osd \
+    -d "{\"type\":\"volume\",\"value\":${PCT:-0},\"muted\":${MUT}}" >/dev/null 2>&1 || true
 VOL
 chmod +x /usr/local/sbin/edex-volume.sh
 cat > /usr/local/sbin/edex-brightness.sh <<'BRI'
@@ -186,8 +193,41 @@ esac
 [ "$VAL" -gt "$MAX" ] && VAL=$MAX
 if [ -w "$B" ]; then echo "$VAL" > "$B" 2>/dev/null || true
 else echo "$VAL" | sudo -n tee "$B" >/dev/null 2>&1 || true; fi
+# Tell the running eDEX UI to show the small brightness OSD toast (Fn-key feedback).
+PCT=$(( VAL * 100 / MAX ))
+curl -s -m 1 -X POST http://127.0.0.1:17323/osd \
+    -d "{\"type\":\"brightness\",\"value\":$PCT}" >/dev/null 2>&1 || true
 BRI
 chmod +x /usr/local/sbin/edex-brightness.sh
+cat > /usr/local/sbin/edex-kbdbacklight.sh <<'KBD'
+#!/usr/bin/env bash
+# Keyboard-backlight helper for the Fn keys (XF86KbdBrightnessUp/Down). Most
+# laptops expose it as an LED in /sys/class/leds with brightness 0..max; the
+# eDEX settings dropdown controls the same device. No-op on machines without
+# a keyboard LED (desktop / external KB).
+B=""
+for d in /sys/class/leds/*/brightness; do
+    [ -f "$d" ] || continue
+    case "$(basename "$(dirname "$d")")" in *kbd*|*KBD*|*keyboard*|*kbd_backlight*) B="$d"; break;; esac
+done
+[ -n "$B" ] || exit 0
+MAX=$(cat "${B%/brightness}/max_brightness" 2>/dev/null || echo 2)
+CUR=$(cat "$B" 2>/dev/null || echo 0)
+case "${1:-}" in
+    up)   VAL=$((CUR + 1)) ;;
+    down) VAL=$((CUR - 1)) ;;
+    *)    exit 0 ;;
+esac
+[ "$VAL" -lt 0 ] && VAL=0
+[ "$VAL" -gt "$MAX" ] && VAL=$MAX
+if [ -w "$B" ]; then echo "$VAL" > "$B" 2>/dev/null || true
+else echo "$VAL" | sudo -n tee "$B" >/dev/null 2>&1 || true; fi
+# Tell the running eDEX UI to show the small keyboard-backlight OSD toast.
+PCT=$(( VAL * 100 / MAX ))
+curl -s -m 1 -X POST http://127.0.0.1:17323/osd \
+    -d "{\"type\":\"kbdbacklight\",\"value\":$PCT}" >/dev/null 2>&1 || true
+KBD
+chmod +x /usr/local/sbin/edex-kbdbacklight.sh
 cat > /etc/xdg/openbox/rc.xml <<'OPENBOX'
 <?xml version="1.0" encoding="UTF-8"?>
 <openbox_config xmlns="http://openbox.org/3.4/rc">
@@ -203,6 +243,8 @@ cat > /etc/xdg/openbox/rc.xml <<'OPENBOX'
     <keybind key="XF86AudioMute"><action name="Execute"><command>/usr/local/sbin/edex-volume.sh mute</command></action></keybind>
     <keybind key="XF86MonBrightnessUp"><action name="Execute"><command>/usr/local/sbin/edex-brightness.sh up</command></action></keybind>
     <keybind key="XF86MonBrightnessDown"><action name="Execute"><command>/usr/local/sbin/edex-brightness.sh down</command></action></keybind>
+    <keybind key="XF86KbdBrightnessUp"><action name="Execute"><command>/usr/local/sbin/edex-kbdbacklight.sh up</command></action></keybind>
+    <keybind key="XF86KbdBrightnessDown"><action name="Execute"><command>/usr/local/sbin/edex-kbdbacklight.sh down</command></action></keybind>
     <!-- Power button: logind is told to ignore the ACPI power key (edex.conf),
          so it reaches X as XF86PowerOff and opens the in-app POWER menu. -->
     <keybind key="XF86PowerOff"><action name="Execute"><command>/usr/local/sbin/edex-power-menu.sh</command></action></keybind>

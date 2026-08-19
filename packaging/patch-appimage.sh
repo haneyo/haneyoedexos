@@ -649,6 +649,16 @@ const NEW_LOCK2_PREFIX = '_teardownLock(e){this._term&&this._origSend&&(this._te
 const VOICE_F9_REGEX = /document\.addEventListener\("keydown",([a-zA-Z_$][\w$]*)=>\{"F9"===\1\.key&&!\1\.repeat&&([a-zA-Z_$][\w$]*)\(\)&&\(\1\.preventDefault\(\),\1\.stopPropagation\(\),window\.voiceInput\.start\(\)\)\}\),document\.addEventListener\("keyup",\1=>\{"F9"===\1\.key&&\2\(\)&&\(\1\.preventDefault\(\),\1\.stopPropagation\(\),window\.voiceInput\.stop\(\)\)\}\)/;
 const VOICE_WIN_NEW = `(()=>{let winVoiceTimer=null;document.addEventListener("keydown",e=>{e.metaKey&&!(e.key==="Meta"||e.code==="MetaLeft"||e.code==="MetaRight")&&winVoiceTimer&&(clearTimeout(winVoiceTimer),winVoiceTimer=null),(e.key==="Meta"||e.code==="MetaLeft"||e.code==="MetaRight")&&!e.repeat&&"term"===window.shellSlotKinds[window.currentTerm]&&(e.preventDefault(),e.stopPropagation(),clearTimeout(winVoiceTimer),winVoiceTimer=setTimeout(()=>{winVoiceTimer=null,window.voiceInput.start()},250))}),document.addEventListener("keyup",e=>{(e.key==="Meta"||e.code==="MetaLeft"||e.code==="MetaRight")&&"term"===window.shellSlotKinds[window.currentTerm]&&(e.preventDefault(),e.stopPropagation(),winVoiceTimer&&(clearTimeout(winVoiceTimer),winVoiceTimer=null),window.voiceInput.stop())}),window.addEventListener("blur",()=>{winVoiceTimer&&(clearTimeout(winVoiceTimer),winVoiceTimer=null),window.voiceInput&&window.voiceInput._recording&&window.voiceInput.stop()})})()`;
 
+// #143 Fn-key OSD:openbox 按键跑 edex-volume.sh / edex-brightness.sh /
+// edex-kbdbacklight.sh,应用后 POST 状态到 127.0.0.1:17323(loopback-only,与
+// power-menu 同信任模型)。OSD_BOOT 注入 _boot.js(建监听转发给渲染端);
+// OSD_RENDER 注入 _renderer.js(画小 toast:图标 + 条 + 百分比,复用 browser_toast
+// 外观)。注入块自包含:只用 http/win/signale/_showOsd/ipc 等既有全局,内部变量
+// 全部块内声明,不与 mangle 名冲突;字符串字面量作锚点,expectOut 做幂等标记。
+const OSD_BOOT = `try{http.createServer((e,t)=>{let a="";e.on("data",c=>{a+=c,a.length>4096&&(a=a.slice(0,4096))}),e.on("end",()=>{t.setHeader("Content-Type","text/plain"),t.end("ok");let n=null;try{n=JSON.parse(a)}catch(e){}n&&n.type&&win&&!win.isDestroyed()&&win.webContents.send("osd-show",n)})}).listen(17323,"127.0.0.1")}catch(e){signale.warn("Could not start OSD listener: "+(e&&e.message))}`;
+const OSD_RENDER = `window._showOsd=p=>{if(!p||!p.type)return;let el=document.getElementById("edex_osd");if(!el){el=document.createElement("div"),el.id="edex_osd",el.className="browser_toast",el.innerHTML='<span class="osd_icon"></span><span class="osd_bar"><span class="osd_fill"></span></span><span class="osd_pct"></span>';const st=document.createElement("style");st.textContent='#edex_osd{display:flex;align-items:center;gap:1.1vh;padding:0.75vh 1.5vh}#edex_osd .osd_icon{width:1.9vh;height:1.9vh;display:flex;align-items:center;justify-content:center;color:rgb(var(--color_r),var(--color_g),var(--color_b))}#edex_osd .osd_icon svg{width:100%;height:100%}#edex_osd .osd_bar{width:11vh;height:0.55vh;border-radius:0.3vh;background:rgba(255,255,255,.16);overflow:hidden}#edex_osd .osd_fill{display:block;height:100%;border-radius:0.3vh;background:rgb(var(--color_r),var(--color_g),var(--color_b));transition:width .1s linear}#edex_osd .osd_pct{margin-left:0.2vh;color:rgba(255,255,255,.85)}',(document.head||document.documentElement).appendChild(st),document.body.appendChild(el)}const v=Math.max(0,Math.min(100,Number(p.value)||0)),icon=el.querySelector(".osd_icon"),fill=el.querySelector(".osd_fill"),pct=el.querySelector(".osd_pct"),SPK='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>',SPK_X='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z"/><line x1="21" y1="9.5" x2="15" y2="14.5"/><line x1="15" y1="9.5" x2="21" y2="14.5"/></svg>',SUN='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',KBD='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="11" rx="2"/><path d="M6 11h.01M10 11h.01M14 11h.01M18 11h.01M6 15h12"/></svg>';p.type==="volume"?icon.innerHTML=p.muted?SPK_X:SPK:p.type==="brightness"?icon.innerHTML=SUN:p.type==="kbdbacklight"?icon.innerHTML=KBD:icon.innerHTML="";fill.style.width=v+"%",pct.textContent=v+"%",el.classList.add("show"),clearTimeout(window._osdTimer),window._osdTimer=setTimeout(()=>el.classList.remove("show"),1600)};
+ipc.on("osd-show",(e,p)=>{if(window._showOsd)window._showOsd(p)});`;
+
 const targets = [
   {
     name: '_boot.js (win+L 锁屏快捷键 + 系统级 idle 推送)',
@@ -1213,7 +1223,11 @@ const targets = [
     name: '_renderer.js (#128 语音快捷键:F9 → Win 键按住说话/松开结束)',
     path: ['_renderer.js'],
     expectIn: '"F9"===',
-    expectOut: 'e.key==="Meta"',
+    // expectOut 用字符串字面量 "Meta"(新构建已烘焙 Win-key 的 e.key === "Meta" /
+    // "MetaLeft"/"MetaRight",minified 与 readable 两种形态都含 "Meta");老构建无
+    // "Meta"(F9 版)才落进 transform。原标记 e.key==="Meta"(无空格)只匹配 minified
+    // 形态,readable 新构建(带空格)匹配不上 → 误判 "unexpected content" 炸掉整个 patch 链。
+    expectOut: '"Meta"',
     transform: c => c
       // F9 keydown/keyup 整块 → Win-key push-to-talk IIFE。结构正则,mangle 无关:
       // \1=事件 handler 参数名,\2=termFocused(部署版 w),两者随 minify 漂移,正则通配捕获。
@@ -1475,6 +1489,34 @@ const targets = [
     transform: c => c
       .split('"timeout",[String(').join('"bluetoothctl",["--timeout",String(')
       .split(',"bluetoothctl","scan"').join(',"scan"'),
+  },
+  {
+    // #143 Fn-key OSD 主进程端:注入 17323 loopback 监听。openbox 按键跑
+    // edex-volume.sh / edex-brightness.sh / edex-kbdbacklight.sh,应用后 POST 到
+    // 这里(JSON payload {type,value,muted});收到即转发给渲染端画小 toast。
+    // 锚点取 power-menu listener 的收尾串(字符串字面量,无 minify 变量名);
+    // 幂等由 expectOut 17323 保证(新构建已烘焙 osdServer → skip)。
+    name: '_boot.js (fn 快捷键 OSD:17323 监听转发 volume/brightness)',
+    path: ['_boot.js'],
+    expectIn: '}catch(e){signale.warn("Could not start power-menu listener: "+(e&&e.message))}',
+    expectOut: '17323',
+    transform: c => c
+      .split('}catch(e){signale.warn("Could not start power-menu listener: "+(e&&e.message))}')
+      .join('}catch(e){signale.warn("Could not start power-menu listener: "+(e&&e.message))}' + OSD_BOOT),
+  },
+  {
+    // #143 Fn-key OSD 渲染端:注入 window._showOsd(图标 + 音量/亮度条 + 百分比,
+    // 复用 browser_toast 小 toast 外观)+ ipc.on("osd-show") 转发。锚点取
+    // 锚点取 open-wifi-panel 监听的公共前缀 `ipc.on("open-wifi-panel",`(字符串字面量,
+    // minify 与 unminify 构建都唯一命中;完整行带空格只在 unminify 里存在)。幂等由
+    // expectOut window._showOsd= 保证。
+    name: '_renderer.js (fn 快捷键 OSD:音量/亮度条 + 图标小 toast)',
+    path: ['_renderer.js'],
+    expectIn: 'ipc.on("open-wifi-panel",',
+    expectOut: 'window._showOsd=',
+    transform: c => c
+      .split('ipc.on("open-wifi-panel",')
+      .join(OSD_RENDER + 'ipc.on("open-wifi-panel",'),
   },
   {
     // 设置页 WiFi/蓝牙长列表滚动(2026-08 实机 #127):列表内容过长时内部
