@@ -26,7 +26,9 @@ window.cliApps = [
     // carbonyl bundles Chromium; Ubuntu 24.04 blocks its user-namespace sandbox
     // ("No usable sandbox!" FATAL), so the browser only runs with --no-sandbox
     // (kiosk device, trusted start page only). Verified on the laptop 2026-08-14.
-    { id: "carbonyl", name: "carbonyl", cmd: ["carbonyl", "--no-sandbox", "https://lite.duckduckgo.com/lite"], icon: "browser" },
+    // #136: start page = local dark search page (search bar + switchable engine),
+    // deployed next to the AppImage at /opt/edex/cli-start.html.
+    { id: "carbonyl", name: "carbonyl", cmd: ["carbonyl", "--no-sandbox", "file:///opt/edex/cli-start.html"], icon: "browser" },
     { id: "aerc", name: "aerc", cmd: ["aerc"], icon: "mail" },
     { id: "btop", name: "BTOP", cmd: ["btop"], icon: "monitor" }
 ];
