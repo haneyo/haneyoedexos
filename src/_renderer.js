@@ -445,7 +445,7 @@ const CURSOR_ROLES = {
     // .ani frames carry no hotspot in the ICO entries (that lives in the ACON
     // header), so each role's click point is pinned here instead of read from
     // the file (measured from the 32×32 first frame of the WP7 pack).
-    default:     { file: "WP7Cursor.ani", hotX: 2, hotY: 5 },
+    default:     { file: "WP7CursorBG.ani", hotX: 2, hotY: 5 },
     hand:        { file: "WP7Links.ani", hotX: 2, hotY: 5 },
     text:        { file: "WP7Text.ani", hotX: 6, hotY: 11 },
     crosshair:   { file: "WP7Precision.ani", hotX: 10, hotY: 10 },
