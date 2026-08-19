@@ -76,7 +76,9 @@ class MiniAudio {
         this._macNpc = null;         // resolved path to nowplaying-cli, if any
         this._playerctl = null;      // resolved path to playerctl (Linux), if any
         this._winPs = null;          // staged SMTC helper .ps1 (Windows), if any
-        this._phases = new Float32Array(20);
+        // 64 phase slots so the SPECTRUM bars match the MediaPlayer's 64-bin
+        // equalizer (per-bar phase + a slower secondary wobble per bar).
+        this._phases = new Float32Array(64);
         for (let i = 0; i < this._phases.length; i++) this._phases[i] = Math.random() * Math.PI * 2;
 
         // Hidden by default - only the peek arrow stays on the screen edge.
@@ -129,6 +131,7 @@ class MiniAudio {
     _build() {
         this.container.innerHTML = `
         <div class="mini_audio" title="Mini music controller">
+            <button class="mini_audio_mode" title="Toggle SPECTRUM / WAVEFORM">SPECTRUM</button>
             <canvas class="mini_audio_canvas"></canvas>
             <div class="mini_audio_info">
                 <span class="mini_audio_title">No music playing</span>
@@ -360,9 +363,15 @@ class MiniAudio {
         if (btn(".mini_audio_next")) btn(".mini_audio_next").onclick = () => ctrl("next", "next track", "next", "next");
         if (btn(".mini_audio_hide")) btn(".mini_audio_hide").onclick = () => this.container.classList.add("mini_audio_hidden");
         if (btn(".mini_audio_peek")) btn(".mini_audio_peek").onclick = () => this.container.classList.remove("mini_audio_hidden");
-        if (this.canvas) this.canvas.onclick = () => {
+        // Top-left mode toggle (same SPECTRUM / WAVEFORM switch as the audio
+        // player); the canvas strip also toggles on click.
+        const modeBtn = this.container.querySelector(".mini_audio_mode");
+        const toggleMode = () => {
             this.mode = (this.mode === "bars") ? "wave" : "bars";
+            if (modeBtn) modeBtn.textContent = (this.mode === "bars") ? "SPECTRUM" : "WAVEFORM";
         };
+        if (modeBtn) modeBtn.onclick = e => { e.stopPropagation(); toggleMode(); };
+        if (this.canvas) this.canvas.onclick = toggleMode;
     }
 
     _anim() {
@@ -374,32 +383,44 @@ class MiniAudio {
             const w = this.canvas.width, h = this.canvas.height;
             if (w < 2 || h < 2) return;
             this.ctx.clearRect(0, 0, w, h);
+            // No music playing → keep the visualizer blank (no idle animation).
+            if (!this.playing) return;
             const cr = window.theme.r, cg = window.theme.g, cb = window.theme.b;
-            const speed = this.playing ? 0.22 : 0.04;
+            const speed = 0.22;
             if (this.mode === "bars") {
-                const bars = 18, bw = w / bars;
-                for (let i = 0; i < bars; i++) {
+                // SPECTRUM - same look as the MediaPlayer equalizer: 64 thin
+                // bars, low-end-heavy emphasis, alpha gradient. Pseudo data
+                // (no FFT is available for the system player) shaped like a
+                // real spectrum: tall swells on the left, quiet twinkles right.
+                const BARS = 64, bw = w / BARS;
+                for (let i = 0; i < BARS; i++) {
                     this._phases[i] += speed;
-                    const v = 0.15 + 0.85 * Math.abs(
-                        Math.sin(this._phases[i]) * Math.sin(this._phases[i] * 0.53 + i * 1.7));
+                    const env = Math.pow(1 - i / BARS, 0.75);
+                    const v = env * Math.abs(
+                        Math.sin(this._phases[i] * (1 + i * 0.04))
+                        * (0.5 + 0.5 * Math.sin(this._phases[i] * 0.37 + i * 1.7)));
                     const bh = Math.max(2, v * h);
-                    this.ctx.fillStyle = `rgba(${cr}, ${cg}, ${cb}, ${0.35 + 0.6 * v})`;
+                    this.ctx.fillStyle = `rgba(${cr}, ${cg}, ${cb}, ${0.3 + 0.65 * v})`;
                     this.ctx.fillRect(i * bw + bw * 0.2, h - bh, bw * 0.6, bh);
                 }
             } else {
+                // WAVEFORM - mirrored oscilloscope, same dot style as the audio
+                // player: one sample per column mirrored around the center line.
                 this._phases[0] += speed;
                 const midY = h / 2;
-                this.ctx.beginPath();
+                this.ctx.fillStyle = `rgb(${cr}, ${cg}, ${cb})`;
                 for (let x = 0; x < w; x++) {
-                    const y = midY
-                        + Math.sin(x * 0.06 + this._phases[0]) * h * 0.32
-                        + Math.sin(x * 0.11 - this._phases[0] * 1.3) * h * 0.1;
-                    if (x === 0) this.ctx.moveTo(x, y);
-                    else this.ctx.lineTo(x, y);
+                    // Weights sum to 1.0 so |v| stays in [-1,1] (like real
+                    // FFT data), keeping alpha in [0.35, 1].
+                    const v = Math.sin(x * 0.06 + this._phases[0]) * 0.65
+                            + Math.sin(x * 0.11 - this._phases[0] * 1.3) * 0.25
+                            + Math.sin(x * 0.023 + this._phases[0] * 0.5) * 0.1;
+                    const y = midY + v * (h * 0.42);
+                    this.ctx.globalAlpha = 0.35 + 0.65 * (1 - Math.abs(v));
+                    this.ctx.fillRect(x, y, 1, 1);
+                    this.ctx.fillRect(x, h - y, 1, 1);
                 }
-                this.ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, 0.9)`;
-                this.ctx.lineWidth = 2;
-                this.ctx.stroke();
+                this.ctx.globalAlpha = 1;
             }
         };
         draw();

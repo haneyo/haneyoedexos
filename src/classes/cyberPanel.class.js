@@ -348,7 +348,10 @@ class CyberPanel {
         ctx.lineTo(w, h / 2);
         ctx.stroke();
 
-        let amp = Math.max(0.08, this._load);
+        // #166: the idle floor was 0.08 (~3% of canvas height — nearly
+        // invisible). Raise the floor so the DATA STREAM bars stay clearly
+        // visible at idle, while still swelling with real CPU load (capped at 1).
+        let amp = Math.max(0.34, Math.min(1, this._load * 1.35));
         let phase = this.wavePhase;
 
         // Main signal
