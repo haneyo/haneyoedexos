@@ -1865,6 +1865,30 @@ app.on('ready', async () => {
         signale.warn("Could not start power-menu listener: " + (e && e.message));
     }
 
+    // Fn-key OSD. The openbox keybinds run edex-volume.sh / edex-brightness.sh /
+    // edex-kbdbacklight.sh, which after applying the change POST their resulting
+    // state here (loopback-only, fixed port, no auth — same trust model as the
+    // power-menu listener). We forward it to the renderer, which draws the small
+    // volume / brightness / mute / kbd-backlight toast.
+    try {
+        const osdServer = http.createServer((req, res) => {
+            let body = "";
+            req.on("data", c => { body += c; if (body.length > 4096) body = body.slice(0, 4096); });
+            req.on("end", () => {
+                res.setHeader("Content-Type", "text/plain");
+                res.end("ok");
+                let p = null;
+                try { p = JSON.parse(body); } catch (e) {}
+                if (p && p.type && win && !win.isDestroyed()) {
+                    try { win.webContents.send("osd-show", p); } catch (e) {}
+                }
+            });
+        });
+        osdServer.listen(17323, "127.0.0.1");
+    } catch (e) {
+        signale.warn("Could not start OSD listener: " + (e && e.message));
+    }
+
     // Exit native fullscreen: global hotkey (backup) + the corner button's IPC.
     try {
         electron.globalShortcut.register("CommandOrControl+Shift+Q", () => {

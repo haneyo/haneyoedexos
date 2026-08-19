@@ -1919,6 +1919,42 @@ async function initUI() {
         setInterval(wifiWatch, 10000);
     }
 
+    // Fn-key OSD toast (volume / brightness / mute / kbd-backlight). The main
+    // process forwards the shell scripts' POSTs (127.0.0.1:17323) here. It reuses
+    // the small .browser_toast look (bottom-center, accent border) that the
+    // battery/wifi notifications use — just with an icon + thin bar inside.
+    window._showOsd = p => {
+        if (!p || !p.type) return;
+        let el = document.getElementById("edex_osd");
+        if (!el) {
+            el = document.createElement("div");
+            el.id = "edex_osd";
+            el.className = "browser_toast";
+            el.innerHTML = '<span class="osd_icon"></span><span class="osd_bar"><span class="osd_fill"></span></span><span class="osd_pct"></span>';
+            const st = document.createElement("style");
+            st.textContent = "#edex_osd{display:flex;align-items:center;gap:1.1vh;padding:0.75vh 1.5vh}#edex_osd .osd_icon{width:1.9vh;height:1.9vh;display:flex;align-items:center;justify-content:center;color:rgb(var(--color_r),var(--color_g),var(--color_b))}#edex_osd .osd_icon svg{width:100%;height:100%}#edex_osd .osd_bar{width:11vh;height:0.55vh;border-radius:0.3vh;background:rgba(255,255,255,.16);overflow:hidden}#edex_osd .osd_fill{display:block;height:100%;border-radius:0.3vh;background:rgb(var(--color_r),var(--color_g),var(--color_b));transition:width .1s linear}#edex_osd .osd_pct{margin-left:0.2vh;color:rgba(255,255,255,.85)}";
+            (document.head || document.documentElement).appendChild(st);
+            document.body.appendChild(el);
+        }
+        const v = Math.max(0, Math.min(100, Number(p.value) || 0));
+        const icon = el.querySelector(".osd_icon");
+        const fill = el.querySelector(".osd_fill");
+        const pct = el.querySelector(".osd_pct");
+        const SPK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>';
+        const SPK_X = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z"/><line x1="21" y1="9.5" x2="15" y2="14.5"/><line x1="15" y1="9.5" x2="21" y2="14.5"/></svg>';
+        const SUN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+        const KBD = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="11" rx="2"/><path d="M6 11h.01M10 11h.01M14 11h.01M18 11h.01M6 15h12"/></svg>';
+        if (p.type === "volume") icon.innerHTML = p.muted ? SPK_X : SPK;
+        else if (p.type === "brightness") icon.innerHTML = SUN;
+        else if (p.type === "kbdbacklight") icon.innerHTML = KBD;
+        else icon.innerHTML = "";
+        fill.style.width = v + "%";
+        pct.textContent = v + "%";
+        el.classList.add("show");
+        clearTimeout(window._osdTimer);
+        window._osdTimer = setTimeout(() => el.classList.remove("show"), 1600);
+    };
+    ipc.on("osd-show", (e, p) => { if (window._showOsd) window._showOsd(p); });
     ipc.on("open-wifi-panel", () => { if (window.wifiPanel) window.wifiPanel.open(); });
     ipc.on("lock-screen", () => { if (window.lockScreen) window.lockScreen.engage(); });
     // OS power button → POWER menu (main listens on 127.0.0.1:17322). While
