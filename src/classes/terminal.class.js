@@ -28,6 +28,12 @@ class Terminal {
             this._altHistEnabled = opts.altHistory !== false && !/^carbonyl_/.test(opts.parentId || "");
             this._altLastT = 0;
             this._serializeA = null;
+            // Carbonyl click mapping is one cell row too high (its bridge scales a
+            // 0-based row with `row - 0.5`, so row 0 maps above the terminal). For
+            // carbonyl sessions only, _wsConn bumps every SGR mouse y by +1 so clicks
+            // land on the cell the user actually clicked. btop/claude/shells are
+            // untouched.
+            this._sgrMouseFix = /^carbonyl_/.test(opts.parentId || "");
 
             this._sendSizeToServer = () => {
                 let cols = this.term.cols.toString();
@@ -289,6 +295,21 @@ class Terminal {
             };
             this._wsConn = () => {
                 this.socket = new WebSocket("ws://"+sockHost+":"+sockPort);
+                // Carbonyl mouse compensation: rewrite SGR mouse sequences
+                // (\x1b[<b;x;yM|m) so the y cell is +1 — cancels the bridge's
+                // row-0.5 offset. Scoped to carbonyl sessions; re-applied on every
+                // (re)connect since _wsConn runs per connection. See _sgrMouseFix.
+                if (this._sgrMouseFix) {
+                    const _osend = this.socket.send.bind(this.socket);
+                    this.socket.send = data => {
+                        if (typeof data === "string" && data.indexOf("\x1b[<") !== -1) {
+                            data = data.replace(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/g, (_m, _b, _x, _y, _t) => {
+                                return "\x1b[<" + _b + ";" + _x + ";" + (parseInt(_y, 10) + 1) + _t;
+                            });
+                        }
+                        _osend(data);
+                    };
+                }
                 this.socket.onopen = () => {
                     try { if (this._attachAddon) this._attachAddon.dispose(); } catch (e) {}
                     try { this._attachAddon = new AttachAddon(this.socket); } catch (e) { this._attachAddon = null; }
