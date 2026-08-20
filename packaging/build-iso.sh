@@ -92,7 +92,7 @@ EOF
 APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     xvfb x11vnc novnc websockify dbus-x11 wmctrl xterm curl \
     fonts-dejavu-core fonts-noto-cjk fontconfig libfuse2 \
-    libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 libasound2t64 libgbm1 libdrm2 \
+    libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 libasound2t64 libgbm1 libdrm2 libflac12t64 \
     libxkbcommon0 xdg-utils libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 \
     libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 \
     linux-firmware network-manager wpasupplicant bluez rfkill upower \
@@ -234,6 +234,52 @@ fi
 sudo install -Dm 755 "$WORK/browsh-root/usr/bin/browsh" "$WORK/rootfs/usr/local/bin/browsh" 2>/dev/null \
     || { echo "[edex] ERROR: browsh binary not found in deb"; exit 1; }
 echo "[edex] browsh $(ls -lh "$WORK/rootfs/usr/local/bin/browsh" | awk '{print $5}') OK"
+
+# Musicfox (go-musicfox v5.1.0): NetEase Cloud Music TUI client, baked for the
+# eDEX terminal "musicfox" tab (#185). Plays via its built-in beep engine (Go
+# decoders) over ALSA→PulseAudio. Login is per-user INSIDE the app via QR code
+# — the account cookie (~/.local/share/go-musicfox/cookie) and musicfox.db are
+# NEVER baked into the ISO, so every install logs in fresh.
+# Two SYSTEM fixes are required (proven on the laptop 2026-08-19, or the app
+# crashes at startup): (1) go-musicfox dlopens libFLAC.so.8 but Ubuntu 24.04
+# ships only libFLAC.so.12 → symlink below; (2) its webkitgtk init() dlopens
+# libsoup3 then libsoup2, and both present → libsoup2/3 conflict → SIGTRAP →
+# remove the (orphan) libsoup2 from the rootfs (web-login unavailable, QR
+# login works — acceptable trade-off).
+echo "[edex] installing musicfox (NetEase Cloud Music TUI, go-musicfox v5.1.0)"
+MUSICFOX_VER="5.1.0"
+MUSICFOX_DEB="go-musicfox_${MUSICFOX_VER}_linux_amd64.deb"
+if ! curl -fsSL --retry 2 -o "$WORK/musicfox.deb" \
+        "https://github.com/go-musicfox/go-musicfox/releases/download/v$MUSICFOX_VER/$MUSICFOX_DEB"; then
+    echo "[edex] ERROR: musicfox download failed"; exit 1
+fi
+echo "d2e0c45ec401a4d6575b7e36303ef0c2df70933aed4f5b40bc09d9fd9541faa8  $WORK/musicfox.deb" \
+    | sha256sum -c - >/dev/null || { echo "[edex] ERROR: musicfox deb sha256 mismatch"; exit 1; }
+sudo rm -rf "$WORK/musicfox-root"
+if ! sudo dpkg -x "$WORK/musicfox.deb" "$WORK/musicfox-root"; then
+    echo "[edex] ERROR: musicfox deb extract failed"; exit 1
+fi
+MUSICFOX_BIN=$(sudo find "$WORK/musicfox-root" -type f -name musicfox -path "*/bin/*" 2>/dev/null | head -1)
+[ -n "$MUSICFOX_BIN" ] || { echo "[edex] ERROR: musicfox binary not found in deb"; exit 1; }
+sudo install -Dm 755 "$MUSICFOX_BIN" "$WORK/rootfs/usr/local/bin/musicfox"
+
+# System fix 1: go-musicfox's FLAC decoder dlopens libFLAC.so.8 at runtime, but
+# Ubuntu 24.04 ships only libFLAC.so.12 (libflac12t64, added to APTOPTS above).
+# Symlink .8 → .12 exactly like the laptop fix, or musicfox crashes on first play.
+if [ ! -e "$WORK/rootfs/usr/lib/x86_64-linux-gnu/libFLAC.so.12" ]; then
+    echo "[edex] ERROR: libFLAC.so.12 missing in rootfs — musicfox needs the .8 symlink"; exit 1
+fi
+sudo ln -sf libFLAC.so.12 "$WORK/rootfs/usr/lib/x86_64-linux-gnu/libFLAC.so.8"
+
+# System fix 2: go-musicfox v5.1.0's internal webkitgtk init() dlopens libsoup3
+# then libsoup2; if both are loaded → libsoup2/libsoup3 conflict → SIGTRAP crash
+# at startup. Remove the (orphan) libsoup2 from the rootfs — web-login stays
+# unavailable, QR login works (same trade-off as the laptop fix). On eDEX-OS the
+# rootfs is built from Ubuntu Server + curated APTOPTS, so libsoup2 is never an
+# owned package dep; only an orphan would land here, and only these two files.
+sudo rm -f "$WORK/rootfs/usr/lib/x86_64-linux-gnu/libsoup-2.4.so.1" \
+    "$WORK/rootfs/usr/lib/x86_64-linux-gnu/libsoup-2.4.so.1.11.2"
+echo "[edex] musicfox $(ls -lh "$WORK/rootfs/usr/local/bin/musicfox" | awk '{print $5}') OK"
 
 # Bake in the mihomo proxy daemon (MetaCubeX/mihomo) + metacubexd dashboard +
 # geo databases so the built-in Clash proxy (#46) works fully offline at

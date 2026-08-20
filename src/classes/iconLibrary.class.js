@@ -6,8 +6,8 @@
 // dialogs open the picker (arrow keys + Enter + Esc, per ui-keyboard-operable)
 // to choose one of these ids, or the ✕ cell to store no icon.
 //
-// The 5 ids used by the stock CLI apps (ai/browser/monitor/mail/terminal) are
-// kept verbatim so claude/browsh/aerc/btop render unchanged.
+// The 6 ids used by the stock CLI apps (ai/browser/monitor/mail/terminal/music)
+// are kept verbatim so claude/browsh/aerc/btop/musicfox render unchanged.
 //
 // Origin: packaging/patch-appimage.sh (ICON_LIBRARY_JS). Behavior is kept
 // byte-equivalent so the patch-injected copy and this source stay

@@ -2,7 +2,7 @@
 //
 // Instead of the retired virtual-display app monitor (AppMonitorPanel), these
 // tabs launch command-line apps that have their own user interface (claude,
-// browsh, aerc, btop) inside a real terminal session. Each entry is
+// browsh, aerc, btop, musicfox) inside a real terminal session. Each entry is
 // started by asking the main process for a new pty via
 // `ipcRenderer.send("ttyspawn", { cli: [cmd, ...args] })`; the main process
 // replies with a port and this side attaches a client-side Terminal to it.
@@ -36,7 +36,12 @@ const _CLI_BUILTIN = [
     // switchable engine), deployed next to the AppImage at /opt/edex/cli-start.html.
     { id: "browsh", name: "browsh", cmd: ["browsh", "file:///opt/edex/cli-start.html"], icon: "browser" },
     { id: "aerc", name: "aerc", cmd: ["aerc"], icon: "mail" },
-    { id: "btop", name: "BTOP", cmd: ["btop"], icon: "monitor" }
+    { id: "btop", name: "BTOP", cmd: ["btop"], icon: "monitor" },
+    // musicfox = go-musicfox v5.1.0 NetEase Cloud Music TUI (built by build-iso.sh
+    // into /usr/local/bin/musicfox; the two system fixes — libFLAC.so.8 symlink,
+    // orphan libsoup2 removal — are applied there too). Login is per-user INSIDE
+    // the app via QR code; no account cookie/db is baked into the ISO (#185).
+    { id: "musicfox", name: "musicfox", cmd: ["musicfox"], icon: "music" }
 ];
 
 // (re)build the live app list: built-ins in order (overrides / tombstones

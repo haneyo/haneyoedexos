@@ -2271,7 +2271,7 @@ async function initUI() {
     });
 
     // Tabs 4 & 5 are CLI panels by default: command-line apps with a UI
-    // (claude, browsh, aerc, btop) run in a real terminal session, and
+    // (claude, browsh, aerc, btop, musicfox) run in a real terminal session, and
     // both tabs read "APP". When the experimental GUI-app mode
     // (settings.appMonitor.showGui) is enabled, tab 5 becomes the
     // AppMonitorPanel virtual-display entry ("GUI APPS") and shows the hollow

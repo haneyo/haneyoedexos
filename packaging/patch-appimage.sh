@@ -422,6 +422,12 @@ const CLI_PANEL_CLASS_NEW = CLI_PANEL_CLASS_NEW_OLD
   // 锚点不受影响,最终注入的菜单与 src(cliPanel.class.js 无 htop)对齐。
   .split('{id:"htop",name:"htop",cmd:["htop"],icon:"monitor"},')
   .join('')
+  // #185:bake 进 musicfox(go-musicfox v5.1.0 网易云音乐 TUI)。build-iso.sh 把二进制装到
+  // /usr/local/bin/musicfox 并打上两个系统补丁(libFLAC.so.8 软链 + 移除 libsoup2,见该文件)。
+  // 账号在 app 内扫码登录——用户明确要求 ISO 绝不烧录 cookie/db。派生方式同 #49:NEW_OLD 锚点
+  // 保持 #36 部署态原文不动,只往 derive 出的 NEW 追加;btop 锚点在 NEW_OLD 内唯一,不被他链改动。
+  .split('{id:"btop",name:"BTOP",cmd:["btop"],icon:"monitor"}')
+  .join('{id:"btop",name:"BTOP",cmd:["btop"],icon:"monitor"},{id:"musicfox",name:"musicfox",cmd:["musicfox"],icon:"music"}')
   // #75/#74(round-4):1) CSS 注入隐藏 xterm-viewport 滚动条(黑边根因:滚动条留白撑出左右 15px 黑边);
   // 2) _closeSession 先关 WebSocket(触发后端 ondisconnected 杀进程组,修关闭浏览器后视频声音残留)。
   // 两处 OLD 锚点均在 CLI_PANEL_CLASS_NEW_OLD 内唯一(_closeSession 用 t.term,cover 用 e.term 不冲突)。
