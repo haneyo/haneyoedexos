@@ -104,6 +104,15 @@ class FilesystemDisplay {
 
         this._timer = setInterval(() => {
             if (this._runNextTick === true) {
+                // #163: never auto-refresh while an AI reply is on screen (busy
+                // streaming, or TTS still playing). The user watches the file
+                // list during a chat — a mid-reply re-read jumps the grid and
+                // loses selection/scroll. A real change in this window is NOT
+                // dropped: _runNextTick stays set, so the 1s tick right after
+                // the reply ends catches it up. Direct navigations (quick tabs,
+                // breadcrumbs) bypass this timer and are unaffected.
+                if (window.aiChat && (window.aiChat._busy || window.aiChat._playing ||
+                    (window.aiChat._queue && window.aiChat._queue.length))) return;
                 this._runNextTick = false;
                 this.readFS(this.dirpath);
             }

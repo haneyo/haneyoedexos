@@ -2,7 +2,7 @@
 //
 // Instead of the retired virtual-display app monitor (AppMonitorPanel), these
 // tabs launch command-line apps that have their own user interface (claude,
-// carbonyl, aerc, btop) inside a real terminal session. Each entry is
+// browsh, aerc, btop) inside a real terminal session. Each entry is
 // started by asking the main process for a new pty via
 // `ipcRenderer.send("ttyspawn", { cli: [cmd, ...args] })`; the main process
 // replies with a port and this side attaches a client-side Terminal to it.
@@ -27,12 +27,14 @@ const _cliIpc = require("electron").ipcRenderer;
 // built-in, { _deleted: true } hides it, and any other entry is a custom app.
 const _CLI_BUILTIN = [
     { id: "claude", name: "Claude", cmd: ["claude"], icon: "ai" },
-    // carbonyl bundles Chromium; Ubuntu 24.04 blocks its user-namespace sandbox
-    // ("No usable sandbox!" FATAL), so the browser only runs with --no-sandbox
-    // (kiosk device, trusted start page only). Verified on the laptop 2026-08-14.
-    // #136: start page = local dark search page (search bar + switchable engine),
-    // deployed next to the AppImage at /opt/edex/cli-start.html.
-    { id: "carbonyl", name: "carbonyl", cmd: ["carbonyl", "--no-sandbox", "file:///opt/edex/cli-start.html"], icon: "browser" },
+    // Browser = browsh (TUI over headless Firefox) — #162 reverses #58. The
+    // startup URL is a POSITIONAL argument (browsh has NO --startup-url flag;
+    // the pre-#58 entry used that non-existent flag, which pflag rejects and
+    // killed the browser on launch). Firefox is baked at /opt/firefox by
+    // build-iso.sh (browsh renders through it; the GUI app launcher also offers
+    // it fullscreen). #136: start page = local dark search page (search bar +
+    // switchable engine), deployed next to the AppImage at /opt/edex/cli-start.html.
+    { id: "browsh", name: "browsh", cmd: ["browsh", "file:///opt/edex/cli-start.html"], icon: "browser" },
     { id: "aerc", name: "aerc", cmd: ["aerc"], icon: "mail" },
     { id: "btop", name: "BTOP", cmd: ["btop"], icon: "monitor" }
 ];

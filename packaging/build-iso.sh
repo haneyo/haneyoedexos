@@ -186,50 +186,54 @@ fi
 sudo rm -f "$WORK/rootfs/tmp/edex-build-wifi-drivers.sh"
 for m in /proc /sys /dev; do sudo umount "$WORK/rootfs$m" 2>/dev/null || true; done
 
-# Carbonyl — the in-app Browser (CLI panel tab 4/5) runs `carbonyl <url>`, a
-# self-contained Chromium that renders real web pages straight into the
-# terminal. Unlike the old browsh, it bundles its own Chromium engine and needs
-# no separate Firefox/geckodriver — the libs it wants (libgtk-3-0, libnss3,
-# libasound2t64, libxkbcommon0, ...) are already in APTOPTS above. Carbonyl is
-# a HARD requirement (the built-in browser is unusable without it) — a failed
-# download/install FAILS the build instead of shipping an ISO whose browser tab
-# dies on launch.
-echo "[edex] installing carbonyl (Chromium terminal browser)"
-# jmagly/carbonyl fork (Chromium M147) — 0.0.3 (M111) is abandoned upstream and
-# its input layer fails to dispatch clicks/Enter to the page in the embedded
-# panel; the maintained fork carries the newer engine + input handling.
-CARBONYL_VER="v0.2.0-alpha.18"
-CARBONYL_ARCH="x86_64-unknown-linux-gnu"
-CARBONYL_TGZ="carbonyl-${CARBONYL_VER#v}-${CARBONYL_ARCH}.tgz"
-if ! curl -fsSL --retry 2 -o "$WORK/carbonyl.tgz" \
-        "https://github.com/jmagly/carbonyl/releases/download/$CARBONYL_VER/$CARBONYL_TGZ"; then
-    echo "[edex] ERROR: carbonyl download failed — cannot build an ISO without the browser"; exit 1
+# Browser: browsh (TUI terminal browser) + the real Firefox it renders through.
+# #162 reverses #58: the in-app Browser (CLI panel tab 4/5) runs `browsh <url>`,
+# a TUI that drives headless Firefox over the Marionette protocol + a WebExtension
+# (NO geckodriver needed). Firefox is the same binary the GUI-app launcher shows
+# fullscreen, so the terminal browser and the real browser share /opt/firefox.
+# Both are HARD requirements (the built-in browser is unusable without them) —
+# a failed download/install, or a missing Firefox runtime, FAILS the build
+# instead of shipping an ISO whose browser tab dies on launch.
+echo "[edex] baking in Firefox (Mozilla official tarball → /opt/firefox)"
+# Ubuntu 24.04's 'firefox' package is a snap; for a fully offline system we
+# embed Mozilla's official Linux tarball and register a .desktop entry so it
+# shows up in the app-monitor list (GUI app launcher).
+if ! curl -fsSL --retry 2 -o "$WORK/firefox.tar.xz" \
+        "https://download.mozilla.org/?product=firefox-latest-ssl&os=linux64&lang=en-US"; then
+    echo "[edex] ERROR: Firefox download failed — cannot build an ISO without the browser"; exit 1
 fi
-sudo rm -rf "$WORK/carbonyl-root"
-sudo mkdir -p "$WORK/carbonyl-root"
-if ! sudo tar xzf "$WORK/carbonyl.tgz" -C "$WORK/carbonyl-root"; then
-    echo "[edex] ERROR: carbonyl tgz extract failed"; exit 1
+sudo mkdir -p "$WORK/rootfs/opt/firefox"
+sudo tar -xJf "$WORK/firefox.tar.xz" -C "$WORK/rootfs/opt/firefox" --strip-components=1 \
+    || { echo "[edex] ERROR: Firefox extract failed"; exit 1; }
+if [ ! -f "$WORK/rootfs/opt/firefox/firefox" ]; then
+    echo "[edex] ERROR: /opt/firefox/firefox missing — browsh needs Firefox as its render engine; cannot build an ISO without it"; exit 1
 fi
-# The zip layout is not documented — locate the executable defensively. Carbonyl
-# resolves its bundled Chromium resources relative to the binary, so we keep the
-# whole tree under /opt/carbonyl and symlink the binary into /usr/local/bin
-# (a lone `install` of just the executable would orphan its resources/ dir and
-# crash on launch).
-CARBONYL_BIN=$(find "$WORK/carbonyl-root" -type f -name 'carbonyl' 2>/dev/null | head -1)
-[ -z "$CARBONYL_BIN" ] && CARBONYL_BIN=$(find "$WORK/carbonyl-root" -type f -executable 2>/dev/null | head -1)
-if [ -z "$CARBONYL_BIN" ]; then
-    echo "[edex] ERROR: carbonyl binary not found in zip"; exit 1
+sudo ln -sf /opt/firefox/firefox "$WORK/rootfs/usr/local/bin/firefox"
+sudo tee "$WORK/rootfs/usr/share/applications/firefox.desktop" >/dev/null <<'DESK'
+[Desktop Entry]
+Name=Firefox
+Comment=Browse the web
+Exec=/opt/firefox/firefox
+Icon=/opt/firefox/browser/chrome/icons/default/default128.png
+Type=Application
+Terminal=false
+Categories=Network;WebBrowser;
+DESK
+echo "[edex] firefox $(ls -lh "$WORK/rootfs/opt/firefox/firefox" | awk '{print $5}') OK, linked into /usr/local/bin"
+
+echo "[edex] installing browsh (terminal browser over headless Firefox)"
+BROWSH_VER="1.8.2"
+if ! curl -fsSL --retry 2 -o "$WORK/browsh.deb" \
+        "https://github.com/browsh-org/browsh/releases/download/v$BROWSH_VER/browsh_${BROWSH_VER}_linux_amd64.deb"; then
+    echo "[edex] ERROR: browsh download failed — cannot build an ISO without the browser"; exit 1
 fi
-# The zip nests everything under a versioned dir (e.g. carbonyl-0.0.3/), so the
-# binary lands at /opt/carbonyl/<ver>/carbonyl after the full-tree copy. Use the
-# RELATIVE path (not basename) for chmod/symlink — basename would point at
-# /opt/carbonyl/carbonyl which doesn't exist.
-CARBONYL_REL="${CARBONYL_BIN#"$WORK/carbonyl-root/"}"
-sudo mkdir -p "$WORK/rootfs/opt/carbonyl"
-sudo cp -a "$WORK/carbonyl-root/." "$WORK/rootfs/opt/carbonyl/"
-sudo chmod +x "$WORK/rootfs/opt/carbonyl/$CARBONYL_REL"
-sudo ln -sf "/opt/carbonyl/$CARBONYL_REL" "$WORK/rootfs/usr/local/bin/carbonyl"
-echo "[edex] carbonyl $(ls -lh "$WORK/rootfs/opt/carbonyl/$CARBONYL_REL" 2>/dev/null | awk '{print $5}') OK"
+sudo rm -rf "$WORK/browsh-root"
+if ! sudo dpkg -x "$WORK/browsh.deb" "$WORK/browsh-root"; then
+    echo "[edex] ERROR: browsh deb extract failed"; exit 1
+fi
+sudo install -Dm 755 "$WORK/browsh-root/usr/bin/browsh" "$WORK/rootfs/usr/local/bin/browsh" 2>/dev/null \
+    || { echo "[edex] ERROR: browsh binary not found in deb"; exit 1; }
+echo "[edex] browsh $(ls -lh "$WORK/rootfs/usr/local/bin/browsh" | awk '{print $5}') OK"
 
 # Bake in the mihomo proxy daemon (MetaCubeX/mihomo) + metacubexd dashboard +
 # geo databases so the built-in Clash proxy (#46) works fully offline at
@@ -385,10 +389,10 @@ fi
 sudo mkdir -p "$WORK/rootfs/opt/edex"
 sudo cp "$EDEX_TO_BAKE" "$WORK/rootfs/opt/edex/eDEX-UI.AppImage"
 sudo chmod 755 "$WORK/rootfs/opt/edex/eDEX-UI.AppImage"
-# #136:carbonyl CLI 浏览器主页 = 本地深色搜索页(搜索栏 + 可更换搜索引擎),
-# carbonyl 启动 URL 指向 file:///opt/edex/cli-start.html(见 cliPanel.class.js)。
+# #136:#162 后 CLI 浏览器(browsh)主页 = 本地深色搜索页(搜索栏 + 可更换搜索引擎),
+# browsh 启动 URL 指向 file:///opt/edex/cli-start.html(见 cliPanel.class.js)。
 sudo install -m 644 "$REPO_DIR/src/assets/browser/cli-start.html" "$WORK/rootfs/opt/edex/cli-start.html"
-echo "[edex] cli-start.html (carbonyl search page) OK"
+echo "[edex] cli-start.html (browsh search page) OK"
 # Never ship a pre-created /home: a leftover directory from the build host (e.g.
 # /home/runner on a GitHub Actions runner) would leak into the squashfs, get
 # copied to every target disk, and then be mistaken for the real user by naive

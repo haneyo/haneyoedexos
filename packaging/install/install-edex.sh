@@ -180,6 +180,17 @@ SETTINGS
 sed -i "s|/home/edex|/home/$U|" "/home/$U/.config/eDEX-UI/settings.json" || true
 chown -R "$U":"$U" "/home/$U/.config" || echo "[edex-firstboot] WARN: chown ~/.config failed"
 
+# #169 SSH 公钥固化:把 claude-remote@mac 这把钥匙烧进真实用户的 authorized_keys,
+# 每次重刷 ISO 后免重新手动添加公钥。幂等:已存在则跳过;只放公钥(可登录、不含
+# 私钥),配合 NOPASSWD sudo 让 Mac 可免密直连。
+mkdir -p "/home/$U/.ssh" && chmod 700 "/home/$U/.ssh"
+touch "/home/$U/.ssh/authorized_keys"
+if ! grep -q "claude-remote@mac" "/home/$U/.ssh/authorized_keys" 2>/dev/null; then
+    echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIE4DLsWgvK9viHDyZb9nYGahgsk4L3YOTiDs4GQMu3GM claude-remote@mac" >> "/home/$U/.ssh/authorized_keys"
+fi
+chmod 600 "/home/$U/.ssh/authorized_keys"
+chown -R "$U":"$U" "/home/$U/.ssh" || echo "[edex-firstboot] WARN: chown ~/.ssh failed"
+
 # ---------------------------------------------------------------------------
 # best-effort user config (failure → WARN, keep going)
 # ---------------------------------------------------------------------------
@@ -644,6 +655,9 @@ cat > /etc/skel/.config/fcitx5/conf/classicui.conf <<'CUI'
 [Appearance]
 Font="Noto Sans CJK SC 12"
 PerScreenDPI=False
+# #164 皮肤丢失根因:classicui 只在 CustomColor=True 时启用自定义调色板,
+# 否则无视下方颜色、回落到默认浅色主题(候选框白底)。此前一直缺这行。
+CustomColor=True
 NormalColor=#aacfd1
 NormalBackgroundColor=#05080d
 HighlightColor=#05080d
