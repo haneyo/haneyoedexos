@@ -1964,10 +1964,16 @@ class FilesystemDisplay {
                     try { window.modals[id].close(); } catch (e) {}
                 }
             });
+            // #176 阅读按钮只在中文系统出现(与主界面语音/语言键同一套语言判定);
+            // 英文系统 ASR/TTS 都不面向英文,读了也没意义。
+            const en = (window.settings.language || "en") === "en";
+            const readBtnHtml = en ? "" :
+                `<button id="fileReadBtn" title="从光标处朗读本文 · 再点暂停">▶ 阅读</button>`;
             new Modal({
                 type: "custom",
                 title: name,
                 html: `<div class="file_view_bar">
+                         ${readBtnHtml}
                          <button id="fileCopyAll" title="Copy the whole file to the clipboard">COPY ALL</button>
                          <span class="file_view_hint">Select to copy · Ctrl+V to paste here · Ctrl+Shift+V pastes in the terminal</span>
                        </div>
@@ -1977,6 +1983,7 @@ class FilesystemDisplay {
                     {label: "Save to Disk", action: "window.writeFile(window._pendingEditPath);"}
                 ]
             }, () => {
+                this._stopTextReader();
                 try { window.term[window.currentTerm].term.focus(); } catch (e) {}
             });
             // Fill the editor programmatically so file content can never break
@@ -1995,7 +2002,108 @@ class FilesystemDisplay {
                 const st = root.querySelector("#fedit-status");
                 if (st) st.innerHTML = "<i>Copied to clipboard — paste anywhere with Ctrl+V.</i>";
             });
+            // #176 阅读按钮接线:光标停在哪个字,就从哪个字开始逐句朗读。
+            if (!en) {
+                const readBtn = root ? root.querySelector("#fileReadBtn") : null;
+                if (readBtn && ta) this._textReader = this._mkTextReader(ta, readBtn);
+            }
             try { ta && ta.focus(); } catch (e) {}
+        };
+
+        // 文本阅读控制器:从 textarea 光标处把剩余文本切成短句,逐句走
+        // tts:speak(主进程合成 + cnNumber 中文数字念法),WebAudio 播放。
+        // 状态机 idle「▶ 阅读」→ playing「⏸ 暂停」→ paused「▶ 继续」;持续
+        // 朗读直到读完全文、再次点按钮(暂停/继续)或弹窗关闭(_stopTextReader)。
+        // 播放路径与 aiChat._playWav 一致(decodeAudioData,不用 <audio> blob)。
+        this._mkTextReader = (ta, btn) => {
+            const ctx = { state: "idle", queue: [], playing: false, audio: null, audioCtx: null, gen: 0, current: null };
+            // 切句同 aiChat._splitTts:按中英文标点/换行切,每块上限 40 字,
+            // 短句连续合成才能像"朗读",而不是一次性把整篇合成长音频。
+            const split = text => {
+                const MAX = 40;
+                const out = [];
+                let cur = "";
+                for (const p of String(text).split(/(?<=[。！？!?，、；;：:\n])/)) {
+                    if (cur && (cur + p).length > MAX) { const s = cur.trim(); if (s) out.push(s); cur = ""; }
+                    cur += p;
+                }
+                const s = cur.trim();
+                if (s) out.push(s);
+                return out;
+            };
+            const setBtn = () => {
+                if (!btn) return;
+                btn.textContent = ctx.state === "playing" ? "⏸ 暂停"
+                    : ctx.state === "paused" ? "▶ 继续"
+                    : "▶ 阅读";
+                btn.classList.toggle("active", ctx.state !== "idle");
+            };
+            const stopAudio = () => {
+                if (ctx.audio) { try { ctx.audio.stop(); } catch (e) {} ctx.audio = null; }
+            };
+            const getCtx = () => {
+                if (!ctx.audioCtx) { const AC = window.AudioContext || window.webkitAudioContext; ctx.audioCtx = new AC(); }
+                return ctx.audioCtx;
+            };
+            const playNext = () => {
+                if (ctx.state !== "playing") return;        // 暂停/关闭中断链条
+                if (!ctx.queue.length) {
+                    if (!ctx.playing) { ctx.state = "idle"; setBtn(); } // 读完全文
+                    return;
+                }
+                const sent = ctx.queue.shift();
+                ctx.current = sent;                  // 记住当前句:暂停时放回队首,继续时从头重读
+                ctx.playing = true;
+                const myGen = ctx.gen;               // invoke 前取代际,防暂停/重开后的陈旧回调
+                ipc.invoke("tts:speak", { text: sent }).then(r => {
+                    if (myGen !== ctx.gen || ctx.state !== "playing") { ctx.playing = false; return; } // 等待期间被暂停/关闭/重开
+                    if (!r || !r.ok || !r.wav) { ctx.playing = false; ctx.current = null; playNext(); return; }
+                    const bytes = Uint8Array.from(atob(r.wav), c => c.charCodeAt(0));
+                    const aCtx = getCtx();
+                    const fin = () => {
+                        ctx.audio = null; ctx.playing = false; ctx.current = null;
+                        if (myGen === ctx.gen) playNext();  // 关闭/重启会 ++gen 作废
+                    };
+                    aCtx.decodeAudioData(bytes.buffer.slice(0), buffer => {
+                        if (myGen !== ctx.gen) { ctx.playing = false; return; }
+                        if (aCtx.state === "suspended") aCtx.resume().catch(() => {});
+                        const src = aCtx.createBufferSource();
+                        src.buffer = buffer;
+                        src.connect(aCtx.destination);
+                        ctx.audio = src;
+                        src.onended = fin;
+                        src.start();
+                    }, () => { ctx.playing = false; ctx.current = null; if (myGen === ctx.gen) playNext(); });
+                }).catch(() => { ctx.playing = false; ctx.current = null; playNext(); });
+            };
+            btn.addEventListener("click", () => {
+                if (ctx.state === "playing") {          // 再点 = 暂停(当前句放回队首,继续时从头重读)
+                    ctx.gen++;
+                    ctx.state = "paused";
+                    stopAudio();
+                    ctx.playing = false;
+                    if (ctx.current !== null) { ctx.queue.unshift(ctx.current); ctx.current = null; }
+                    setBtn();
+                } else if (ctx.state === "paused") {    // 暂停后点 = 继续(重读被打断的当前句)
+                    ctx.state = "playing";
+                    setBtn();
+                    playNext();
+                } else {                                 // 首次点 = 从光标处开始
+                    const pos = (typeof ta.selectionStart === "number") ? ta.selectionStart : 0;
+                    ctx.queue = split(ta.value.slice(pos));
+                    if (!ctx.queue.length) return;       // 光标之后没有内容
+                    ctx.gen++;
+                    ctx.state = "playing";
+                    setBtn();
+                    playNext();
+                }
+            });
+            return { stop: () => { ctx.gen++; ctx.state = "idle"; stopAudio(); ctx.playing = false; ctx.queue = []; ctx.current = null; setBtn(); } };
+        };
+
+        // 弹窗关闭时停掉正在朗读的语音(关闭文本阅读器 = 停止阅读)。
+        this._stopTextReader = () => {
+            if (this._textReader) { try { this._textReader.stop(); } catch (e) {} this._textReader = null; }
         };
 
         this.openFile = (name, path, type) => { //Might add text formatting at some point, not now though - Surge

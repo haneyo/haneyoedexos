@@ -1145,8 +1145,14 @@ class LockScreen {
         const code = String(window.settings.lockCode || "0000");
         const err = document.getElementById("lock_err");
         if (input.value === code) {
-            if (window.audioManager) window.audioManager.granted.play();
-            window.eventPlay("unlock_ok");
+            // #182 开机解锁只留欢迎词:boot 锁(此锁经 bootLockThenRun 队列,_onUnlocked
+            // 直到下方 1200 行才消费)解锁瞬间跳过 granted + unlock_ok——它们同毫秒叠加,
+            // 1.5s 后 welcomeBack 还会播 boot_welcome 欢迎词,granted 在 boot 动画也已
+            // 播过一次。会话内重新上锁(Win+L / 屏保)再解开时 _onUnlocked 为空,照常播。
+            if (!this._onUnlocked) {
+                if (window.audioManager) window.audioManager.granted.play();
+                window.eventPlay("unlock_ok");
+            }
             // No longer need the 30s idle timeout once the passcode matches.
             if (this._idleTimer) { clearInterval(this._idleTimer); this._idleTimer = null; }
             // CRT-TV power-off after the boot/matrix lock clears. It is a

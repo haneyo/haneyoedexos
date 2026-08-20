@@ -339,14 +339,17 @@ sudo cp "$WORK/llm-qwen05.gguf" "$WORK/rootfs/opt/edex/llm/qwen2.5-0.5b-instruct
 sudo tar -xzf "$WORK/llama-b10488-ubuntu.tar.gz" -C "$WORK/rootfs/opt/edex/llm" --strip-components=1
 [ -x "$WORK/rootfs/opt/edex/llm/llama-server" ] || { echo "[edex] ERROR: llama-server missing after extract" >&2; exit 1; }
 
-# Bake in the offline Chinese TTS model (sherpa-onnx VITS fanchen) so AI-chat
-# voice replies work with zero network at run time. Same HARD-dependency policy
-# as the ASR/LLM blocks: a download/extract/hash mismatch aborts the build. The
-# archive keeps its "vits-zh-hf-fanchen-C/" prefix (mirroring the ASR extract
-# above) — src/_boot.js ttsModelDirs() resolves that exact path.
-echo "[edex] baking in offline TTS model (sherpa-onnx vits-zh-hf-fanchen-C)"
-TTS_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-hf-fanchen-C.tar.bz2"
-TTS_SHA="523aae3e6cf1bef3c05e2b0105d1ee15d53987a3bb559f78ba84fb7c4f990bd6"
+# Bake in the offline Chinese TTS model so AI-chat voice replies work with zero
+# network at run time. Same HARD-dependency policy as the ASR/LLM blocks: a
+# download/extract/hash mismatch aborts the build. #171: matcha-icefall-zh-en
+# (Matcha-TTS + vocos vocoder) is the preferred model — measured on an i3-7020U
+# at ~4.9x realtime synthesis with natural neural prosody, and it handles mixed
+# zh+en text. The two archives keep their "matcha-icefall-zh-en/" and
+# "vocos-16khz-univ.onnx" paths — src/_boot.js ttsModelDirs()/ttsInit() resolve
+# those exact locations (huayan/fanchen stay as lazy fallbacks when missing).
+echo "[edex] baking in offline TTS model (sherpa-onnx matcha-icefall-zh-en + vocos)"
+TTS_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/matcha-icefall-zh-en.tar.bz2"
+TTS_SHA="271b804af570400d3bcdcb53bf6e53cc9f75180ee763b9f13eb5eaf2b0d086ef"
 curl -fSL --retry 3 --retry-delay 5 -o "$WORK/zh-tts.tar.bz2" "$TTS_URL"
 if [ ! -s "$WORK/zh-tts.tar.bz2" ]; then
     echo "[edex] ERROR: TTS download produced an empty file" >&2
@@ -354,8 +357,18 @@ if [ ! -s "$WORK/zh-tts.tar.bz2" ]; then
 fi
 echo "$TTS_SHA  $WORK/zh-tts.tar.bz2" | sha256sum -c - >/dev/null || { echo "[edex] ERROR: TTS model sha256 mismatch" >&2; exit 1; }
 sudo tar -xjf "$WORK/zh-tts.tar.bz2" -C "$WORK/rootfs/opt/edex/models"
-[ -f "$WORK/rootfs/opt/edex/models/vits-zh-hf-fanchen-C/vits-zh-hf-fanchen-C.onnx" ] \
+[ -f "$WORK/rootfs/opt/edex/models/matcha-icefall-zh-en/model-steps-3.onnx" ] \
     || { echo "[edex] ERROR: TTS onnx missing after extract" >&2; exit 1; }
+echo "[edex] baking in matcha vocoder (vocos-16khz-univ.onnx)"
+VOC_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos-16khz-univ.onnx"
+VOC_SHA="b599142a1fb8ff03de3e84ac35ff537c619e56f4267a6fe894851a42844acf9e"
+curl -fSL --retry 3 --retry-delay 5 -o "$WORK/zh-tts-vocoder.onnx" "$VOC_URL"
+if [ ! -s "$WORK/zh-tts-vocoder.onnx" ]; then
+    echo "[edex] ERROR: TTS vocoder download produced an empty file" >&2
+    exit 1
+fi
+echo "$VOC_SHA  $WORK/zh-tts-vocoder.onnx" | sha256sum -c - >/dev/null || { echo "[edex] ERROR: TTS vocoder sha256 mismatch" >&2; exit 1; }
+sudo install -m 0644 -D "$WORK/zh-tts-vocoder.onnx" "$WORK/rootfs/opt/edex/models/vocos-16khz-univ.onnx"
 
 # Bake the eDEX AppImage straight into the image.
 # First apply the keyboard.class.js fix (empty-NodeList TypeError on every Enter)
