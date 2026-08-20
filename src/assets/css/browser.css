@@ -696,6 +696,13 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
     background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.25);
 }
 .appmonitor_voice_btn .voice_icon { width: 1.5vh; height: 1.5vh; display: block; }
+/* #158: right-click toggled to AI-assistant mode — amber accent so the active
+   function (plain voice input vs AI chat) is obvious at a glance. */
+.appmonitor_voice_btn.voice_chat_mode {
+    color: #ffb000;
+    border-color: #ffb000;
+    background: rgba(255, 176, 0, 0.12);
+}
 .appmonitor_voice_btn.voice_recording {
     background: rgba(224, 27, 36, 0.3);
     color: #ff6b6b;
@@ -729,6 +736,39 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
     50% { height: 1.6vh; }
 }
 .appmonitor_voice_btn.voice_disabled { opacity: 0.3; cursor: not-allowed; }
+/* #158: right-click menu on the mic — a small anchored popup with the two
+   modes (AI assistant / voice input), styled like the mod_loc dropdowns. */
+div.voice_mode_menu {
+    position: fixed;
+    z-index: 300;
+    min-width: 13vh;
+    padding: 0.3vh 0;
+    background: #0a0f14;
+    border: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
+    box-shadow: 0 0 1.5vh rgba(0, 0, 0, 0.6);
+}
+div.voice_mode_opt {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.2vh;
+    padding: 0.45vh 0.9vh;
+    font-size: 0.95vh;
+    letter-spacing: 0.04vh;
+    color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.85);
+    cursor: pointer;
+    white-space: nowrap;
+    outline: none;
+}
+div.voice_mode_opt:hover,
+div.voice_mode_opt.active {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.15);
+}
+div.voice_mode_opt.selected::after {
+    content: "\2713";
+    color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.9);
+    font-size: 0.85vh;
+}
 /* Real-time ASR feedback bubble pinned above the corner mic button; hidden
    until the main process streams a non-empty partial transcript. */
 .voice_partial {
@@ -1084,6 +1124,35 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
     max-height: 18vh;
     overflow-y: auto;
 }
+/* #171 思考动画:label + 动画同在一行,回复正文在下方。 */
+#edex_ai_toast .ai_toast_head {
+    display: flex;
+    align-items: center;
+    gap: 0.6vh;
+}
+/* 5 根条形按 accent 色霓虹脉冲 —— 思考中的「科技感」信号条。 */
+#edex_ai_toast .ai_thinking {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35vh;
+    height: 1.5vh;
+}
+#edex_ai_toast .ai_thinking i {
+    display: block;
+    width: 0.3vh;
+    height: 1.5vh;
+    border-radius: 0.15vh;
+    background: rgb(var(--color_r), var(--color_g), var(--color_b));
+    animation: aiThinkPulse 0.9s ease-in-out infinite;
+}
+#edex_ai_toast .ai_thinking i:nth-child(2) { animation-delay: 0.1s; }
+#edex_ai_toast .ai_thinking i:nth-child(3) { animation-delay: 0.2s; }
+#edex_ai_toast .ai_thinking i:nth-child(4) { animation-delay: 0.3s; }
+#edex_ai_toast .ai_thinking i:nth-child(5) { animation-delay: 0.4s; }
+@keyframes aiThinkPulse {
+    0%, 100% { transform: scaleY(0.2); opacity: 0.3; }
+    50% { transform: scaleY(1); opacity: 1; filter: drop-shadow(0 0 0.6vh rgb(var(--color_r), var(--color_g), var(--color_b))); }
+}
 
 /* ---- Floating fullscreen toggle for the webapp view ---- */
 .webapp_fullscreen_btn {
@@ -1210,6 +1279,33 @@ div#main_shell_innercontainer div#appmonitor_b_slot {
 .wifi_name { flex: 1; }
 .wifi_lock { opacity: 0.6; }
 .wifi_empty { color: rgb(var(--color_r), var(--color_g), var(--color_b)); opacity: 0.6; font-size: 1.1vh; padding: 0.6vh; }
+
+/* AI chat-history popup (#161) — chat-bubble rows, keyboard-navigable. */
+.ai_hist_panel { min-width: 52vh; max-height: 55vh; overflow: hidden; }
+.ai_hist_list { max-height: 40vh; overflow-y: auto; }
+.ai_hist_row {
+    display: flex; align-items: flex-start; gap: 0.8vh;
+    padding: 0.7vh 0.8vh;
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-size: 1.15vh; line-height: 1.45; letter-spacing: 0.04em;
+    border-left: 0.3vh solid transparent;
+}
+.ai_hist_row.active {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.22);
+    border-left-color: rgb(var(--color_r), var(--color_g), var(--color_b));
+}
+.ai_hist_role {
+    flex-shrink: 0; margin-top: 0.1vh;
+    font-size: 0.95vh; letter-spacing: 0.15em;
+    border: 0.1vh solid currentColor;
+    padding: 0.1vh 0.5vh; opacity: 0.9;
+}
+.ai_hist_role.ai_hist_user { color: #00ff9f; }
+.ai_hist_role.ai_hist_ai { color: #ffb000; }
+.ai_hist_body {
+    flex: 1; word-break: break-word; white-space: pre-wrap;
+    opacity: 0.92;
+}
 .wifi_pw input {
     width: 100%; box-sizing: border-box;
     background: rgba(5, 8, 13, 0.9);

@@ -1036,31 +1036,34 @@ async function initUI() {
     const batteryEl = document.createElement("div");
     batteryEl.id = "edex_battery";
     batteryEl.className = "battery_hidden";
+    // Lightweight toast, shared with the panels' #edex_toast element. The
+    // app-monitor panels are constructed later than this block, so fall
+    // back to creating the element ourselves when they are not ready yet.
+    // Declared at initUI scope (not inside `if (clockHost)`) so other initUI
+    // features — the mic mode menu, the download manager — can show toasts
+    // too; the settings-editor's `notify` helper is out of scope up here.
+    const notifyToast = msg => {
+        if (window.appmonitorA && window.appmonitorA._notify) {
+            return window.appmonitorA._notify(msg);
+        }
+        let t = document.getElementById("edex_toast");
+        if (!t) {
+            t = document.createElement("div");
+            t.id = "edex_toast";
+            t.className = "browser_toast";
+            document.body.appendChild(t);
+        }
+        t.textContent = msg;
+        t.classList.add("show");
+        clearTimeout(notifyToast._timer);
+        notifyToast._timer = setTimeout(() => t.classList.remove("show"), 2200);
+    };
     const clockHost = document.getElementById("mod_clock");
     if (clockHost) {
         clockHost.appendChild(batteryEl);
-        // Lightweight toast, shared with the panels' #edex_toast element. The
-        // app-monitor panels are constructed later than this block, so fall
-        // back to creating the element ourselves when they are not ready yet.
-        const notifyToast = msg => {
-            if (window.appmonitorA && window.appmonitorA._notify) {
-                return window.appmonitorA._notify(msg);
-            }
-            let t = document.getElementById("edex_toast");
-            if (!t) {
-                t = document.createElement("div");
-                t.id = "edex_toast";
-                t.className = "browser_toast";
-                document.body.appendChild(t);
-            }
-            t.textContent = msg;
-            t.classList.add("show");
-            clearTimeout(notifyToast._timer);
-            notifyToast._timer = setTimeout(() => t.classList.remove("show"), 2200);
-        };
         // Cross-refresh memory so the graded warnings fire once per transition,
         // not on every 30s tick.
-        const battTrack = { charging: null, lowWarned: false, critWarned: false, fullWarned: false, warn40: false };
+        const battTrack = { first: true, charging: null, lowWarned: false, critWarned: false, fullWarned: false, warn40: false };
         const battery = {
             async refresh() {
                 try {
@@ -1089,6 +1092,19 @@ async function initUI() {
                         : "full";
                     el.className = "battery_" + grade + (b.charging ? " battery_charging" : "");
                     el.title = `${pct}% ${b.charging ? "(charging)" : "(battery)"}`;
+                    // First read of a session: snapshot the battery state WITHOUT
+                    // any toast or sound, so a boot that starts plugged-in / full
+                    // / low does not replay the plug-in, full or low-battery
+                    // alerts every time. Only a real change after this baseline
+                    // (e.g. not-full → full, unplugged → plugged) triggers them.
+                    if (battTrack.first) {
+                        battTrack.first = false;
+                        battTrack.charging = b.charging;
+                        battTrack.fullWarned = !!(b.charging && pct >= 99);
+                        battTrack.warn40 = !b.charging && pct < 40;
+                        battTrack.critWarned = grade === "critical";
+                        battTrack.lowWarned = grade === "low";
+                    }
                     // One-shot toasts on transitions: plug-in, low, critical,
                     // full. Reset the discharged warnings once back above 20%.
                     if (b.charging && battTrack.charging !== true) {
@@ -1310,6 +1326,11 @@ async function initUI() {
             if (this._partialEl) this._partialEl.textContent = "";
             try {
                 const r = await ipc.invoke("voice:stop");
+                // Clear again: the stop window still streams recognized audio,
+                // so a final partial can arrive after the clear above and
+                // repopulate the bubble forever (the gated voice:partial
+                // listener covers future ones — this covers the one in flight).
+                if (this._partialEl) this._partialEl.textContent = "";
                 const text = String((r && r.text) || "").trim();
                 if (text) {
                     // #151: with the mic switched to AI-chat mode the recognized
@@ -1342,13 +1363,15 @@ async function initUI() {
             b.title = recording ? "Listening… (click to stop)" : "Voice input (click to talk)";
         },
         toggle() {
-            // #151: in chat mode a click while the AI is replying aborts it
-            // (so a second click starts a fresh question) instead of recording
-            // over a busy assistant.
+            // #151: in chat mode a click while the AI is replying starts a
+            // fresh exchange. #158: the old code returned after cancel(), so
+            // the second question's press was swallowed entirely — the user got
+            // no recording, no new reply, and concluded "第二句就不回复了".
+            // Cancel the busy reply, then fall through to record the next
+            // question immediately.
             if ((window.settings.voiceMicMode || "input") === "chat" &&
                 window.aiChat && window.aiChat._busy) {
                 window.aiChat.cancel();
-                return;
             }
             if (this._recording) this.stop();
             else this.start();
@@ -1358,8 +1381,94 @@ async function initUI() {
     micBtn.id = "edex_voice_btn";
     micBtn.className = "appmonitor_ime_btn appmonitor_voice_btn";
     micBtn.innerHTML = '<svg class="voice_icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><span class="voice_eq"><i></i><i></i><i></i><i></i><i></i></span>';
-    micBtn.title = "Voice input (click to talk, or hold the Win key)";
     micBtn.addEventListener("click", e => { e.stopPropagation(); window.voiceInput.toggle(); });
+    // #158: right-click toggles the mic between plain voice input (text →
+    // terminal) and the AI assistant (text → chat). Takes effect immediately:
+    // the mode is written to settings.json (survives restart) and the button
+    // gets an amber AI accent + bilingual tooltip so the active mode is visible.
+    const setMicMode = () => {
+        const chat = (window.settings.voiceMicMode || "input") === "chat";
+        micBtn.classList.toggle("voice_chat_mode", chat);
+        micBtn.title = chat ? t("settings.voice.micMode.titleChat") : t("settings.voice.micMode.titleInput");
+        const sel = document.getElementById("settingsEditor-voiceMicMode");
+        if (sel) sel.value = chat ? "chat" : "input";
+    };
+
+    // #158: right-click opens a small anchored menu with the two choices — "AI
+    // assistant" (recognized speech goes to the chat) or "voice input" (plain
+    // text → terminal). Picking one writes voiceMicMode to settings.json (so the
+    // change persists across restarts) and updates the button visual at once.
+    let micMenu = null;
+    const closeMicMenu = () => {
+        if (!micMenu) return;
+        if (micMenu._cleanup) micMenu._cleanup();
+        micMenu.remove();
+        micMenu = null;
+    };
+    const applyMicMode = mode => {
+        const cur = window.settings.voiceMicMode || "input";
+        if (cur !== mode) {
+            window.settings.voiceMicMode = mode;
+            try { fs.writeFileSync(settingsFile, JSON.stringify(window.settings, "", 4)); } catch (e2) {}
+            setMicMode();
+            // `notify` lives in the settings-editor function (outside initUI's
+            // scope) — use the in-scope battery helper notifyToast instead.
+            notifyToast(t(mode === "chat" ? "settings.voice.micMode.toastChat" : "settings.voice.micMode.toastInput"));
+        }
+        closeMicMenu();
+    };
+    const showMicMenu = () => {
+        closeMicMenu();
+        const chat = (window.settings.voiceMicMode || "input") === "chat";
+        micMenu = document.createElement("div");
+        micMenu.className = "voice_mode_menu";
+        micMenu.innerHTML =
+            `<div class="voice_mode_opt${chat ? " selected" : ""}" tabindex="-1" data-mode="chat">${t("settings.voice.micMode.assistant")}</div>` +
+            `<div class="voice_mode_opt${!chat ? " selected" : ""}" tabindex="-1" data-mode="input">${t("settings.voice.micMode.input")}</div>`;
+        document.body.appendChild(micMenu);
+        // Anchor the menu's bottom-right corner just above the mic button.
+        const r = micBtn.getBoundingClientRect();
+        micMenu.style.right = (window.innerWidth - r.right) + "px";
+        micMenu.style.bottom = (window.innerHeight - r.top + 4) + "px";
+
+        const opts = Array.from(micMenu.querySelectorAll(".voice_mode_opt"));
+        const pick = o => applyMicMode(o.dataset.mode);
+        opts.forEach(o => {
+            o.addEventListener("click", e => { e.stopPropagation(); pick(o); });
+            o.addEventListener("mouseenter", () => opts.forEach(x => x.classList.toggle("active", x === o)));
+        });
+        (micMenu.querySelector(".selected") || opts[0]).focus();
+        // Keyboard: ↑/↓ move, Enter picks, Esc closes. Clicking anywhere outside
+        // also closes (mousedown fires before the option's click — the contains()
+        // check keeps clicks inside the menu alive).
+        const keyH = e => {
+            if (e.key === "Escape") { e.preventDefault(); closeMicMenu(); return; }
+            if (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "Tab") {
+                const cur = opts.indexOf(document.activeElement);
+                const next = (e.key === "ArrowDown" || e.key === "Tab")
+                    ? (cur < 0 ? 0 : (cur + 1) % opts.length)
+                    : (cur < 0 ? opts.length - 1 : (cur - 1 + opts.length) % opts.length);
+                e.preventDefault(); e.stopPropagation();
+                opts.forEach(x => x.classList.toggle("active", x === opts[next]));
+                opts[next].focus();
+            } else if (e.key === "Enter") {
+                const a = document.activeElement;
+                if (a && a.classList.contains("voice_mode_opt")) { e.preventDefault(); pick(a); }
+            }
+        };
+        const mouseH = e => { if (micMenu && !micMenu.contains(e.target)) closeMicMenu(); };
+        document.addEventListener("keydown", keyH);
+        document.addEventListener("mousedown", mouseH, true);
+        micMenu._cleanup = () => {
+            document.removeEventListener("keydown", keyH);
+            document.removeEventListener("mousedown", mouseH, true);
+        };
+    };
+    micBtn.addEventListener("contextmenu", e => {
+        e.preventDefault(); e.stopPropagation();
+        showMicMenu();
+    });
+    setMicMode();
 
     // Corner button stack pinned flush to the terminal/content area's bottom-right.
     const corner = document.createElement("div");
@@ -1367,6 +1476,14 @@ async function initUI() {
     corner.appendChild(micBtn);
     corner.appendChild(imeBtn);
     document.getElementById("main_shell_innercontainer").appendChild(corner);
+    // #175: 系统语言为英语时,语音输入(ASR 仅中文)与中文输入法切换(中/EN)都没有意义。
+    // 直接去掉「语音输入键」+「语言切换键」;切回中文(设置语言或首启选择)立即恢复。
+    window.applyLangHiding = () => {
+        const en = (window.settings.language || "en") === "en";
+        micBtn.style.display = en ? "none" : "";
+        imeBtn.style.display = en ? "none" : "";
+    };
+    window.applyLangHiding();
     // Real-time ASR feedback: the main process streams partial text on every
     // audio chunk; render it in a bubble above the mic so words appear while
     // the user is talking (without this the button looks dead until stop).
@@ -1375,7 +1492,13 @@ async function initUI() {
     partialEl.className = "voice_partial";
     corner.appendChild(partialEl);
     window.voiceInput._partialEl = partialEl;
-    ipc.on("voice:partial", (e, text) => { if (partialEl) partialEl.textContent = text || ""; });
+    ipc.on("voice:partial", (e, text) => {
+        // #171: a final partial can arrive after stop() cleared the bubble and
+        // set _recording=false (the stop window still streams recognized audio) —
+        // if we repaint it here it stays stuck at the corner forever. Only show
+        // while actually recording; stop() clears the bubble itself afterwards.
+        if (partialEl && window.voiceInput && window.voiceInput._recording) partialEl.textContent = text || "";
+    });
     window.edexIME.refresh();
     setInterval(() => window.edexIME.refresh(), 5000);
 
@@ -1389,6 +1512,8 @@ async function initUI() {
     const isWinKey = e => (e.key === "Meta" || e.code === "MetaLeft" || e.code === "MetaRight");
     let winVoiceTimer = null;
     document.addEventListener("keydown", e => {
+        // #175: 英文系统已隐藏语音输入,Win 键 PTT 一并停用。
+        if ((window.settings.language || "en") === "en") return;
         // Any other key pressed while Win is held (e.g. Win+L lock, Win+R …)
         // cancels the pending talk timer — never start recording mid-combo.
         if (e.metaKey && !isWinKey(e) && winVoiceTimer) { clearTimeout(winVoiceTimer); winVoiceTimer = null; }
@@ -1402,6 +1527,8 @@ async function initUI() {
         }
     });
     document.addEventListener("keyup", e => {
+        // #175: 英文系统 Win 键 PTT 停用(与 keydown 一致)。
+        if ((window.settings.language || "en") === "en") return;
         if (isWinKey(e) && termFocused()) {
             e.preventDefault(); e.stopPropagation();
             if (winVoiceTimer) { clearTimeout(winVoiceTimer); winVoiceTimer = null; }
@@ -1426,30 +1553,53 @@ async function initUI() {
     window.aiChat = {
         _busy: false, _gen: 0, _buf: "", _shown: 0, _flushFrom: 0,
         _timer: null, _toast: null, _label: null, _text: null,
-        _queue: [], _playing: false, _audio: null, _dismiss: null,
+        _queue: [], _playing: false, _audio: null, _dismiss: null, _streamDone: false,
+        _cached: null, _generating: false, // 预生成双缓冲:播放本句时提前合成下一句,消除句间合成间隙
         ask(text) {
             if (this._busy) { this._showErr("busy"); return; }
             const gen = ++this._gen;
             this._busy = true;
             this._buf = ""; this._shown = 0; this._flushFrom = 0; this._queue = [];
+            this._cached = null; this._generating = false; // 清掉上一轮未用的预生成
+            this._streamDone = false; // 新一轮:语音播放未完成前不让弹窗消失
             this._playing = false; // a cancelled playback may have left _playing stuck true
             this._stopAudio();
             this._ensureToast();
+            // #158 "第二句不回复": a previous reply's 6s auto-dismiss removed
+            // the toast's "show" class, and _ensureToast() reuses the existing
+            // element — so the NEXT question streamed into an invisible toast
+            // and looked like no reply at all. Re-add "show" on every exchange.
+            if (this._toast) this._toast.classList.add("show");
             if (this._label) this._label.textContent = window.t("ai.thinking");
             if (this._text) this._text.textContent = "";
+            this._setThinking(true); // #171 思考动画:首 token 到前保持脉冲
             ipc.invoke("ai:chat", { text }).then(r => {
                 if (gen !== this._gen) return; // superseded by cancel()/a newer ask
                 this._busy = false;
+                this._setThinking(false);
                 this._stopType();
                 this._shown = this._buf.length;
                 if (this._text) this._text.textContent = this._buf;
                 if (r && r.ok) {
                     this._flushTail();
-                    this._scheduleDismiss(6000);
+                    // #171 弹窗等语音读完:不设固定 6s,等 TTS 队列排空才收。
+                    this._streamDone = true;
+                    this._maybeDismiss();
                 } else {
                     this._flushTail();
-                    this._showErr((r && r.error) || "network");
+                    this._streamDone = true;
+                    this._showErr((r && r.error) || "network", true); // 延迟 dismiss,交给播放完成
+                    this._maybeDismiss();
                 }
+            }).catch(() => {
+                // #158: a rejected invoke (main-process throw/crash mid-stream)
+                // must not leave _busy stuck true — the mic button would stay
+                // disabled and every later press would be swallowed.
+                if (gen !== this._gen) return;
+                this._busy = false;
+                this._setThinking(false);
+                this._stopType();
+                this._showErr("network");
             });
             this._startType();
         },
@@ -1457,10 +1607,12 @@ async function initUI() {
             ++this._gen;                       // invalidate the pending invoke's .then
             try { ipc.send("ai:chat-abort"); } catch (e) {}
             this._busy = false;
+            this._setThinking(false);
             this._stopType();
             this._playing = false; // _stopAudio() detaches the onended fin callback, so reset the serial lock here
             this._stopAudio();
             this._queue = [];
+            this._cached = null; this._generating = false; // 作废在途预生成
             this._scheduleDismiss(1500);
         },
         _ensureToast() {
@@ -1472,10 +1624,24 @@ async function initUI() {
             label.className = "ai_toast_label";
             const text = document.createElement("span");
             text.className = "ai_toast_text";
-            toast.appendChild(label);
+            // #171 思考动画:思考期间 label 右侧 5 根条形以 accent 色霓虹脉冲,
+            // 首 token 到达后隐藏(纯视觉,键盘无关)。
+            const think = document.createElement("span");
+            think.className = "ai_thinking";
+            think.style.display = "none";
+            for (let i = 0; i < 5; i++) think.appendChild(document.createElement("i"));
+            // 头行:label + 思考动画同一行,回复正文在下方。
+            const head = document.createElement("span");
+            head.className = "ai_toast_head";
+            head.appendChild(label);
+            head.appendChild(think);
+            toast.appendChild(head);
             toast.appendChild(text);
             document.body.appendChild(toast);
-            this._toast = toast; this._label = label; this._text = text;
+            this._toast = toast; this._label = label; this._text = text; this._thinking = think;
+        },
+        _setThinking(on) {
+            if (this._thinking) this._thinking.style.display = on ? "" : "none";
         },
         _startType() {
             if (this._timer) return;
@@ -1488,24 +1654,41 @@ async function initUI() {
             }, 25);
         },
         _stopType() { if (this._timer) { clearInterval(this._timer); this._timer = null; } },
-        // Queue complete sentences (terminated by 。！？!?. or a newline) for TTS
-        // as they scroll past the typewriter's cursor, so speech tracks what is
-        // on screen instead of reading the whole reply ahead of time.
+        // Queue complete sentences for TTS as they scroll past the typewriter's
+        // cursor, so speech tracks what is on screen instead of reading the
+        // whole reply ahead of time. #171: the old regex only broke on
+        // 。！？!?./newline — a flowing reply full of ，and —— with a single
+        // trailing 。 accumulated ~200 chars into ONE generateAsync call
+        // (measured 18s to synthesize / 45s of audio in the field). Split on
+        // clause punctuation too and hard-cap every chunk so speech streams out
+        // in short pieces instead of one long stall.
+        _splitTts(text) {
+            const MAX = 40;
+            const parts = String(text).split(/(?<=[。！？!?，、；;：:\n])/);
+            const out = [];
+            let cur = "";
+            for (const p of parts) {
+                if (cur && (cur + p).length > MAX) { out.push(cur.trim()); cur = ""; }
+                cur += p;
+            }
+            if (cur.trim()) out.push(cur.trim());
+            return out;
+        },
         _flushSentences() {
             const typed = this._buf.slice(0, this._shown);
-            const re = /[^。！？!?.\n]+[。！？!?.\n]+/g;
+            const re = /[^。！？!?，、；;：:\n]+[。！？!?，、；;：:\n]+/g;
             re.lastIndex = this._flushFrom;
             let m;
             while ((m = re.exec(typed))) {
                 const sent = m[0].trim();
                 this._flushFrom = m.index + m[0].length;
-                if (sent) this._queue.push(sent);
+                if (sent) this._queue.push(...this._splitTts(sent));
             }
             this._playNext();
         },
         _flushTail() {
             const tail = this._buf.slice(this._flushFrom).trim();
-            if (tail) this._queue.push(tail);
+            if (tail) this._queue.push(...this._splitTts(tail));
             this._flushFrom = this._buf.length;
             this._playNext();
         },
@@ -1513,26 +1696,83 @@ async function initUI() {
             if (this._playing || !this._queue.length) return;
             const sent = this._queue.shift();
             this._playing = true;
+            // 双缓冲:本句若已被 _prefetchNext 预生成,直接用缓存(零句间间隙)。
+            const cached = this._cached && this._cached.sent === sent ? this._cached : null;
+            this._cached = null;
+            const startPlay = wav => {
+                this._playWav(wav, () => { this._playing = false; this._playNext(); this._maybeDismiss(); });
+                this._prefetchNext();
+            };
+            if (cached) {
+                ipc.send("dbg-log", "playNext cache-hit: " + sent.slice(0, 12));
+                startPlay(cached.wav);
+                return;
+            }
             ipc.invoke("tts:speak", { text: sent }).then(r => {
-                if (!r || !r.ok || !r.wav) { this._playing = false; this._playNext(); return; }
-                this._playWav(r.wav, () => { this._playing = false; this._playNext(); });
-            }).catch(() => { this._playing = false; this._playNext(); });
+                ipc.send("dbg-log", "playNext resp ok=" + !!(r && r.ok) + " hasWav=" + !!(r && r.wav) +
+                    (r && !r.ok ? " err=" + (r.error || "") : ""));
+                if (!r || !r.ok || !r.wav) { this._playing = false; this._playNext(); this._maybeDismiss(); return; }
+                startPlay(r.wav);
+            }).catch(err => {
+                ipc.send("dbg-log", "playNext invoke FAIL: " + ((err && err.message) || err));
+                this._playing = false; this._playNext(); this._maybeDismiss();
+            });
+        },
+        // 播放本句时提前合成队首下一句,消除逐句生成造成的句间停顿。
+        // 前提:合成耗时(≈音频时长/5x)恒小于播放耗时,故预生成总在本句播完前就绪。
+        _prefetchNext() {
+            if (this._generating || !this._queue.length) return;
+            const gen = this._gen;
+            const sent = this._queue[0];
+            this._generating = true;
+            ipc.invoke("tts:speak", { text: sent }).then(r => {
+                this._generating = false;
+                if (gen !== this._gen) return; // 被 cancel()/新一轮 ask() 作废
+                if (r && r.ok && r.wav) this._cached = { sent, wav: r.wav };
+                else ipc.send("dbg-log", "prefetch miss: " + ((r && r.error) || "no-wav"));
+            }).catch(() => { this._generating = false; });
         },
         _playWav(b64, onEnd) {
             try {
                 const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-                const url = URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
-                const a = new Audio(url);
-                this._audio = a;
-                const fin = () => { URL.revokeObjectURL(url); this._audio = null; if (onEnd) onEnd(); };
-                a.onended = fin;
-                a.onerror = fin;
-                a.play().catch(fin);
-            } catch (e) { if (onEnd) onEnd(); }
+                // #158 "AI 回复没有语音" root cause: this Electron's <audio>
+                // element + blob URL rejects even a byte-valid WAV with
+                // "Failed to load because no supported source was found"
+                // (MEDIA_ERR_SRC_NOT_SUPPORTED). The system sounds play fine
+                // because howler/audiofx decodes through WebAudio — so route
+                // the TTS blob through the same decodeAudioData path. It takes
+                // the raw ArrayBuffer, no blob URL, no MIME sniffing.
+                const AC = window.AudioContext || window.webkitAudioContext;
+                const ctx = this._audioCtx || (this._audioCtx = new AC());
+                const myGen = this._gen;
+                const fin = () => { this._audio = null; if (onEnd) onEnd(); };
+                ctx.decodeAudioData(bytes.buffer.slice(0), buffer => {
+                    // A new ask()/cancel() while the (async) decode was pending
+                    // must not start the old reply playing.
+                    if (myGen !== this._gen) { fin(); return; }
+                    if (ctx.state === "suspended") ctx.resume().catch(() => {});
+                    const src = ctx.createBufferSource();
+                    src.buffer = buffer;
+                    src.connect(ctx.destination);
+                    this._audio = src;
+                    src.onended = fin;
+                    src.start();
+                }, err => {
+                    const hex = Array.from(bytes.slice(0, 16)).map(b => b.toString(16).padStart(2, "0")).join(" ");
+                    ipc.send("dbg-log", "playWav decodeAudioData FAIL: " + ((err && err.message) || err) +
+                        " wavBytes=" + bytes.length + " head=" + hex);
+                    fin();
+                });
+            } catch (e) { ipc.send("dbg-log", "playWav throw: " + ((e && e.message) || e)); if (onEnd) onEnd(); }
         },
         _stopAudio() {
             if (this._audio) {
-                try { this._audio.pause(); this._audio.onended = null; this._audio.onerror = null; } catch (e) {}
+                try {
+                    // WebAudio path (_playWav) stores an AudioBufferSourceNode
+                    // which has stop() — the old <audio> element had pause().
+                    if (typeof this._audio.stop === "function") this._audio.stop();
+                    else this._audio.pause();
+                } catch (e) {}
                 this._audio = null;
             }
         },
@@ -1542,18 +1782,28 @@ async function initUI() {
                 if (this._toast) this._toast.classList.remove("show");
             }, ms);
         },
-        _showErr(code) {
+        // #171 弹窗生命周期绑定语音播放:流已结束(_streamDone)且 TTS 队列排空
+        // (_playing && _queue 都空)才收;预生成在途(_generating)也视为未完。
+        _maybeDismiss() {
+            if (this._streamDone && !this._playing && !this._queue.length && !this._generating) this._scheduleDismiss(4000);
+        },
+        _showErr(code, deferDismiss) {
             const key = code === "LOCAL_MODEL_MISSING" ? "ai.err.localModel"
                 : code === "LLM_NOT_READY" ? "ai.err.llm"
                 : code === "TTS_MODEL_NOT_FOUND" ? "ai.err.ttsModel"
                 : code === "BUSY" ? "ai.busy"
                 : "ai.err.network";
             if (this._label) this._label.textContent = window.t(key);
-            this._scheduleDismiss(4000);
+            if (!deferDismiss) this._scheduleDismiss(4000);
         }
     };
     // Streamed reply tokens from the main process feed the typewriter buffer.
-    ipc.on("ai-token", (e, text) => { if (window.aiChat && text) window.aiChat._buf += text; });
+    ipc.on("ai-token", (e, text) => {
+        if (!window.aiChat || !text) return;
+        // #171 思考动画:第一个 token 到达 → 思考态结束,收掉脉冲条。
+        if (!window.aiChat._buf && window.aiChat._setThinking) window.aiChat._setThinking(false);
+        window.aiChat._buf += text;
+    });
 
     // ---- Module click → detail/action modals (all CLI-backed) ----
     window.sysCmd = {
@@ -1644,7 +1894,11 @@ async function initUI() {
         // that are still empty (used when the settings dialog opens, so a
         // previously saved custom value is not clobbered).
         applyClaudeProvider(overwrite = true) {
-            const id = document.getElementById("settingsEditor-claude-provider").value;
+            // #175 英文系统隐藏 AI 分类:claude 表单不渲染,元素缺失时直接跳过
+            // (否则 openSettings 的预填充 applyClaudeProvider(false) 会 TypeError)。
+            const el = document.getElementById("settingsEditor-claude-provider");
+            if (!el) return;
+            const id = el.value;
             const p = (window.CLAUDE_PROVIDERS || []).find(x => x.id === id);
             if (!p) return;
             // Rebuild a model combo box's option list from the provider's
@@ -2053,6 +2307,13 @@ async function initUI() {
     };
     window.btPanel = new BtPanel();
 
+    // AI-assistant chat log popup (#161) — opened from the settings AI category.
+    window.aiHistoryApi = {
+        list: () => ipc.invoke("ai:history"),
+        clear: () => ipc.invoke("ai:history-clear")
+    };
+    window.aiHistoryPanel = new AiHistoryPanel();
+
     // Background WiFi watcher — user event sound on connect. Polls wifi:status
     // every 10s and fires on a not-connected → connected transition; the first
     // connect observed in this session plays wifi_first, later ones wifi_known.
@@ -2445,10 +2706,10 @@ async function initUI() {
             const thEl = document.getElementById("settingsDlThreads");
             const dirEl = document.getElementById("settingsDlDir");
             const url = urlEl ? urlEl.value.trim() : "";
-            if (!/^https?:\/\//i.test(url)) { notify(t("settings.download.badUrl")); return; }
+            if (!/^https?:\/\//i.test(url)) { notifyToast(t("settings.download.badUrl")); return; }
             const dir = (dirEl ? dirEl.value.trim() : "") || undefined;
             ipc.invoke("axel:add", { url, threads: (thEl ? thEl.value : 6), dir }).then(r => {
-                notify(r && r.ok ? t("settings.download.added") : t("settings.download.addFailed") + (r && r.error ? " — " + r.error : ""));
+                notifyToast(r && r.ok ? t("settings.download.added") : t("settings.download.addFailed") + (r && r.error ? " — " + r.error : ""));
                 if (r && r.ok && urlEl) urlEl.value = "";
                 this.refresh();
             }).catch(() => {});
@@ -3733,12 +3994,14 @@ window.openSettings = async () => {
                 <option value="input" ${(window.settings.voiceMicMode || "input") === "input" ? "selected" : ""}>${t("settings.voice.micMode.input")}</option>
                 <option value="chat" ${(window.settings.voiceMicMode || "input") === "chat" ? "selected" : ""}>${t("settings.voice.micMode.chat")}</option>
             </select>`, "settings.voice.micMode.help"),
+            settingsRow("settings.claude.aiWebSearch", `<select id="settingsEditor-claude-aiWebSearch">
+                <option value="true" ${(window.settings.claude || {}).aiWebSearch !== false ? "selected" : ""}>${t("settings.claude.aiWebSearch.on")}</option>
+                <option value="false" ${(window.settings.claude || {}).aiWebSearch === false ? "selected" : ""}>${t("settings.claude.aiWebSearch.off")}</option>
+            </select>`, "settings.claude.aiWebSearch.help"),
             settingsRow("settings.ai.ttsStatus", `<div class="settings_ver_row"><span id="settingsAiTtsStatus" class="settings_net_info">–</span></div>`, "settings.ai.ttsStatus.help"),
-            settingsRow("settings.ai.history", `<div id="settingsAiHistoryList" class="settings_net_list" augmented-ui="bl-clip tr-clip exe"></div>
-                <div class="settings_net_actions">
-                    <button type="button" id="settingsAiHistoryRefresh" class="settings_net_btn">${t("settings.ai.history.historyRefresh")}</button>
-                    <button type="button" id="settingsAiHistoryClear" class="settings_net_btn">${t("settings.ai.history.historyClear")}</button>
-                </div>`),
+            settingsRow("settings.ai.history", `<div class="settings_net_actions">
+                    <button type="button" id="settingsAiHistoryOpen" class="settings_net_btn">${t("settings.ai.history.historyOpen")}</button>
+                </div>`, "settings.ai.history.help"),
         ].join("") },
         { id: "updates", titleKey: "settings.cat.updates", html: () => [
             section("settings.section.updatesApp"),
@@ -3781,6 +4044,11 @@ window.openSettings = async () => {
         ].join("") },
     ];
 
+    // #175: 英文系统隐藏「AI 助手」设置分类(语音输入/聊天/联网查询都只服务中文)。
+    const cats = (window.settings.language || "en") === "en"
+        ? CATS.filter(c => c.id !== "claude")
+        : CATS;
+
     // Remember the language the editor was opened in, so a change can re-open
     // the dialog in the new language (see writeSettingsFile). Note: `new Modal`
     // returns the Modal INSTANCE (class constructors ignore `return this.id`),
@@ -3792,13 +4060,13 @@ window.openSettings = async () => {
         title: `${t("settings.title")} <i>(v${remote.app.getVersion()})</i>`,
         html: `<div id="settingsBody">
                     <div id="settingsSide">
-                        ${CATS.map((c, i) => `<button type="button" class="settings_cat_btn${i === 0 ? " active" : ""}" data-cat="${c.id}">
+                        ${cats.map((c, i) => `<button type="button" class="settings_cat_btn${i === 0 ? " active" : ""}" data-cat="${c.id}">
                             <span class="settings_cat_idx">${String(i + 1).padStart(2, "0")}</span>
                             <span class="settings_cat_name">${t(c.titleKey)}</span>
                         </button>`).join("")}
                     </div>
                     <div id="settingsEditor">
-                        ${CATS.map((c, i) => `<div class="settings_cat${i === 0 ? " active" : ""}" data-cat="${c.id}">${c.html()}</div>`).join("")}
+                        ${cats.map((c, i) => `<div class="settings_cat${i === 0 ? " active" : ""}" data-cat="${c.id}">${c.html()}</div>`).join("")}
                     </div>
                 </div>
                 <h6 id="settingsEditorStatus">${t("settings.loadedStatus")}</h6>`,
@@ -3890,34 +4158,14 @@ window.openSettings = async () => {
         if (window.setupSettingsComboboxes) window.setupSettingsComboboxes();
         if (window.sysCmd.applyClaudeProvider) window.sysCmd.applyClaudeProvider(false);
         if (window.sysCmd.refreshLlmStatus) window.sysCmd.refreshLlmStatus();
-        // #151 AI-chat category bindings: TTS status + the chat-history list
-        // (refresh/clear buttons, keyboard-driven rows like the app manager).
+        // #151/#161 AI-chat category bindings: TTS status + the chat-history
+        // popup (opened from settings; the log itself is a standalone modal).
         if (window.sysCmd.refreshAiTtsStatus) window.sysCmd.refreshAiTtsStatus();
         const bindAi = (id, fn) => {
             const el = document.getElementById(id);
             if (el) el.addEventListener("click", fn);
         };
-        bindAi("settingsAiHistoryRefresh", () => window.sysCmd.refreshAiHistory());
-        bindAi("settingsAiHistoryClear", () => window.sysCmd.clearAiHistory());
-        if (window.sysCmd.refreshAiHistory) {
-            window.sysCmd.refreshAiHistory();
-            const histBox = document.getElementById("settingsAiHistoryList");
-            if (histBox) histBox.onkeydown = e => {
-                const rows = histBox.querySelectorAll(".appmgr_row");
-                if (!rows.length) return;
-                if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-                    e.preventDefault(); e.stopPropagation();
-                    let idx = -1; rows.forEach((r, i) => { if (r.classList.contains("active")) idx = i; });
-                    idx = e.key === "ArrowDown" ? Math.min(idx + 1, rows.length - 1) : Math.max(idx - 1, 0);
-                    rows.forEach(r => r.classList.remove("active"));
-                    rows[idx].classList.add("active");
-                    try { rows[idx].scrollIntoView({ block: "nearest" }); } catch (e2) {}
-                } else if (e.key === "Escape") {
-                    e.stopPropagation();
-                    rows.forEach(r => r.classList.remove("active"));
-                }
-            };
-        }
+        bindAi("settingsAiHistoryOpen", () => { if (window.aiHistoryPanel) window.aiHistoryPanel.open(); });
         // Clash category bindings: the enabled toggle is live (applies the
         // system proxy now AND persists so boot auto-start sees it); the action
         // buttons map straight onto window.clash; then pull current daemon state.
@@ -4814,14 +5062,23 @@ window.writeSettingsFile = () => {
     s.cursorSpeed = Number(document.getElementById("settingsEditor-cursorSpeed").value);
     s.appSort = document.getElementById("settingsEditor-appSort").value;
     s.language = document.getElementById("settingsEditor-language").value;
-    s.claude = {
-        enabled: (document.getElementById("settingsEditor-claude-enabled").value === "true"),
-        provider: document.getElementById("settingsEditor-claude-provider").value,
-        baseUrl: document.getElementById("settingsEditor-claude-baseUrl").value,
-        apiKey: document.getElementById("settingsEditor-claude-apiKey").value,
-        model: document.getElementById("settingsEditor-claude-model").value,
-        haikuModel: document.getElementById("settingsEditor-claude-haikuModel").value
-    };
+    // MERGE over the stored claude block (not a rebuild): a rebuild would
+    // drop any claude key without a form control below — e.g. aiWebSearch.
+    const awsEl = document.getElementById("settingsEditor-claude-aiWebSearch");
+    // #175 英文系统隐藏 AI 分类:claude 表单不渲染,provider 元素缺失时整块跳过,
+    // 保留已存 claude 配置(否则 Save 会 TypeError)。
+    const cPrEl = document.getElementById("settingsEditor-claude-provider");
+    if (cPrEl) {
+        s.claude = Object.assign({}, s.claude, {
+            enabled: (document.getElementById("settingsEditor-claude-enabled").value === "true"),
+            provider: cPrEl.value,
+            baseUrl: document.getElementById("settingsEditor-claude-baseUrl").value,
+            apiKey: document.getElementById("settingsEditor-claude-apiKey").value,
+            model: document.getElementById("settingsEditor-claude-model").value,
+            haikuModel: document.getElementById("settingsEditor-claude-haikuModel").value,
+            aiWebSearch: awsEl ? (awsEl.value === "true") : (s.claude.aiWebSearch !== false)
+        });
+    }
     const micModeEl = document.getElementById("settingsEditor-voiceMicMode");
     if (micModeEl) s.voiceMicMode = micModeEl.value;
     // appMonitor is not rebuilt from the form here: the backend server always
@@ -4858,6 +5115,7 @@ window.writeSettingsFile = () => {
 
     window.settings = s;
     fs.writeFileSync(settingsFile, JSON.stringify(s, "", 4));
+    if (window.applyLangHiding) window.applyLangHiding();
     document.getElementById("settingsEditorStatus").innerText = t("settings.savedStatus")+new Date().toTimeString();
 
     // Pointer look/size changes rebuild the cursor-role style in place (no
@@ -4886,6 +5144,7 @@ window.setLanguage = lang => {
     if (lang !== "zh" && lang !== "en") return;
     window.settings.language = lang;
     fs.writeFileSync(settingsFile, JSON.stringify(window.settings, "", 4));
+    if (window.applyLangHiding) window.applyLangHiding();
     if (window._langPicker && window._langPicker.id && window.modals[window._langPicker.id]) {
         window.modals[window._langPicker.id].close();
         window._langPicker = null;

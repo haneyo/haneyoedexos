@@ -667,7 +667,19 @@ div.modal_popup textarea:active, div.modal_popup textarea:focus {
     outline: none !important;
 }
 
-/* Editable doc viewer (text files) — toolbar + editor */
+/* Editable doc viewer (text files) — toolbar + editor.
+   Cap the modal size so the toolbar (阅读/COPY ALL) and the button row
+   (Save to Disk/close) always stay on screen: the textarea absorbs the
+   leftover height and scrolls internally instead of growing past the
+   viewport (rows="40" + min-height used to overflow it on the laptop). */
+div.modal_popup:has(#fileEdit) {
+    width: 74vw;
+    max-width: 92vw;
+    height: 72vh;
+    max-height: 90vh;
+    justify-content: flex-start;
+    overflow: hidden;
+}
 div.modal_popup .file_view_bar {
     display: flex;
     align-items: center;
@@ -682,6 +694,13 @@ div.modal_popup .file_view_bar button:focus {
     outline: none;
     background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.25);
 }
+/* #176 文本阅读器「阅读/暂停」按钮:固定宽度防文字切换抖动,朗读中高亮 */
+div.modal_popup .file_view_bar #fileReadBtn {
+    min-width: 9vh;
+}
+div.modal_popup .file_view_bar #fileReadBtn.active {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.22);
+}
 div.modal_popup .file_view_hint {
     font-family: var(--font_main_light);
     font-size: 1.4vh;
@@ -689,7 +708,8 @@ div.modal_popup .file_view_hint {
 }
 div.modal_popup #fileEdit {
     width: 100%;
-    min-height: 46vh;
+    flex: 1 1 auto;
+    min-height: 0;
     box-sizing: border-box;
     white-space: pre;
     overflow: auto;
