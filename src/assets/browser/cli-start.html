@@ -50,7 +50,7 @@
     border-radius:6px;
     color:var(--text);
     font:inherit;font-size:16px;
-    padding:12px 22px; /* 加高:carbonyl 点击偏上一行,目标须 ≥2 行高 */
+    padding:12px 22px; /* 加高:终端浏览器点击目标须 ≥2 行高(点击可靠性),browsh 亦受益 */
     cursor:pointer;
   }
   button.go:hover,button.go:focus{background:var(--border-hot)}
@@ -81,7 +81,7 @@
     <div class="hint" id="hint"></div>
   </div>
 <script>
-  // 可更换搜索引擎:选择存 localStorage(carbonyl profile 持久化时跨会话生效),
+  // 可更换搜索引擎:选择存 localStorage(browser profile 持久化时跨会话生效),
   // 未存时默认 DuckDuckGo(Lite 版,终端最省流)。
   var ENGINES = {
     duckduckgo:{name:"DuckDuckGo",url:"https://lite.duckduckgo.com/lite/?q="},
@@ -120,8 +120,8 @@
       " — Enter to search, empty box + 1-4 to switch engine";
   }
 
-  // carbonyl 的鼠标点击派发并不可靠(两版都偏上一行),但字符 keydown 是通的:
-  // 搜索框为空时按 1-4 直接用数字键切换引擎,不依赖点击。
+  // 终端浏览器(browsh/carbonyl)的鼠标点击派发并不可靠,但字符 keydown 是通的:
+  // 搜索框为空时按 1-4 直接用数字键切换引擎,不依赖点击(UI 键盘可操作要求)。
   document.getElementById("q").addEventListener("keydown", function(ev){
     if (ev.key >= "1" && ev.key <= "4") {
       var idx = ev.key.charCodeAt(0) - 49; /* 1-4 → ORDER[0..3] */

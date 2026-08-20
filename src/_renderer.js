@@ -1814,9 +1814,10 @@ async function initUI() {
         },
         // Run a one-shot command and close the open modal (restart / shutdown / mkfs).
         act(cmd) {
-            this.run(cmd);
+            const p = this.run(cmd);
             const ks = Object.keys(window.modals);
             if (ks.length) { try { window.modals[ks[ks.length - 1]].close(); } catch (e) {} }
+            return p;
         },
         // Start the screensaver from the power menu: close the menu first so the
         // animation isn't covered by the modal. With lockAfter the dismiss
@@ -2080,7 +2081,18 @@ async function initUI() {
                     document.removeEventListener("keydown", window._powerEsc, true);
                     const e = document.getElementById("power_countdown");
                     if (e) e.remove();
-                    window.sysCmd.act(cmd); // closes the open power-menu modal, then runs the command
+                    // #168 失败可见:成功的 poweroff/reboot 会立刻杀掉本进程(exec 回调
+                    // 收不到),能走到回调 = 命令失败(如 sudo 报错/被 inhibitor 挡)。
+                    // 原来 fire-and-forget,失败时静默 no-op 最坑——屏幕上毫无反馈。
+                    window.sysCmd.act(cmd).then(r => {
+                        if (!r || r.ok) return;
+                        let _t = document.getElementById("edex_toast");
+                        if (!_t) { _t = document.createElement("div"); _t.id = "edex_toast"; _t.className = "browser_toast"; document.body.appendChild(_t); }
+                        _t.textContent = "Power failed: " + (r.err || "command failed").split("\n").filter(Boolean).pop();
+                        _t.classList.add("show");
+                        clearTimeout(window._powerToastTimer);
+                        window._powerToastTimer = setTimeout(() => _t.classList.remove("show"), 4000);
+                    });
                 }
             }, 1000)
         };
@@ -2259,7 +2271,7 @@ async function initUI() {
     });
 
     // Tabs 4 & 5 are CLI panels by default: command-line apps with a UI
-    // (claude, carbonyl, aerc, btop) run in a real terminal session, and
+    // (claude, browsh, aerc, btop) run in a real terminal session, and
     // both tabs read "APP". When the experimental GUI-app mode
     // (settings.appMonitor.showGui) is enabled, tab 5 becomes the
     // AppMonitorPanel virtual-display entry ("GUI APPS") and shows the hollow
@@ -2885,7 +2897,8 @@ async function initUI() {
                 const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
                 set("settingsUpClashVer", (st.clash && st.clash.installed) ? (st.clash.version ? "v" + st.clash.version : "installed") : "–");
                 set("settingsUpClaudeVer", (st.claude && st.claude.version) ? "v" + st.claude.version : "–");
-                set("settingsUpCarbonylVer", (st.carbonyl && st.carbonyl.installed) ? (st.carbonyl.version ? "v" + st.carbonyl.version : "installed") : "–");
+                set("settingsUpBrowshVer", (st.browsh && st.browsh.installed) ? (st.browsh.version ? "v" + st.browsh.version : "installed") : "–");
+                set("settingsUpFirefoxVer", (st.firefox && st.firefox.installed) ? (st.firefox.version ? "v" + st.firefox.version : "installed") : "–");
                 set("settingsUpBtopVer", (st.btop && st.btop.version) ? "v" + st.btop.version : "–");
                 set("settingsUpAercVer", (st.aerc && st.aerc.version) ? "v" + st.aerc.version : "–");
             }).catch(() => {});
@@ -4027,7 +4040,8 @@ window.openSettings = async () => {
                     </div>
                 </div>`),
             settingsRow("settings.updates.claude", `<span id="settingsUpClaudeVer" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.auto")}</span>`),
-            settingsRow("settings.updates.carbonyl", `<span id="settingsUpCarbonylVer" class="settings_net_info">–</span>`),
+            settingsRow("settings.updates.browsh", `<span id="settingsUpBrowshVer" class="settings_net_info">–</span>`),
+            settingsRow("settings.updates.firefox", `<span id="settingsUpFirefoxVer" class="settings_net_info">–</span>`),
             settingsRow("settings.updates.btop", `<span id="settingsUpBtopVer" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.apt")}</span>`),
             settingsRow("settings.updates.mail", `<span id="settingsUpAercVer" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.apt")}</span>`),
         ].join("") },
