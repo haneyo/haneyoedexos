@@ -2,7 +2,7 @@
 //
 // Instead of the retired virtual-display app monitor (AppMonitorPanel), these
 // tabs launch command-line apps that have their own user interface (claude,
-// browsh, aerc, btop, musicfox) inside a real terminal session. Each entry is
+// links2, aerc, btop, musicfox) inside a real terminal session. Each entry is
 // started by asking the main process for a new pty via
 // `ipcRenderer.send("ttyspawn", { cli: [cmd, ...args] })`; the main process
 // replies with a port and this side attaches a client-side Terminal to it.
@@ -27,14 +27,16 @@ const _cliIpc = require("electron").ipcRenderer;
 // built-in, { _deleted: true } hides it, and any other entry is a custom app.
 const _CLI_BUILTIN = [
     { id: "claude", name: "Claude", cmd: ["claude"], icon: "ai" },
-    // Browser = browsh (TUI over headless Firefox) — #162 reverses #58. The
-    // startup URL is a POSITIONAL argument (browsh has NO --startup-url flag;
-    // the pre-#58 entry used that non-existent flag, which pflag rejects and
-    // killed the browser on launch). Firefox is baked at /opt/firefox by
-    // build-iso.sh (browsh renders through it; the GUI app launcher also offers
-    // it fullscreen). #136: start page = local dark search page (search bar +
-    // switchable engine), deployed next to the AppImage at /opt/edex/cli-start.html.
-    { id: "browsh", name: "browsh", cmd: ["browsh", "file:///opt/edex/cli-start.html"], icon: "browser" },
+    // Browser = links2 (apt text-mode browser) — #189 abandons browsh (1.8.2's
+    // WebExtension bootstrap needs Firefox's removed Cu.import, so it can never
+    // connect to any maintained Firefox) and carbonyl (clicks land one row off).
+    // links2 needs no headless engine and no version pairing; the startup URL is
+    // a POSITIONAL argument pointing at the local dark search page (deployed
+    // next to the AppImage at /opt/edex/cli-start.html, #136; the page's search
+    // form is a native GET → DuckDuckGo Lite so it works without JS). Firefox
+    // stays baked at /opt/firefox but ONLY as the GUI-app launcher's fullscreen
+    // browser (build-iso.sh).
+    { id: "links2", name: "links2", cmd: ["links2", "file:///opt/edex/cli-start.html"], icon: "browser" },
     { id: "aerc", name: "aerc", cmd: ["aerc"], icon: "mail" },
     { id: "btop", name: "BTOP", cmd: ["btop"], icon: "monitor" },
     // musicfox = go-musicfox v5.1.0 NetEase Cloud Music TUI (built by build-iso.sh

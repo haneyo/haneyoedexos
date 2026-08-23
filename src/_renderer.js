@@ -2271,7 +2271,7 @@ async function initUI() {
     });
 
     // Tabs 4 & 5 are CLI panels by default: command-line apps with a UI
-    // (claude, browsh, aerc, btop, musicfox) run in a real terminal session, and
+    // (claude, links2, aerc, btop, musicfox) run in a real terminal session, and
     // both tabs read "APP". When the experimental GUI-app mode
     // (settings.appMonitor.showGui) is enabled, tab 5 becomes the
     // AppMonitorPanel virtual-display entry ("GUI APPS") and shows the hollow
@@ -2897,7 +2897,7 @@ async function initUI() {
                 const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
                 set("settingsUpClashVer", (st.clash && st.clash.installed) ? (st.clash.version ? "v" + st.clash.version : "installed") : "–");
                 set("settingsUpClaudeVer", (st.claude && st.claude.version) ? "v" + st.claude.version : "–");
-                set("settingsUpBrowshVer", (st.browsh && st.browsh.installed) ? (st.browsh.version ? "v" + st.browsh.version : "installed") : "–");
+                set("settingsUpLinks2Ver", (st.links2 && st.links2.installed) ? (st.links2.version ? "v" + st.links2.version : "installed") : "–");
                 set("settingsUpFirefoxVer", (st.firefox && st.firefox.installed) ? (st.firefox.version ? "v" + st.firefox.version : "installed") : "–");
                 set("settingsUpBtopVer", (st.btop && st.btop.version) ? "v" + st.btop.version : "–");
                 set("settingsUpAercVer", (st.aerc && st.aerc.version) ? "v" + st.aerc.version : "–");
@@ -4040,7 +4040,7 @@ window.openSettings = async () => {
                     </div>
                 </div>`),
             settingsRow("settings.updates.claude", `<span id="settingsUpClaudeVer" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.auto")}</span>`),
-            settingsRow("settings.updates.browsh", `<span id="settingsUpBrowshVer" class="settings_net_info">–</span>`),
+            settingsRow("settings.updates.links2", `<span id="settingsUpLinks2Ver" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.apt")}</span>`),
             settingsRow("settings.updates.firefox", `<span id="settingsUpFirefoxVer" class="settings_net_info">–</span>`),
             settingsRow("settings.updates.btop", `<span id="settingsUpBtopVer" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.apt")}</span>`),
             settingsRow("settings.updates.mail", `<span id="settingsUpAercVer" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.apt")}</span>`),
@@ -6035,8 +6035,9 @@ window.screensaver = (() => {
                 return;
             }
             active = true;
-            // User event sound on screensaver entry.
-            window.eventPlay("screensaver");
+            // User event sound on screensaver entry (#190: 矩阵屏保只留短音效
+            // 不播人声;code 风格保留原语音)。
+            window.eventPlay(window.settings.screensaverStyle === "matrix" ? "screensaver_fx" : "screensaver");
             // Timestamp so bumpActivity can tell input that STARTED this
             // screensaver (power-menu "Lock Screen", Win+L) apart from input
             // that comes later to dismiss it into the lock (#73).
@@ -6480,7 +6481,11 @@ const bumpActivity = () => {
             return;
         }
         window.screensaver.hide(true, willLock, matrixToMatrix);
-        if (willLock) { window.eventPlay("lock_show"); window.lockScreen.show(); }
+        // #190 矩阵锁密码框出现只播音效;code 锁路径(上方 6471/6476)保持原语音。
+        if (willLock) {
+            window.eventPlay(window.settings.screensaverStyle === "matrix" ? "lock_show_fx" : "lock_show");
+            window.lockScreen.show();
+        }
     }
 };
 ["mousemove", "mousedown", "keydown", "wheel", "touchstart", "click"].forEach(ev =>

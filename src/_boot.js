@@ -2320,23 +2320,41 @@ app.on('ready', async () => {
             child.on("error", () => finish({ installed: false, version: "" }));
         } catch (e) { finish({ installed: false, version: "" }); }
     });
-    // #162 reverses #58: the in-app browser is browsh (TUI over headless
-    // Firefox). browsh is baked at /usr/local/bin/browsh and its --version line
-    // carries the release ("browsh v1.8.2"). Firefox lives at /opt/firefox with
-    // the version in browser/application.ini (Version=) — reading the file is
-    // fast and avoids spawning the browser just to show a version.
+    // #189 replaces browsh with links2: the in-app Browser (CLI panel) is now
+    // the apt text-mode browser links2 (browsh 1.8.2's WebExtension bootstrap
+    // needs Firefox's removed Cu.import, so it can never connect to any
+    // maintained Firefox; carbonyl's clicks land one row off). links2 is an apt
+    // package (update: "apt", like btop/aerc). Firefox stays baked at
+    // /opt/firefox but ONLY for the GUI-app launcher's fullscreen browser; its
+    // version is read from platform.ini (Milestone=) — reading the file is fast
+    // and avoids spawning the browser just to show a version.
     const firefoxVersion = () => new Promise(resolve => {
         try {
-            const ini = require("fs").readFileSync("/opt/firefox/browser/application.ini", "utf8");
-            const m = String(ini).match(/^Version=([\d]+(?:\.[\d]+)+)/m);
-            if (m) return resolve({ installed: true, version: m[1] });
+            // Firefox 128+ ships platform.ini (Milestone=) but NOT
+            // browser/application.ini anymore — read Milestone first, fall back
+            // to the old application.ini Version= for older tarballs.
+            const fs = require("fs");
+            const pini = fs.readFileSync("/opt/firefox/platform.ini", "utf8");
+            const pm = String(pini).match(/^Milestone=([\d]+(?:\.[\d]+)+)/m);
+            if (pm) return resolve({ installed: true, version: pm[1] });
+            const aini = fs.readFileSync("/opt/firefox/browser/application.ini", "utf8");
+            const am = String(aini).match(/^Version=([\d]+(?:\.[\d]+)+)/m);
+            if (am) return resolve({ installed: true, version: am[1] });
             return resolve({ installed: true, version: "" });
         } catch (e) { resolve({ installed: false, version: "" }); }
     });
+    // links2 (apt text-mode browser) has no GNU-style long options: `--version`
+    // prints "Unknown option" and exits 1, but `-version` prints "Links 2.29".
+    const links2Version = () => new Promise(resolve => {
+        execFile("links2", ["-version"], { timeout: 5000 }, (err, stdout) => {
+            const m = String(stdout || "").match(/Links ([\d]+(?:\.[\d]+)+)/);
+            resolve({ installed: !err && !!m, version: m ? m[1] : "" });
+        });
+    });
     ipc.handle("bundled:status", () => new Promise(async resolve => {
         const claude = await bundledClaudeVersion();
-        const [btop, aerc, browsh, firefox] = await Promise.all([
-            bundledCmdVersion("btop"), bundledCmdVersion("aerc"), bundledCmdVersion("browsh"), firefoxVersion()
+        const [btop, aerc, links2, firefox] = await Promise.all([
+            bundledCmdVersion("btop"), bundledCmdVersion("aerc"), links2Version(), firefoxVersion()
         ]);
         resolve({
             ok: true,
@@ -2344,7 +2362,7 @@ app.on('ready', async () => {
             clash: { update: "auto", installed: !!CLASH_BIN, version: await clashVersion() },
             btop: { update: "apt", ...btop },
             aerc: { update: "apt", ...aerc },
-            browsh: { update: "bundled", ...browsh },
+            links2: { update: "apt", ...links2 },
             firefox: { update: "bundled", ...firefox }
         });
     }));
@@ -2532,7 +2550,7 @@ app.on('ready', async () => {
             //    sci-fi workspace picker (falls back to the normal shell when
             //    the claude CLI is not installed);
             //  * { cli: [cmd, ...args] } — the MONITOR A/B CLI panels run an
-            //    arbitrary command-line app (claude, browsh, aerc, btop);
+            //    arbitrary command-line app (claude, links2, aerc, btop);
             //    a "claude" first element still goes through the picker.
             const cliArg = (typeof arg === "object" && arg !== null && Array.isArray(arg.cli)) ? arg.cli : null;
             let shell = settings.shell;
@@ -2587,7 +2605,7 @@ app.on('ready', async () => {
                 term.onclosed = () => {};
                 // Kill the whole process group (shell + children). Closing the
                 // websocket alone leaves orphan children running — e.g. closing
-                // the browser kept browsh/firefox alive and audio kept playing
+                // a browser session left the app alive and audio kept playing
                 // after the panel session was gone (#74).
                 try {
                     process.kill(-term.tty.pid, "SIGKILL");

@@ -99,7 +99,7 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     pulseaudio rtkit alsa-utils \
     btop ffmpeg axel \
     openssh-server \
-    aerc less \
+    aerc less links2 \
     flatpak xdg-desktop-portal xdg-desktop-portal-gtk \
     playerctl \
     gvfs gvfs-backends libglib2.0-bin \
@@ -186,18 +186,20 @@ fi
 sudo rm -f "$WORK/rootfs/tmp/edex-build-wifi-drivers.sh"
 for m in /proc /sys /dev; do sudo umount "$WORK/rootfs$m" 2>/dev/null || true; done
 
-# Browser: browsh (TUI terminal browser) + the real Firefox it renders through.
-# #162 reverses #58: the in-app Browser (CLI panel tab 4/5) runs `browsh <url>`,
-# a TUI that drives headless Firefox over the Marionette protocol + a WebExtension
-# (NO geckodriver needed). Firefox is the same binary the GUI-app launcher shows
-# fullscreen, so the terminal browser and the real browser share /opt/firefox.
-# Both are HARD requirements (the built-in browser is unusable without them) —
-# a failed download/install, or a missing Firefox runtime, FAILS the build
-# instead of shipping an ISO whose browser tab dies on launch.
+# Firefox: the GUI-app launcher's fullscreen browser. #189 drops browsh (its
+# WebExtension bootstrap needs Firefox's removed Cu.import, so it can never
+# connect to any maintained Firefox — 128 ESR is EOL and still fails) and
+# carbonyl (clicks land one row off); the CLI-panel Browser is now the apt
+# text-mode links2 (added to APTOPTS), which needs no headless engine. Firefox
+# stays ONLY for the GUI fullscreen browser (#162's "内置程序" row), so the
+# official tarball is baked at /opt/firefox and registered as a .desktop app.
+# Firefox is a HARD requirement (the GUI browser is unusable without it) — a
+# failed download/extract FAILS the build instead of shipping an ISO whose app
+# launcher entry dies on launch.
 echo "[edex] baking in Firefox (Mozilla official tarball → /opt/firefox)"
 # Ubuntu 24.04's 'firefox' package is a snap; for a fully offline system we
-# embed Mozilla's official Linux tarball and register a .desktop entry so it
-# shows up in the app-monitor list (GUI app launcher).
+# embed Mozilla's official Linux tarball. Latest stable — the 128 ESR pin is
+# gone because it existed purely for browsh's Cu.import compatibility (#189).
 if ! curl -fsSL --retry 2 -o "$WORK/firefox.tar.xz" \
         "https://download.mozilla.org/?product=firefox-latest-ssl&os=linux64&lang=en-US"; then
     echo "[edex] ERROR: Firefox download failed — cannot build an ISO without the browser"; exit 1
@@ -206,7 +208,7 @@ sudo mkdir -p "$WORK/rootfs/opt/firefox"
 sudo tar -xJf "$WORK/firefox.tar.xz" -C "$WORK/rootfs/opt/firefox" --strip-components=1 \
     || { echo "[edex] ERROR: Firefox extract failed"; exit 1; }
 if [ ! -f "$WORK/rootfs/opt/firefox/firefox" ]; then
-    echo "[edex] ERROR: /opt/firefox/firefox missing — browsh needs Firefox as its render engine; cannot build an ISO without it"; exit 1
+    echo "[edex] ERROR: /opt/firefox/firefox missing — cannot build an ISO without the browser"; exit 1
 fi
 sudo ln -sf /opt/firefox/firefox "$WORK/rootfs/usr/local/bin/firefox"
 sudo tee "$WORK/rootfs/usr/share/applications/firefox.desktop" >/dev/null <<'DESK'
@@ -220,20 +222,6 @@ Terminal=false
 Categories=Network;WebBrowser;
 DESK
 echo "[edex] firefox $(ls -lh "$WORK/rootfs/opt/firefox/firefox" | awk '{print $5}') OK, linked into /usr/local/bin"
-
-echo "[edex] installing browsh (terminal browser over headless Firefox)"
-BROWSH_VER="1.8.2"
-if ! curl -fsSL --retry 2 -o "$WORK/browsh.deb" \
-        "https://github.com/browsh-org/browsh/releases/download/v$BROWSH_VER/browsh_${BROWSH_VER}_linux_amd64.deb"; then
-    echo "[edex] ERROR: browsh download failed — cannot build an ISO without the browser"; exit 1
-fi
-sudo rm -rf "$WORK/browsh-root"
-if ! sudo dpkg -x "$WORK/browsh.deb" "$WORK/browsh-root"; then
-    echo "[edex] ERROR: browsh deb extract failed"; exit 1
-fi
-sudo install -Dm 755 "$WORK/browsh-root/usr/bin/browsh" "$WORK/rootfs/usr/local/bin/browsh" 2>/dev/null \
-    || { echo "[edex] ERROR: browsh binary not found in deb"; exit 1; }
-echo "[edex] browsh $(ls -lh "$WORK/rootfs/usr/local/bin/browsh" | awk '{print $5}') OK"
 
 # Musicfox (go-musicfox v5.1.0): NetEase Cloud Music TUI client, baked for the
 # eDEX terminal "musicfox" tab (#185). Plays via its built-in beep engine (Go
@@ -435,10 +423,11 @@ fi
 sudo mkdir -p "$WORK/rootfs/opt/edex"
 sudo cp "$EDEX_TO_BAKE" "$WORK/rootfs/opt/edex/eDEX-UI.AppImage"
 sudo chmod 755 "$WORK/rootfs/opt/edex/eDEX-UI.AppImage"
-# #136:#162 后 CLI 浏览器(browsh)主页 = 本地深色搜索页(搜索栏 + 可更换搜索引擎),
-# browsh 启动 URL 指向 file:///opt/edex/cli-start.html(见 cliPanel.class.js)。
+# #136:#189 后 CLI 浏览器(links2)主页 = 本地深色搜索页(搜索栏为原生 GET 表单 →
+# DuckDuckGo Lite,文本模式 links2 不跑 JS 也能搜;JS 环境才可换引擎),
+# links2 启动 URL 指向 file:///opt/edex/cli-start.html(见 cliPanel.class.js)。
 sudo install -m 644 "$REPO_DIR/src/assets/browser/cli-start.html" "$WORK/rootfs/opt/edex/cli-start.html"
-echo "[edex] cli-start.html (browsh search page) OK"
+echo "[edex] cli-start.html (links2 search page) OK"
 # Never ship a pre-created /home: a leftover directory from the build host (e.g.
 # /home/runner on a GitHub Actions runner) would leak into the squashfs, get
 # copied to every target disk, and then be mistaken for the real user by naive

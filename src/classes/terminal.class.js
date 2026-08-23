@@ -20,12 +20,12 @@ class Terminal {
             this._altHistIdx = 0;
             this._altLast = "";
             this._altPaused = false;
-            // Browsers (browsh) draw to the alt buffer but must stay live.
-            // cliPanel session ids are "<appId>_<rand>", so a browsh
+            // Browsers (links2) draw to the alt buffer but must stay live.
+            // cliPanel session ids are "<appId>_<rand>", so a links2
             // parentId opts out of #67 alt-history: frozen history frames made
             // the page look unresponsive after a wheel-up. Wheel is then
             // forwarded so the browser can scroll its own page.
-            this._altHistEnabled = opts.altHistory !== false && !/^browsh_/.test(opts.parentId || "");
+            this._altHistEnabled = opts.altHistory !== false && !/^links2_/.test(opts.parentId || "");
             this._altLastT = 0;
             this._serializeA = null;
 
@@ -364,7 +364,7 @@ class Terminal {
                 // the write wrapper when the app leaves the alt buffer.
                 const abuf = this.term && this.term.buffer && this.term.buffer.active;
                 if (abuf && abuf.type === "alt") {
-                    // Browser (browsh) opts out of #67 alt-history: don't
+                    // Browser (links2) opts out of #67 alt-history: don't
                     // swallow the wheel — xterm forwards it so the page scrolls.
                     if (!this._altHistEnabled) return;
                     e.preventDefault();

@@ -61,7 +61,9 @@ class AudioManager {
                 wifi_first:        "wifi_first.wav",         // 会话内首次连网
                 wifi_known:        "wifi_known.wav",         // 连接已知网络
                 screensaver:       "screensaver.wav",        // 进入屏保
+                screensaver_fx:    "expand.wav",             // 矩阵屏保入口音效(非人声,#190)
                 lock_show:         "lock_show.wav",          // 屏保 → 锁屏
+                lock_show_fx:      "panels.wav",             // 矩阵密码框出现音效(非人声,#190)
                 unlock_ok:         "unlock_ok.wav",          // 解锁成功
                 power_shutdown:    "power_shutdown.wav",     // 按下关机
                 power_cancel:      "power_cancel.wav",       // 取消关机/重启

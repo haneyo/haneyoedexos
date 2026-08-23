@@ -83,12 +83,15 @@ echo "[edex-firstboot] configured for user: $U"
 usermod -aG video "$U" 2>/dev/null || true
 usermod -aG netdev "$U" 2>/dev/null || true
 
-# lightdm autologin. The 'z' prefix must sort AFTER the lightdm-autologin-greeter
+# lightdm autologin. The 'z' prefix should sort AFTER the lightdm-autologin-greeter
 # package's own lightdm-autologin-greeter.conf, which ships a placeholder
-# autologin-user=AUTOLOGIN-USER-NOT-CONFIGURED — later conf.d files win, so OUR
-# value overrides the placeholder and the system boots to eDEX instead of a
-# text console. The greeter is pinned explicitly (default would be
-# lightdm-gtk-greeter, which is NOT installed).
+# autologin-user=AUTOLOGIN-USER-NOT-CONFIGURED — normally later conf.d files win,
+# so OUR value overrides the placeholder and the system boots to eDEX instead of
+# a text console. BUT that merge order is not guaranteed (seen live on a v2.4.25
+# laptop: the placeholder won, and a lightdm restart after an eDEX exit looped
+# "Can't authenticate autologin; autologin not configured" -> black screen), so we
+# ALSO overwrite the package's file with OUR values below. The greeter is pinned
+# explicitly (default would be lightdm-gtk-greeter, which is NOT installed).
 mkdir -p /etc/lightdm/lightdm.conf.d
 cat > /etc/lightdm/lightdm.conf.d/zz-edex-autologin.conf <<CONF
 [Seat:*]
@@ -102,6 +105,8 @@ if [ ! -s /etc/lightdm/lightdm.conf.d/zz-edex-autologin.conf ]; then
     echo "[edex-firstboot] FATAL: zz-edex-autologin.conf empty/missing (autologin would break)" >&2
     exit 1
 fi
+cp /etc/lightdm/lightdm.conf.d/zz-edex-autologin.conf \
+   /etc/lightdm/lightdm.conf.d/lightdm-autologin-greeter.conf
 
 # Passwordless sudo for the autologin user (single-user demo laptop). Every
 # privileged UI action (settings toggles, sshd, apt updates, flatpak install)
