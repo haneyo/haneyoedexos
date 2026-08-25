@@ -2074,6 +2074,7 @@ async function initUI() {
         document.body.appendChild(el);
         let left = total;
         window._powerCountdown = {
+            kind,
             timer: setInterval(() => {
                 left--;
                 const n = document.getElementById("power_cd_num");
@@ -2110,7 +2111,10 @@ async function initUI() {
         window._powerCountdown = null;
         document.removeEventListener("keydown", window._powerEsc, true);
         window._powerEsc = null;
-        window.eventPlay("power_cancel");
+        // The power-menu "Restart" flow stays quiet on cancel: only the shutdown
+        // (and update-restart) cancel announces, so a reboot abort reads as a
+        // silent cancel (the shutdown cancels keep their "cancelled" voice).
+        if (s.kind !== "reboot") window.eventPlay("power_cancel");
         const el = document.getElementById("power_countdown");
         if (el) el.remove();
         if (s && s.onCancel) s.onCancel();
