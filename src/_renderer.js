@@ -4282,7 +4282,6 @@ window.openSettings = async () => {
                 </div>
                 <h6 id="settingsEditorStatus">${t("settings.loadedStatus")}</h6>`,
         buttons: [
-            {label: t("settings.btn.openExternal"), action:`electron.shell.openPath('${settingsFile}');electronWin.minimize();`},
             {label: t("settings.btn.save"), action: "window.eventPlay('settings_save');window.writeSettingsFile()"},
             {label: t("settings.btn.shortcuts"), action: "window.openShortcutsHelp()"},
             {label: t("settings.btn.reload"), action: "window.location.reload(true);"},
