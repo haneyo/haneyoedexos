@@ -3454,7 +3454,12 @@ async function initUI() {
             this.modal = new Modal({
                 type: "custom",
                 title: "UPDATE",
-                html: `<pre id="edexup_out" style="max-height:55vh;overflow:auto;white-space:pre-wrap">Preparing update…</pre>`,
+                html:
+                    `<div style="margin:0 0 .8vh">
+                        <div class="edexup_bar"><div class="edexup_fill" id="edexup_fill"></div></div>
+                        <div id="edexup_pct" style="font-size:1.4vh;opacity:.72;margin-top:.45vh">Downloading… 0%</div>
+                     </div>
+                     <pre id="edexup_out" style="max-height:42vh;overflow:auto;white-space:pre-wrap">Preparing update…</pre>`,
                 buttons: []
                 // Close is auto-appended; success auto-restarts below.
             }, () => { this.modal = null; });
@@ -3478,6 +3483,13 @@ async function initUI() {
     ipc.on("edex-update-output", (e, line) => {
         const pre = document.getElementById("edexup_out");
         if (pre && line) pre.textContent += line + "\n";
+    });
+    // Live download progress (main process sends the parsed curl percentage).
+    ipc.on("edex-update-progress", (e, pct) => {
+        const fill = document.getElementById("edexup_fill");
+        if (fill) fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
+        const p = document.getElementById("edexup_pct");
+        if (p) p.textContent = "Downloading… " + Math.floor(pct) + "%";
     });
 
     // True-fullscreen overlay for a webview: a body-level fixed layer hosting a

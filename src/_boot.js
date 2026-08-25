@@ -2178,9 +2178,18 @@ app.on('ready', async () => {
             });
         });
 
-        // 2) Download the AppImage asset.
+        // 2) Download the AppImage asset. `--progress-bar` makes curl emit a
+        //    percentage bar to stderr even when stderr isn't a TTY (the default
+        //    meter is suppressed on a pipe), so we can parse it and stream live
+        //    progress to the renderer instead of a silent ~200MB download.
         fetchSha().then(sha => {
-            const dl = spawn("curl", ["-fL", "--connect-timeout", "15", "--retry", "2", "-o", tmp, url]);
+            const dl = spawn("curl", ["-fL", "--progress-bar", "--connect-timeout", "15", "--retry", "2", "--no-buffer", "-o", tmp, url]);
+            dl.stderr.on("data", d => {
+                const m = /(\d+(?:\.\d+)?)%/.exec(String(d));
+                if (m && win && !win.isDestroyed()) {
+                    win.webContents.send("edex-update-progress", parseFloat(m[1]));
+                }
+            });
             dl.on("error", e => fail(e.message));
             dl.on("close", code => {
                 if (code !== 0) return fail("download failed (curl exit " + code + ")");
