@@ -609,6 +609,61 @@ div.modal_popup .edexup_fill {
     background: rgb(var(--color_r), var(--color_g), var(--color_b));
     transition: width 0.18s linear;
 }
+/* eDEX-style in-app background image picker (replaces the native file dialog). */
+div.modal_popup .edex_bgpick {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8vh;
+}
+div.modal_popup .edex_bgpick_path {
+    display: flex;
+    gap: 0.5vh;
+}
+div.modal_popup .edex_bgpick_path input {
+    flex: 1;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.06);
+    border: 0.12vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.4);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: inherit;
+    font-size: 1.3vh;
+    padding: 0.4vh 0.7vh;
+}
+div.modal_popup .edex_bgpick_grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(12vh, 1fr));
+    gap: 0.8vh;
+    max-height: 48vh;
+    overflow: auto;
+    padding: 0.5vh;
+    border: 0.12vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.18);
+}
+div.modal_popup .edex_bgpick_item {
+    cursor: pointer;
+    border: 0.12vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.25);
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.04);
+    transition: background 0.15s;
+}
+div.modal_popup .edex_bgpick_item:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.14);
+}
+div.modal_popup .edex_bgpick_thumb {
+    width: 100%;
+    height: 9vh;
+    background-size: cover;
+    background-position: center;
+}
+div.modal_popup .edex_bgpick_name {
+    font-size: 1.1vh;
+    opacity: 0.75;
+    padding: 0.3vh 0.4vh;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+div.modal_popup .edex_bgpick_hint {
+    font-size: 1.2vh;
+    opacity: 0.6;
+}
 /* Background-source mode segmented buttons (主题默认 / 点阵 / 等高线 / 图片). */
 div.modal_popup #settingsEditor .settings_bg_modes {
     display: flex;
