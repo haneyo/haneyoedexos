@@ -198,6 +198,7 @@ class LockScreen {
         clearInterval(this._timer);
         clearInterval(this._focusRet);
         clearInterval(this._matrixTimer);
+        if (this._domKeyH) { document.removeEventListener("keydown", this._domKeyH, true); this._domKeyH = null; }
         // Null the handle too: a stale non-null interval id would make the NEXT
         // lock on this instance read as Matrix (unlock() replay-boot, power-key
         // blanking) even when it is a code lock (#148).
@@ -1081,6 +1082,7 @@ class LockScreen {
         const input = el.querySelector("#lock_pass");
         input.focus();
         input.onkeydown = e => { if (e.key === "Enter") this.unlock(); };
+        this._bindDomKeyCapture();
         this._focusRet = setInterval(() => {
             if (this.active && document.activeElement !== input) input.focus();
         }, 500);
@@ -1131,9 +1133,28 @@ class LockScreen {
         const input = el.querySelector("#lock_pass");
         input.focus();
         input.onkeydown = e => { if (e.key === "Enter") this.unlock(); };
+        this._bindDomKeyCapture();
         this._focusRet = setInterval(() => {
             if (this.active && document.activeElement !== input) input.focus();
         }, 500);
+    }
+
+    // Physical keyboard must work the instant the lock appears. A focus race on
+    // boot (the freshly-created <input> not yet the activeElement, or the window
+    // settling) made the first keystrokes drop, then replay a beat later. Capture
+    // keydowns in the capture phase and route them straight into the keypad/unlock
+    // path so input never depends on `document.activeElement`. Guard `_term` so it
+    // stays inert for the terminal (code) lock, which routes keys via the pty.
+    _bindDomKeyCapture() {
+        if (this._domKeyH) return;
+        this._domKeyH = e => {
+            if (!this.active || this._term) return;
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+            if (/^[0-9]$/.test(e.key))              { e.preventDefault(); e.stopPropagation(); this.keypadPress(Number(e.key)); }
+            else if (e.key === "Backspace")         { e.preventDefault(); e.stopPropagation(); this.keypadPress(-1); }
+            else if (e.key === "Enter")             { e.preventDefault(); e.stopPropagation(); this.unlock(); }
+        };
+        document.addEventListener("keydown", this._domKeyH, true);
     }
 
     unlock() {
