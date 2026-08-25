@@ -3664,49 +3664,77 @@ window.bgSetMode = mode => {
 
 window.openBgPicker = () => {
     const home = remote.app.getPath("home");
-    let dir = fs.existsSync(path.join(home, "Pictures")) ? path.join(home, "Pictures") : home;
+    let cwd = fs.existsSync(path.join(home, "Pictures")) ? path.join(home, "Pictures") : home;
+    const isImg = f => /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(f);
+    // A list browser (like the CLI cd-picker): parent/dirs/images as rows,
+    // navigable with ↑/↓ + Enter, Backspace = up a dir, and mouse click.
+    let keyH = null;
+    let rows = [], cursor = 0;
+    const select = (full, f) => {
+        window._settingsBgValue = full;
+        window.bgSetMode("image");
+        const st = document.getElementById("settingsBgStatus");
+        if (st) st.textContent = f;
+        const prev = document.getElementById("settingsBgPreview");
+        if (prev) { try { prev.style.backgroundImage = `url("${require("url").pathToFileURL(full).href}")`; } catch (e) {} prev.classList.add("show"); }
+        if (window.eventPlay) window.eventPlay("settings_save");
+        setTimeout(() => { if (modal.id && window.modals[modal.id]) window.modals[modal.id].close(); }, 120);
+    };
     const modal = new Modal({ type: "custom", title: t("settings.backgroundImage") + " — " + t("settings.backgroundImage.pick"),
         html:
             `<div class="edex_bgpick">
+                <div class="edex_bgpick_cur" id="edexbg_cur"></div>
                 <div class="edex_bgpick_path">
-                    <input type="text" id="edexbg_path" value="${dir}" spellcheck="false">
+                    <input type="text" id="edexbg_path" spellcheck="false" placeholder="type a path">
                     <button type="button" id="edexbg_go" class="settings_net_btn">GO</button>
                 </div>
-                <div id="edexbg_grid" class="edex_bgpick_grid"></div>
+                <div id="edexbg_list" class="edex_bgpick_list"></div>
                 <div class="edex_bgpick_hint">${t("settings.bg.pickHint")}</div>
              </div>`,
         buttons: [{ label: t("settings.backgroundImage.clear"), action: "window.bgClear()" }]
-    });
+    }, () => { if (keyH) { document.removeEventListener("keydown", keyH, true); keyH = null; } });
+    const listEl = () => document.getElementById("edexbg_list");
+    const highlight = () => { const list = listEl(); if (!list) return; Array.from(list.children).forEach((el, i) => el.classList.toggle("edex_bgpick_active", i === cursor)); };
     const render = () => {
-        const input = document.getElementById("edexbg_path");
-        const grid = document.getElementById("edexbg_grid");
-        if (!input || !grid) return;
-        let files = [];
-        try {
-            files = fs.readdirSync(input.value).filter(f => /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(f)).sort();
-        } catch (e) { grid.innerHTML = `<div class="edex_bgpick_hint">—</div>`; return; }
-        if (!files.length) { grid.innerHTML = `<div class="edex_bgpick_hint">∅</div>`; return; }
-        grid.innerHTML = "";
-        files.slice(0, 60).forEach(f => {
-            const fp = path.join(input.value, f);
-            const url = require("url").pathToFileURL(fp).href;
-            const cell = document.createElement("div");
-            cell.className = "edex_bgpick_item";
-            cell.innerHTML = `<div class="edex_bgpick_thumb" style="background-image:url(&quot;${url}&quot;)"></div><div class="edex_bgpick_name">${f}</div>`;
-            cell.addEventListener("click", () => {
-                window._settingsBgValue = fp;
-                window.bgSetMode("image");
-                const st = document.getElementById("settingsBgStatus");
-                if (st) st.textContent = f;
-                const prev = document.getElementById("settingsBgPreview");
-                if (prev) { try { prev.style.backgroundImage = `url("${url}")`; } catch (e) {} prev.classList.add("show"); }
-                if (window.eventPlay) window.eventPlay("settings_save");
-                setTimeout(() => { if (modal.id && window.modals[modal.id]) window.modals[modal.id].close(); }, 120);
-            });
-            grid.appendChild(cell);
+        const curEl = document.getElementById("edexbg_cur");
+        const pathEl = document.getElementById("edexbg_path");
+        if (curEl) curEl.textContent = (cwd === home ? "~" : cwd);
+        if (pathEl) pathEl.value = cwd;
+        const list = listEl(); if (!list) return;
+        let names = [];
+        try { names = fs.readdirSync(cwd, { withFileTypes: true }); } catch (e) { list.innerHTML = `<div class="edex_bgpick_hint">—</div>`; return; }
+        const dirs = names.filter(d => d.isDirectory() && !d.name.startsWith(".")).map(d => d.name).sort();
+        const imgs = names.filter(d => d.isFile() && isImg(d.name)).map(d => d.name).sort();
+        list.innerHTML = ""; rows = []; cursor = 0;
+        const addRow = (el, activate, name) => { el.addEventListener("click", activate); rows.push({ el, activate, name }); list.appendChild(el); };
+        const up = document.createElement("div");
+        up.className = "edex_bgpick_row edex_bgpick_up";
+        up.innerHTML = `<span class="edex_bgpick_ic">↑</span> .. <span class="edex_bgpick_tag">parent</span>`;
+        addRow(up, () => { cwd = path.dirname(cwd); render(); }, "..");
+        dirs.forEach(d => {
+            const r = document.createElement("div"); r.className = "edex_bgpick_row";
+            r.innerHTML = `<span class="edex_bgpick_ic">▸</span> <span class="edex_bgpick_name">${d}</span> <span class="edex_bgpick_tag">dir</span>`;
+            addRow(r, () => { cwd = path.join(cwd, d); render(); }, d);
         });
+        imgs.forEach(f => {
+            const r = document.createElement("div"); r.className = "edex_bgpick_row edex_bgpick_img";
+            const url = require("url").pathToFileURL(path.join(cwd, f)).href;
+            r.innerHTML = `<span class="edex_bgpick_ic"><span class="edex_bgpick_thumb" style="background-image:url(&quot;${url}&quot;)"></span></span> <span class="edex_bgpick_name">${f}</span>`;
+            addRow(r, () => select(path.join(cwd, f), f), f);
+        });
+        highlight();
+    };
+    keyH = e => {
+        if (!modal.id || !window.modals || !window.modals[modal.id]) return;
+        if (e.target && e.target.tagName === "INPUT") return;      // leave the path input alone
+        if (!rows.length) return;
+        if (e.key === "ArrowDown")       { e.preventDefault(); e.stopPropagation(); cursor = (cursor + 1) % rows.length; highlight(); }
+        else if (e.key === "ArrowUp")    { e.preventDefault(); e.stopPropagation(); cursor = (cursor - 1 + rows.length) % rows.length; highlight(); }
+        else if (e.key === "Enter")      { e.preventDefault(); e.stopPropagation(); if (rows[cursor]) rows[cursor].activate(); }
+        else if (e.key === "Backspace")  { e.preventDefault(); e.stopPropagation(); cwd = path.dirname(cwd); render(); }
     };
     render();
+    document.addEventListener("keydown", keyH, true);
     const go = document.getElementById("edexbg_go");
     if (go) go.addEventListener("click", render);
 };
