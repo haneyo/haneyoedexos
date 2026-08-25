@@ -6265,6 +6265,13 @@ window.screensaver = (() => {
 
     return {
         show() {
+            // The boot phase owns the screen completely: the boot lock (or the
+            // first-run setup) is up before initUI, and a screensaver must never
+            // cover it — otherwise a dismiss would raise a second, latch lock
+            // (double password) and the boot screen would wrongly blank out of
+            // the boot auth flow. Gate every entry point on _uiReady; the boot
+            // lock and the session lock already gate themselves the same way.
+            if (!window._uiReady) return;
             if (active) {
                 // Already showing but the cover identity was lost — re-assert it.
                 if (window.cover && !window.cover.isActive()) window.cover.set(true);
@@ -6682,8 +6689,13 @@ const bumpActivity = () => {
         // (forceLockOnDismiss) — that flow is screensaver-then-lock by design.
         const forceLock = window.screensaver.forceLockOnDismiss === true;
         window.screensaver.forceLockOnDismiss = false;
+        // willLock is gated on `_uiReady`: dismissing a screensaver must never
+        // create a fresh session lock while eDEX is still booting. The boot lock
+        // owns the screen until the boot password unlocks into initUI, so a
+        // dismiss over the boot screen only wakes the display (hideScreenOff) —
+        // it must not raise a second, latch lock that asks for the code again.
         const willLock = (forceLock || (window.settings.lockOnIdle !== false && String(window.settings.lockCode || "").length > 0))
-            && window.lockScreen && !window.lockScreen.active;
+            && window.lockScreen && !window.lockScreen.active && window._uiReady;
         // keepCover: both the screensaver and the lock wear the same fake
         // identity, so don't drop it (and re-render the file browser) just to
         // re-assert it a frame later.
@@ -6731,12 +6743,19 @@ setInterval(() => {
     const idleMs = Date.now() - lastActivity;
     const locked = window.lockScreen && window.lockScreen.active;
     const screensaverOn = window.screensaver.isActive();
+    // Boot phase (before initUI): even if the boot lock's `active` flag is not
+    // yet set (older flows), the display must never hand the screen to the
+    // screensaver — the boot password unlocks straight into eDEX. Blanking is
+    // still honoured at the screen-off timeout, and a wake keypress returns to
+    // the very same boot screen. This is what keeps "sit on the boot password"
+    // from ever producing a screensaver-then-lock double prompt.
+    const bootPhase = !window._uiReady;
     const screenOffIdle = (Number(window.settings.screenOffIdle) || 1800) * 1000;
     const screensaverIdle = (Number(window.settings.screensaverIdle) || 300) * 1000;
     const shouldLockOnIdle = window.settings.lockOnIdle !== false
         && String(window.settings.lockCode || "").length > 0;
 
-    if (screensaverOn || locked) {
+    if (screensaverOn || locked || bootPhase) {
         // Established screensaver or lock: after screenOffIdle the display blanks
         // OVER it. The overlay only ever covers a screensaver that is already
         // running (never the tick it starts on), so a wake keypress always has an
