@@ -86,6 +86,11 @@ const DEFAULT_SETTINGS = {
     cwd: electron.app.getPath("home"), // start in the home dir like a normal terminal
     keyboard: "en-US",
     theme: "tron",
+    // Desktop background source: "theme" (the active theme's default),
+    // "dot" (classic dot grid), "contour" (Endfield military topo sheet),
+    // "image" (a user-picked picture in backgroundImage).
+    backgroundMode: "theme",
+    backgroundImage: "",
     termFontSize: 14,
     audio: true,
     audioVolume: 1.0,
@@ -2636,6 +2641,27 @@ app.on('ready', async () => {
     });
     ipc.on("setKbOverride", (e, arg) => {
         kbOverride = arg;
+    });
+
+    // Custom desktop background image (settings → 背景图片). Opens a native
+    // image picker and returns the chosen absolute path (or null on cancel).
+    // The renderer applies it as a body background-image overriding the active
+    // theme's background; the path is persisted in settings.backgroundImage.
+    ipc.handle("settings:pickImage", async () => {
+        try {
+            const r = await dialog.showOpenDialog(win, {
+                title: "Select background image",
+                properties: ["openFile"],
+                filters: [
+                    { name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"] },
+                    { name: "All files", extensions: ["*"] }
+                ]
+            });
+            return (r.canceled || !r.filePaths || r.filePaths.length === 0) ? null : r.filePaths[0];
+        } catch (e) {
+            signale.warn("settings:pickImage failed:", e && e.message);
+            return null;
+        }
     });
 
     // Clear the embedded browser's persisted session data (Privacy settings).
