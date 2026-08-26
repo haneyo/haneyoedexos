@@ -18,6 +18,7 @@ process.on("uncaughtException", e => {
             }
         });
     }
+    _killChildTree();
     process.exit(1);
 });
 
@@ -31,6 +32,22 @@ if (!gotLock) {
     app.exit(1);
 }
 
+// Kill every child of this process tree (renderer, appmonitor server, tty
+// helpers, …) on quit/crash so repeated restarts/relaunches do NOT leave orphan
+// processes that pile up and eat RAM/CPU (the "越用越卡" accumulation).
+function _killChildTree(){
+    try {
+        const cp = require("child_process");
+        let cur = String(process.pid);
+        for (let depth = 0; depth < 5; depth++) {
+            const kids = cp.execSync("pgrep -P " + cur + " 2>/dev/null || true").toString().trim();
+            if (!kids) break;
+            cp.execSync("pkill -TERM -P " + cur + " 2>/dev/null || true", { stdio: "ignore" });
+            cur = kids.split(/\s+/).filter(Boolean).join(" ");
+        }
+    } catch (e) {}
+}
+app.on("will-quit", () => _killChildTree());
 signale.time("Startup");
 
 const electron = require("electron");

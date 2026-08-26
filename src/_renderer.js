@@ -6857,3 +6857,25 @@ ipc.on("pm:suspend", () => {
 document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") resumeFromSuspend();
 });
+
+// ---- Self-heal watchdog: a long session accumulates JS heap in the decorative
+// panels / live charts, and the UI degrades (stutter/“越用越卡”). Silently
+// reload the renderer when the heap grows too large. A renderer reload is fast
+// and keeps the main process + the real pty terminals, so the sci-fi desktop
+// comes back smooth instead of progressively freezing. Guarded against reload-
+// loops. Threshold: settings.edexHeapGuardMB (default 700 MB).
+setInterval(() => {
+    try {
+        const m = (typeof performance !== "undefined" && performance.memory) ? performance.memory : null;
+        if (!m || !m.usedJSHeapSize) return;
+        const limitMB = Number(window.settings && window.settings.edexHeapGuardMB) || 700;
+        if (m.usedJSHeapSize > limitMB * 1024 * 1024) {
+            const now = Date.now();
+            if (!window._lastHeapReload || (now - window._lastHeapReload) > 45000) {
+                window._lastHeapReload = now;
+                try { console.warn("[edex-heal] heap high (" + (m.usedJSHeapSize / 1048576).toFixed(0) + " MB) — reloading renderer"); } catch (_) {}
+                setTimeout(() => { try { window.location.reload(); } catch (e) {} }, 250);
+            }
+        }
+    } catch (e) {}
+}, 5000);
