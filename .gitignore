@@ -56,3 +56,28 @@ sk-*/
 *.AppImage
 eDEX-OS-*.iso
 
+
+# --- local machine-specific / sensitive (never commit) ---
+# settings.local.json holds the real LAN IP + SSH user when OpenAI's Claude /
+# Claude Code session writes it; keep it and any local override out of git.
+settings.local.json
+*.local.json
+# Environment files
+.env
+.env.*
+.env.local
+# Private/SSH keys
+*.pem
+*.key
+*.p12
+id_rsa*
+id_ed25519*
+*.ring
+.ssh/
+# Backups / editor junk
+*.bak
+*.orig
+*~
+*.swp
+# App runtime data (never commit a real settings.json with lockCode / apiKey)
+settings.json
