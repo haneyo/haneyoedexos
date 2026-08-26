@@ -27,13 +27,15 @@ eDEX-OS is built on a heavily customized [eDEX-UI](https://github.com/GitSquared
 
 ## 📸 Screenshots
 
-**Themes**
+**Themes** — a growing set of sci-fi themes, including four game-inspired backdrops:
 
-![Default theme](media/screenshot_default.png)
+![Endfield](media/screenshot_endfield.png)
 
-![Blade theme](media/screenshot_blade.png)
+![Battlefield](media/screenshot_battlefield.png)
 
-![Matrix theme](media/screenshot_matrix.png)
+![Star Rail](media/screenshot_star-rail.png)
+
+![Death Stranding](media/screenshot_death-stranding.png)
 
 **Lock screen** — two sci-fi modes: a terminal passcode vault and a fullscreen matrix-rain keypad
 
