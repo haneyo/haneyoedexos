@@ -335,10 +335,6 @@ window._uiReady = false;
 // the shell frame, plays the "Welcome back" greeting, and only then assembles
 // the real desktop. bootShow() queues the continuation via lockScreen._onUnlocked.
 function bootLockThenRun(then) {
-    // A renderer reload (self-heal watchdog / scheduled refresh) must rebuild
-    // the desktop silently: the boot lock and first-run already happened on
-    // the real start, and re-showing them would pop a second passcode prompt.
-    if (window._isHotReload()) { then(); return; }
     if (String(window.settings.lockCode || "").length > 0) {
         // A lock passcode exists — show the boot lock first; nothing real is
         // exposed until the user unlocks (lockScreen fires _onUnlocked → then).
@@ -752,16 +748,7 @@ window.eventPlay = (name) => {
 remote.app.focus();
 
 let i = 0;
-if (window._isHotReload()) {
-    // Reload (self-heal / scheduled refresh): no boot animation, no boot lock
-    // — rebuild the desktop directly. The covered state (if any) is restored
-    // by initUI from sessionStorage ("edex_reload_cover").
-    initGraphicalErrorHandling();
-    initSystemInformationProxy();
-    document.getElementById("boot_screen").remove();
-    document.body.setAttribute("class", "");
-    bootLockThenRun(() => waitForFonts().then(initUI));
-} else if (window.settings.nointro || window.settings.nointroOverride) {
+if (window.settings.nointro || window.settings.nointroOverride) {
     initGraphicalErrorHandling();
     initSystemInformationProxy();
     document.getElementById("boot_screen").remove();
@@ -3623,19 +3610,6 @@ async function initUI() {
     [window.appmonitorA, window.appmonitorB].forEach(p => {
         if (p && typeof p.closeMenu === "function") { try { p.closeMenu(); } catch (e) {} }
     });
-    // A reload (self-heal / scheduled refresh) preserves the covered state via
-    // sessionStorage: re-engage the screensaver or lock so the "background
-    // display" never flashes the bare desktop mid-refresh.
-    let _reloadCover = "";
-    try { _reloadCover = sessionStorage.getItem("edex_reload_cover") || ""; sessionStorage.removeItem("edex_reload_cover"); } catch (e) {}
-    if (_reloadCover) {
-        setTimeout(() => {
-            try {
-                if (_reloadCover === "lock" && window.lockScreen) window.lockScreen.show();
-                else if (window.sysCmd && typeof window.sysCmd.startScreensaver === "function") window.sysCmd.startScreensaver(false);
-            } catch (e) {}
-        }, 600);
-    }
 }
 
 window.themeChanger = theme => {
@@ -6931,18 +6905,6 @@ document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") resumeFromSuspend();
 });
 
-// Reload the renderer, remembering the covered state so initUI can restore
-// the screensaver/lock afterwards. Used by the heap-guard and the scheduled
-// refresh below; neither may ever flash the bare desktop mid-refresh.
-const _reloadPreservingCover = () => {
-    try {
-        sessionStorage.setItem("edex_reload_cover",
-            (window.lockScreen && window.lockScreen.active) ? "lock"
-            : (window.screensaver && window.screensaver.isActive()) ? "saver" : "");
-    } catch (e) {}
-    setTimeout(() => { try { window.location.reload(); } catch (e) {} }, 250);
-};
-
 // ---- Self-heal watchdog: a long session accumulates JS heap in the decorative
 // panels / live charts, and the UI degrades (stutter/“越用越卡”). Silently
 // reload the renderer when the heap grows too large. A renderer reload is fast
@@ -6959,26 +6921,8 @@ setInterval(() => {
             if (!window._lastHeapReload || (now - window._lastHeapReload) > 45000) {
                 window._lastHeapReload = now;
                 try { console.warn("[edex-heal] heap high (" + (m.usedJSHeapSize / 1048576).toFixed(0) + " MB) — reloading renderer"); } catch (_) {}
-                _reloadPreservingCover();
+                setTimeout(() => { try { window.location.reload(); } catch (e) {} }, 250);
             }
         }
     } catch (e) {}
 }, 5000);
-
-// ---- Scheduled renderer refresh: Chromium's long-session degradation (V8
-// heap fragmentation, GPU/compositor accumulation, the "Electron gets slower
-// after hours" effect) is best reset by a reload. Fire only while the cover is
-// up (lock/screensaver — this machine idles into one after screensaverIdle),
-// so the refresh is invisible; the covered state survives via
-// "edex_reload_cover". Uptime resets after each reload, so this repeats every
-// EDEX_RELOAD_HOURS of continuous running.
-const EDEX_RELOAD_HOURS = 6;
-const _edexSessionStart = Date.now();
-setInterval(() => {
-    if (Date.now() - _edexSessionStart < EDEX_RELOAD_HOURS * 3600 * 1000) return;
-    const covered = (window.lockScreen && window.lockScreen.active)
-        || (window.screensaver && window.screensaver.isActive());
-    if (!covered) return; // defer until the machine idles into the cover
-    try { console.warn("[edex-heal] scheduled refresh after " + EDEX_RELOAD_HOURS + "h — reloading renderer"); } catch (_) {}
-    _reloadPreservingCover();
-}, 60000);

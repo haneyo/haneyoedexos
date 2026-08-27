@@ -1,14 +1,9 @@
 const signale = require("signale");
-const {app, BrowserWindow, dialog, shell, session} = require("electron");
+const {app, BrowserWindow, dialog, shell} = require("electron");
 
 // Allow audio/video to start without a user gesture so media opened from the
 // file browser autoplays (and the play/pause button state stays in sync).
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
-// Cap Chromium's disk cache (64 MB): the always-on desktop never needs a
-// hundreds-of-MB stale cache, and unbounded on-disk growth is a classic
-// Electron long-session slowdown (setCacheSize was removed in newer Electron,
-// so the Chromium switch is the way to limit it).
-app.commandLine.appendSwitch("disk-cache-size", "67108864");
 
 process.on("uncaughtException", e => {
     signale.fatal(e);
@@ -357,13 +352,6 @@ function createWindow(settings) {
     }));
 
     signale.complete("Frontend window created!");
-    // Long-session cache hygiene: drop the HTTP cache periodically so it can
-    // never accumulate without bound on an always-on desktop (the
-    // disk-cache-size switch caps it as well).
-    try {
-        const sess = session.defaultSession;
-        setInterval(() => { try { sess.clearCache(); } catch (e) {} }, 6 * 3600 * 1000);
-    } catch (e) {}
     // Show only once the first frame is painted. win.show() right after loadURL
     // exposes a blank canvas before the renderer installs its themed cursor and
     // dark background — the white-flash + native-arrow moment seen on real
