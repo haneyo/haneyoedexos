@@ -252,8 +252,12 @@ class AppMonitorPanel {
         if (ev) ev.stopPropagation();
         if (!this.menu) return;
         if (this.menu.style.display === "none") {
-            if (ev && ev.currentTarget) {
-                const r = ev.currentTarget.getBoundingClientRect();
+            // Anchor to the chevron that opened it; fall back to the tab label
+            // so a programmatic open without an event never lands at 0,0
+            // (top-left of the screen).
+            const anchor = (ev && ev.currentTarget) || this.labelEl || null;
+            if (anchor) {
+                const r = anchor.getBoundingClientRect();
                 this.menu.style.left = Math.max(4, r.left - 20) + "px";
                 this.menu.style.top = (r.bottom + 6) + "px";
             }

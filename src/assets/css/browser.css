@@ -881,6 +881,10 @@ div.voice_mode_opt.selected::after {
 /* Body-level dropdown. The tab bar has overflow:hidden so the menu cannot live
    inside the <li> - it is appended to <body> and positioned on click. */
 .webapp_menu {
+    /* Hidden unless explicitly opened (inline display:none is set at creation
+       too — this CSS rule is a second guard so a lost/overridden inline style
+       can never leave the app list visible at boot). */
+    display: none;
     position: fixed;
     z-index: 3000;
     min-width: 20vh;
