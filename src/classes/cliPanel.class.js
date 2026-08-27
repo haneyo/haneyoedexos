@@ -2,7 +2,7 @@
 //
 // Instead of the retired virtual-display app monitor (AppMonitorPanel), these
 // tabs launch command-line apps that have their own user interface (claude,
-// links2, aerc, btop, musicfox) inside a real terminal session. Each entry is
+// w3m, aerc, btop, musicfox) inside a real terminal session. Each entry is
 // started by asking the main process for a new pty via
 // `ipcRenderer.send("ttyspawn", { cli: [cmd, ...args] })`; the main process
 // replies with a port and this side attaches a client-side Terminal to it.
@@ -27,16 +27,19 @@ const _cliIpc = require("electron").ipcRenderer;
 // built-in, { _deleted: true } hides it, and any other entry is a custom app.
 const _CLI_BUILTIN = [
     { id: "claude", name: "Claude", cmd: ["claude"], icon: "ai" },
-    // Browser = links2 (apt text-mode browser) — #189 abandons browsh (1.8.2's
+    // Browser = w3m (apt text-mode browser) — #189 abandons browsh (1.8.2's
     // WebExtension bootstrap needs Firefox's removed Cu.import, so it can never
-    // connect to any maintained Firefox) and carbonyl (clicks land one row off).
-    // links2 needs no headless engine and no version pairing; the startup URL is
-    // a POSITIONAL argument pointing at the local dark search page (deployed
-    // next to the AppImage at /opt/edex/cli-start.html, #136; the page's search
-    // form is a native GET → DuckDuckGo Lite so it works without JS). Firefox
-    // stays baked at /opt/firefox but ONLY as the GUI-app launcher's fullscreen
-    // browser (build-iso.sh).
-    { id: "links2", name: "links2", cmd: ["links2", "file:///opt/edex/cli-start.html"], icon: "browser" },
+    // connect to any maintained Firefox), carbonyl (clicks land one row off) and
+    // links2 (its text-mode screen is one-char-per-cell with no double-width
+    // handling, so CJK renders mangled on any wide-char terminal). w3m outputs
+    // proper UTF-8 with double-width CJK. The id stays "links2" so the
+    // alt-history opt-out (terminal.class.js) and user overrides keep working.
+    // The startup URL is a POSITIONAL argument pointing at the local dark search
+    // page (deployed next to the AppImage at /opt/edex/cli-start.html, #136; the
+    // page's search form is a native GET → DuckDuckGo Lite so it works without
+    // JS). Firefox stays baked at /opt/firefox but ONLY as the GUI-app launcher's
+    // fullscreen browser (build-iso.sh).
+    { id: "links2", name: "w3m", cmd: ["w3m", "file:///opt/edex/cli-start.html"], icon: "browser" },
     { id: "aerc", name: "aerc", cmd: ["aerc"], icon: "mail" },
     { id: "btop", name: "BTOP", cmd: ["btop"], icon: "monitor" },
     // musicfox = go-musicfox v5.1.0 NetEase Cloud Music TUI (built by build-iso.sh

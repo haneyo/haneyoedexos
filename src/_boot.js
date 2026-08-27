@@ -1238,34 +1238,241 @@ app.on('ready', async () => {
     ipc.handle("clash:stop", () => clashStop());
     ipc.handle("clash:set-enabled", (e, { enabled }) =>
         enabled ? clashStart().then(r => ({ ok: !!r.ok })) : clashStop().then(() => ({ ok: true })));
-    ipc.handle("clash:fetch-subscription", (e, { url }) => new Promise(resolve => {
+    // Validate a downloaded config with mihomo itself (-t) so a broken
+    // subscription / import is rejected before it replaces the working file.
+    const clashTestConfig = file => new Promise(resolve => {
+        if (!CLASH_BIN) return resolve({ ok: true });
+        execFile(CLASH_BIN, ["-t", "-f", file, "-d", CLASH_DIR], { timeout: 15000 }, (err, stdout, stderr) => {
+            if (!err) return resolve({ ok: true });
+            resolve({ ok: false, error: String(stderr || stdout || err.message).split("\n").filter(Boolean).slice(-4).join("\n") });
+        });
+    });
+    // Install a config TEXT as CLASH_CONF: append the controller block, test
+    // with mihomo, swap into place, restart the daemon if it was running.
+    const installConfig = (text, cb) => {
+        try {
+            if (!/proxies:\s*\n/i.test(text)) return cb({ ok: false, error: "NOT_CONFIG" });
+            fs.mkdirSync(CLASH_DIR, { recursive: true });
+            const cfg = clashConf();
+            // mihomo >= 1.18 requires external-ui under $HOME or SAFE_PATHS;
+            // link the baked dashboard into the config dir (always under home)
+            // so the controller can serve it, or omit the line when absent.
+            let extUi = "";
+            try {
+                const bakedUi = "/opt/edex/metacubexd";
+                if (fs.existsSync(bakedUi)) {
+                    const link = path.join(CLASH_DIR, "metacubexd");
+                    if (!fs.existsSync(link)) { try { fs.symlinkSync(bakedUi, link, "dir"); } catch (e) {} }
+                    extUi = "\nexternal-ui: " + link;
+                }
+            } catch (e) {}
+            const add = "\nmixed-port: " + (cfg.port || 7890) +
+                        "\nexternal-controller: " + (cfg.controller || "127.0.0.1:9090") +
+                        "\nsecret: " + (cfg.secret || "") +
+                        extUi +
+                        "\nallow-lan: false" +
+                        "\ngeo-auto-update: false\n";
+            // Drop the top-level keys we override from the incoming body
+            // (unindented lines only) so appending our block never trips
+            // mihomo's duplicate-key parse error.
+            const overridden = /^(mixed-port|external-controller|secret|external-ui|allow-lan|geo-auto-update)\s*:/;
+            const body = String(text).split("\n").filter(l => !overridden.test(l)).join("\n").replace(/\s*$/, "");
+            const tmp = path.join(CLASH_DIR, ".config.yaml.tmp");
+            fs.writeFileSync(tmp, body + add);
+            clashTestConfig(tmp).then(test => {
+                if (!test.ok) { try { fs.unlinkSync(tmp); } catch (e) {} return cb({ ok: false, error: "BAD_CONFIG", detail: test.error }); }
+                fs.copyFileSync(tmp, CLASH_CONF);
+                try { fs.unlinkSync(tmp); } catch (e) {}
+                clashRestart().then(() => cb({ ok: true }));
+            });
+        } catch (e) { cb({ ok: false, error: "WRITE_FAILED" }); }
+    };
+    // Some providers return base64-encoded subscription bodies — decode when
+    // the payload only contains the base64 alphabet and decodes to a config.
+    const maybeDecodeBase64 = text => {
+        const t = String(text || "").trim();
+        if (t.length < 40 || t.includes("proxies:") || t.length % 4 !== 0) return text;
+        if (!/^[A-Za-z0-9+/=\r\n]+$/.test(t)) return text;
+        try {
+            const dec = Buffer.from(t, "base64").toString("utf8");
+            return /proxies:\s*\n/i.test(dec) ? dec : text;
+        } catch (e) { return text; }
+    };
+
+    // Fetch a subscription URL. Subscription panels (nginx anti-leech) reject
+    // generic curl/browser User-Agents with 403, so try known clash-client
+    // UAs in order until one returns a body; accept plain YAML or base64.
+    ipc.handle("clash:fetch-subscription", (e, { url }) => new Promise(async resolve => {
         if (!CLASH_BIN) return resolve({ ok: false, error: "NO_BINARY" });
         const u = String(url || "").trim();
         if (!/^https?:\/\//i.test(u)) return resolve({ ok: false, error: "BAD_URL" });
         const { spawn } = require("child_process");
-        const tmp = path.join(CLASH_DIR, ".config.yaml.tmp");
-        const proc = spawn("curl", ["-fsSL", "--connect-timeout", "15", "--retry", "2", "-o", tmp, u]);
-        proc.on("error", () => resolve({ ok: false, error: "CURL_FAILED" }));
-        proc.on("close", code => {
-            if (code !== 0) { try { fs.unlinkSync(tmp); } catch (e) {} return resolve({ ok: false, error: "CURL_FAILED" }); }
-            try {
-                const cfg = clashConf();
-                // Append our controller block. mihomo accepts duplicate top-level
-                // scalars (last wins) — verified with `mihomo -t`.
-                const base = fs.readFileSync(tmp, "utf8");
-                const add = "\nmixed-port: " + (cfg.port || 7890) +
-                            "\nexternal-controller: " + (cfg.controller || "127.0.0.1:9090") +
-                            "\nsecret: " + (cfg.secret || "") +
-                            "\nexternal-ui: /opt/edex/metacubexd" +
-                            "\nallow-lan: false" +
-                            "\ngeo-auto-update: false\n";
-                fs.writeFileSync(tmp, base.replace(/\s*$/, "") + add);
-                fs.copyFileSync(tmp, CLASH_CONF);
-                try { fs.unlinkSync(tmp); } catch (e) {}
-            } catch (e) { return resolve({ ok: false, error: "WRITE_FAILED" }); }
-            clashRestart().then(() => resolve({ ok: true }));
+        const tmp = path.join(CLASH_DIR, ".sub.tmp");
+        const UAS = ["clash-verge/v2.0.1", "mihomo/1.19.30", "ClashX/1.118.0", "ClashforWindows/0.20.39"];
+        const tryUA = ua => new Promise(res => {
+            const p = spawn("curl", ["-fsSL", "--connect-timeout", "15", "--max-time", "60", "--retry", "2", "-A", ua, "-o", tmp, u]);
+            p.on("error", () => res(false));
+            p.on("close", code => res(code === 0));
         });
+        let ok = false;
+        for (const ua of UAS) { if (await tryUA(ua)) { ok = true; break; } }
+        if (!ok) { try { fs.unlinkSync(tmp); } catch (e) {} return resolve({ ok: false, error: "FETCH_FAILED" }); }
+        let text;
+        try { text = maybeDecodeBase64(fs.readFileSync(tmp, "utf8")); }
+        catch (e) { try { fs.unlinkSync(tmp); } catch (e2) {} return resolve({ ok: false, error: "WRITE_FAILED" }); }
+        try { fs.unlinkSync(tmp); } catch (e) {}
+        installConfig(text, r => resolve(r));
     }));
+
+    // Import a config file picked with a native file dialog.
+    ipc.handle("clash:import-file", () => new Promise(resolve => {
+        if (!CLASH_BIN) return resolve({ ok: false, error: "NO_BINARY" });
+        dialog.showOpenDialog({
+            title: "Import Clash config",
+            properties: ["openFile"],
+            filters: [
+                { name: "Clash config", extensions: ["yaml", "yml", "conf", "txt"] },
+                { name: "All files", extensions: ["*"] }
+            ]
+        }).then(r => {
+            if (r.canceled || !r.filePaths || !r.filePaths.length) return resolve({ ok: false, error: "CANCELED" });
+            try {
+                const text = maybeDecodeBase64(fs.readFileSync(r.filePaths[0], "utf8"));
+                installConfig(text, res => resolve(Object.assign(res, { from: r.filePaths[0] })));
+            } catch (e) { resolve({ ok: false, error: "READ_FAILED" }); }
+        }).catch(() => resolve({ ok: false, error: "DIALOG_FAILED" }));
+    }));
+
+    // ---- WiFi config transfer: a temporary LAN HTTP server. The settings
+    // switch starts it and shows http://<lan-ip>:<port>/<token>; opening that
+    // URL on any device with a browser lets the user drag a config file in,
+    // which is validated and installed — no subscription link typing needed.
+    let transferSrv = null;
+    let transferPort = 0;
+    let transferToken = "";
+    const lanIPv4 = () => {
+        try {
+            const ifs = require("os").networkInterfaces();
+            for (const name of Object.keys(ifs)) {
+                for (const a of ifs[name] || []) {
+                    if (a.family === "IPv4" && !a.internal) return a.address;
+                }
+            }
+        } catch (e) {}
+        return "127.0.0.1";
+    };
+    const transferPage = () => `<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Import Clash Config / 导入配置</title>
+<style>
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d1117;color:#c9d1d9;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+.box{max-width:540px;width:92%;text-align:center}
+h1{font-size:20px;margin:0 0 6px}
+h2{font-size:13px;color:#8b949e;font-weight:normal;margin:0 0 14px}
+p{color:#8b949e;font-size:13px;margin:6px 0}
+#drop{border:2px dashed #30363d;border-radius:14px;padding:52px 24px;margin:22px 0;cursor:pointer;transition:border-color .2s,background .2s}
+#drop.hover{border-color:#58a6ff;background:#161b22}
+#drop .plus{font-size:36px;color:#58a6ff;display:block;margin-bottom:10px}
+#status{font-size:14px;min-height:22px;margin-top:14px;word-break:break-all}
+.ok{color:#3fb950}
+.err{color:#f85149}
+</style>
+</head>
+<body>
+<div class="box">
+<h1>导入 Clash 配置</h1>
+<h2>Import Clash Config</h2>
+<p>把配置文件拖到下方,或点击选择文件</p>
+<p>Drop a config file here, or click to browse</p>
+<div id="drop"><span class="plus">＋</span>拖拽文件到此处<br>Drag &amp; drop config.yaml</div>
+<input type="file" id="file" accept=".yaml,.yml,.conf,.txt" style="display:none">
+<div id="status"></div>
+</div>
+<script>
+var drop=document.getElementById('drop'),file=document.getElementById('file'),status=document.getElementById('status');
+drop.onclick=function(){file.click()};
+['dragover','dragenter'].forEach(function(ev){drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.add('hover')})});
+['dragleave','drop'].forEach(function(ev){drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.remove('hover')})});
+drop.addEventListener('drop',function(e){if(e.dataTransfer&&e.dataTransfer.files.length)upload(e.dataTransfer.files[0])});
+file.onchange=function(){if(file.files.length)upload(file.files[0])};
+function upload(f){
+  if(f.size>8*1024*1024){show('err','文件过大(最大 8 MB) / File too large (max 8 MB)');return}
+  show('','上传中… / Uploading…');
+  fetch(location.pathname+'/upload',{method:'POST',body:f}).then(function(r){return r.json()}).then(function(j){
+    show(j.ok?'ok':'err',j.ok?'✓ 配置已接收并生效 / Config installed and applied':'✗ '+j.error);
+  }).catch(function(){show('err','✗ 上传失败 / Upload failed')});
+}
+function show(cls,msg){status.className=cls;status.textContent=msg}
+</script>
+</body>
+</html>`;
+    const transferUrl = () => transferSrv ? "http://" + lanIPv4() + ":" + transferPort + "/" + transferToken : "";
+    const clashTransferStart = () => new Promise(resolve => {
+        if (transferSrv) return resolve({ ok: true, url: transferUrl() });
+        const http = require("http");
+        const crypto = require("crypto");
+        transferToken = crypto.randomBytes(6).toString("hex");
+        const srv = http.createServer((req, res) => {
+            const p = (req.url || "").split("?")[0];
+            if (req.method === "GET" && p === "/" + transferToken) {
+                res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+                res.end(transferPage());
+                return;
+            }
+            if (req.method === "POST" && p === "/" + transferToken + "/upload") {
+                const chunks = [];
+                let size = 0;
+                let aborted = false;
+                req.on("data", c => {
+                    if (aborted) return;
+                    size += c.length;
+                    if (size > 8 * 1024 * 1024) {
+                        aborted = true;
+                        res.writeHead(413, { "Content-Type": "application/json" });
+                        res.end(JSON.stringify({ ok: false, error: "file too large (max 8 MB)" }));
+                        req.destroy();
+                        return;
+                    }
+                    chunks.push(c);
+                });
+                req.on("end", () => {
+                    if (aborted) return;
+                    installConfig(maybeDecodeBase64(Buffer.concat(chunks).toString("utf8")), r => {
+                        res.writeHead(r.ok ? 200 : 400, { "Content-Type": "application/json" });
+                        res.end(JSON.stringify(r));
+                    });
+                });
+                req.on("error", () => {
+                    if (!res.headersSent) {
+                        res.writeHead(400, { "Content-Type": "application/json" });
+                        res.end(JSON.stringify({ ok: false, error: "upload error" }));
+                    }
+                });
+                return;
+            }
+            res.writeHead(404, { "Content-Type": "text/plain" });
+            res.end("Not found");
+        });
+        srv.on("error", e => resolve({ ok: false, error: e.message }));
+        srv.listen(0, "0.0.0.0", () => {
+            transferPort = srv.address().port;
+            transferSrv = srv;
+            global.transferSrv = srv;
+            clashLogLine("[transfer server: " + transferUrl() + "]");
+            resolve({ ok: true, url: transferUrl() });
+        });
+    });
+    const clashTransferStop = () => new Promise(resolve => {
+        if (transferSrv) { try { transferSrv.close(); } catch (e) {} transferSrv = null; }
+        global.transferSrv = null;
+        resolve({ ok: true });
+    });
+    ipc.handle("clash:transfer-start", () => clashTransferStart());
+    ipc.handle("clash:transfer-stop", () => clashTransferStop());
+    ipc.handle("clash:transfer-status", () => ({ ok: true, running: !!transferSrv, url: transferUrl() }));
 
     // ---- Bundled local LLM daemon (llama-server, #144) ----
     // Mirrors the clash daemon: plain spawn of the baked binary with a log ring
@@ -2351,11 +2558,12 @@ app.on('ready', async () => {
             child.on("error", () => finish({ installed: false, version: "" }));
         } catch (e) { finish({ installed: false, version: "" }); }
     });
-    // #189 replaces browsh with links2: the in-app Browser (CLI panel) is now
-    // the apt text-mode browser links2 (browsh 1.8.2's WebExtension bootstrap
-    // needs Firefox's removed Cu.import, so it can never connect to any
-    // maintained Firefox; carbonyl's clicks land one row off). links2 is an apt
-    // package (update: "apt", like btop/aerc). Firefox stays baked at
+    // #189 replaces browsh with a text-mode browser: the in-app Browser (CLI
+    // panel) now runs w3m (browsh 1.8.2's WebExtension bootstrap needs
+    // Firefox's removed Cu.import, so it can never connect to any maintained
+    // Firefox; carbonyl's clicks land one row off; links2's one-char-per-cell
+    // text screen has no double-width handling so CJK renders mangled). w3m is
+    // an apt package (update: "apt", like btop/aerc). Firefox stays baked at
     // /opt/firefox but ONLY for the GUI-app launcher's fullscreen browser; its
     // version is read from platform.ini (Milestone=) — reading the file is fast
     // and avoids spawning the browser just to show a version.
@@ -2374,18 +2582,18 @@ app.on('ready', async () => {
             return resolve({ installed: true, version: "" });
         } catch (e) { resolve({ installed: false, version: "" }); }
     });
-    // links2 (apt text-mode browser) has no GNU-style long options: `--version`
-    // prints "Unknown option" and exits 1, but `-version` prints "Links 2.29".
-    const links2Version = () => new Promise(resolve => {
-        execFile("links2", ["-version"], { timeout: 5000 }, (err, stdout) => {
-            const m = String(stdout || "").match(/Links ([\d]+(?:\.[\d]+)+)/);
+    // w3m (apt text-mode browser, replaces links2 — see cliPanel.class.js):
+    // `w3m -version` prints "w3m/0.5.3+git20230121, options …".
+    const w3mVersion = () => new Promise(resolve => {
+        execFile("w3m", ["-version"], { timeout: 5000 }, (err, stdout) => {
+            const m = String(stdout || "").match(/w3m\/([\w.+-]+)/);
             resolve({ installed: !err && !!m, version: m ? m[1] : "" });
         });
     });
     ipc.handle("bundled:status", () => new Promise(async resolve => {
         const claude = await bundledClaudeVersion();
-        const [btop, aerc, links2, firefox] = await Promise.all([
-            bundledCmdVersion("btop"), bundledCmdVersion("aerc"), links2Version(), firefoxVersion()
+        const [btop, aerc, w3m, firefox] = await Promise.all([
+            bundledCmdVersion("btop"), bundledCmdVersion("aerc"), w3mVersion(), firefoxVersion()
         ]);
         resolve({
             ok: true,
@@ -2393,7 +2601,7 @@ app.on('ready', async () => {
             clash: { update: "auto", installed: !!CLASH_BIN, version: await clashVersion() },
             btop: { update: "apt", ...btop },
             aerc: { update: "apt", ...aerc },
-            links2: { update: "apt", ...links2 },
+            w3m: { update: "apt", ...w3m },
             firefox: { update: "bundled", ...firefox }
         });
     }));
@@ -3023,6 +3231,9 @@ app.on('before-quit', () => {
     }
     if (global.clashProc) {
         try { global.clashProc.kill("SIGTERM"); } catch (e) {}
+    }
+    if (global.transferSrv) {
+        try { global.transferSrv.close(); } catch (e) {}
     }
     if (fsExitWin && !fsExitWin.isDestroyed()) { try { fsExitWin.close(); } catch (e) {} }
     try { electron.globalShortcut.unregisterAll(); } catch (e) {}

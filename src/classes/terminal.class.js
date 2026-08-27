@@ -20,11 +20,12 @@ class Terminal {
             this._altHistIdx = 0;
             this._altLast = "";
             this._altPaused = false;
-            // Browsers (links2) draw to the alt buffer but must stay live.
-            // cliPanel session ids are "<appId>_<rand>", so a links2
-            // parentId opts out of #67 alt-history: frozen history frames made
-            // the page look unresponsive after a wheel-up. Wheel is then
-            // forwarded so the browser can scroll its own page.
+            // Browsers (the CLI browser = w3m) draw to the alt buffer but must
+            // stay live. cliPanel session ids are "<appId>_<rand>", so the
+            // browser's parentId (id stays "links2" for compatibility) opts out
+            // of #67 alt-history: frozen history frames made the page look
+            // unresponsive after a wheel-up. Wheel is then forwarded so the
+            // browser can scroll its own page.
             this._altHistEnabled = opts.altHistory !== false && !/^links2_/.test(opts.parentId || "");
             this._altLastT = 0;
             this._serializeA = null;
@@ -128,7 +129,12 @@ class Terminal {
                 allowTransparency: true,
                 // xterm renders in a fixed character grid, so it MUST use a
                 // monospace font - a proportional UI font breaks column alignment.
-                fontFamily: window.theme.terminal.fontFamily || "Fira Mono",
+                // The bundled font (Fira Mono by default) has no CJK glyphs; the
+                // image ships fonts-noto-cjk, so append system CJK fallbacks so
+                // Chinese / Japanese / Korean render (browser pages etc.) instead
+                // of blank cells.
+                fontFamily: (window.theme.terminal.fontFamily || "Fira Mono") +
+                    ', "Noto Sans Mono CJK SC", "Noto Sans CJK SC", "Noto Sans CJK TC", "Noto Sans CJK JP", "Noto Sans CJK KR", "WenQuanYi Zen Hei Mono", monospace',
                 fontSize: window.theme.terminal.fontSize || window.settings.termFontSize || 11,
                 fontWeight: window.theme.terminal.fontWeight || "normal",
                 fontWeightBold: window.theme.terminal.fontWeightBold || "bold",
@@ -364,7 +370,7 @@ class Terminal {
                 // the write wrapper when the app leaves the alt buffer.
                 const abuf = this.term && this.term.buffer && this.term.buffer.active;
                 if (abuf && abuf.type === "alt") {
-                    // Browser (links2) opts out of #67 alt-history: don't
+                    // Browser (w3m) opts out of #67 alt-history: don't
                     // swallow the wheel — xterm forwards it so the page scrolls.
                     if (!this._altHistEnabled) return;
                     e.preventDefault();

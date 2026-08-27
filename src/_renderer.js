@@ -629,7 +629,7 @@ window._loadTheme = theme => {
     :root {
         --font_main: "${window._purifyCSS(theme.cssvars.font_main)}";
         --font_main_light: "${window._purifyCSS(theme.cssvars.font_main_light)}";
-        --font_mono: "${window._purifyCSS(theme.terminal.fontFamily)}";
+        --font_mono: "${window._purifyCSS(theme.terminal.fontFamily)}, 'Noto Sans Mono CJK SC', 'Noto Sans CJK SC', 'Noto Sans CJK TC', 'Noto Sans CJK JP', 'Noto Sans CJK KR', 'WenQuanYi Zen Hei Mono', monospace";
         --color_r: ${window._purifyCSS(theme.colors.r)};
         --color_g: ${window._purifyCSS(theme.colors.g)};
         --color_b: ${window._purifyCSS(theme.colors.b)};
@@ -2278,7 +2278,7 @@ async function initUI() {
     });
 
     // Tabs 4 & 5 are CLI panels by default: command-line apps with a UI
-    // (claude, links2, aerc, btop, musicfox) run in a real terminal session, and
+    // (claude, w3m, aerc, btop, musicfox) run in a real terminal session, and
     // both tabs read "APP". When the experimental GUI-app mode
     // (settings.appMonitor.showGui) is enabled, tab 5 becomes the
     // AppMonitorPanel virtual-display entry ("GUI APPS") and shows the hollow
@@ -2513,6 +2513,7 @@ async function initUI() {
                 if (cfg) cfg.textContent = st.configPath || "–";
                 const log = document.getElementById("settingsClashLog");
                 if (log && st.log && st.log.length) log.textContent = st.log.join("\n");
+                this.refreshTransfer();
                 this.refreshCtrl();
             }).catch(() => {});
         },
@@ -2560,19 +2561,42 @@ async function initUI() {
                 }
             });
         },
-        openConfig() {
-            const st = this.status;
-            if (!st || !st.configPath) return;
-            // Open the directory the config lives in (so the user can edit
-            // config.yaml by hand); shell.openPath on the file itself works too.
-            const dir = st.configPath.replace(/[^/]+\.yaml$/, "");
-            require("electron").shell.openPath(dir);
+        // Pick a config file with a native dialog and install it as the
+        // active clash config (validated with mihomo -t in main).
+        importFile() {
+            ipc.invoke("clash:import-file").then(r => {
+                this.refreshStatus();
+                const status = document.getElementById("settingsClashStatus");
+                if (status && r) {
+                    if (r.ok) status.textContent = t("settings.clash.imported");
+                    else if (r.error === "BAD_CONFIG") status.textContent = t("settings.clash.importFailed") + (r.detail ? " — " + r.detail.split("\n")[0] : "");
+                    else if (r.error !== "CANCELED") status.textContent = t("settings.clash.importFailed");
+                }
+            });
         },
-        openDashboard() {
-            const ctrl = (this.status && this.status.controller) || "127.0.0.1:9090";
-            // metacubexd serves /ui/ from the controller; fullscreen overlay
-            // because the multi-tab browser was retired (see webViewFullscreen).
-            window.webViewFullscreen.enter("http://" + ctrl + "/ui/", "persist:edex-browser");
+        // WiFi transfer switch: starts/stops the LAN upload server and shows
+        // the drop-zone URL (open it on a phone or another device).
+        transferToggle() {
+            const el = document.getElementById("settingsClashTransfer");
+            const on = el ? el.value === "true" : false;
+            ipc.invoke(on ? "clash:transfer-start" : "clash:transfer-stop").then(r => {
+                if (on && r && !r.ok) {
+                    if (el) el.value = "false";
+                    const status = document.getElementById("settingsClashStatus");
+                    if (status) status.textContent = t("settings.clash.transferFail") + (r.error ? " — " + r.error : "");
+                }
+                this.refreshTransfer();
+            }).catch(() => this.refreshTransfer());
+        },
+        refreshTransfer() {
+            ipc.invoke("clash:transfer-status").then(st => {
+                const el = document.getElementById("settingsClashTransfer");
+                if (el) el.value = (st && st.running) ? "true" : "false";
+                const wrap = document.getElementById("settingsClashTransferUrlWrap");
+                if (wrap) wrap.style.display = (st && st.running && st.url) ? "" : "none";
+                const url = document.getElementById("settingsClashTransferUrl");
+                if (url) url.textContent = (st && st.url) ? st.url : "";
+            }).catch(() => {});
         },
         // #9 Controller REST passthrough (clash:ctrl in main): mode switch,
         // proxy-group node selection + delay test, read-only rules.
@@ -2904,7 +2928,7 @@ async function initUI() {
                 const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
                 set("settingsUpClashVer", (st.clash && st.clash.installed) ? (st.clash.version ? "v" + st.clash.version : "installed") : "–");
                 set("settingsUpClaudeVer", (st.claude && st.claude.version) ? "v" + st.claude.version : "–");
-                set("settingsUpLinks2Ver", (st.links2 && st.links2.installed) ? (st.links2.version ? "v" + st.links2.version : "installed") : "–");
+                set("settingsUpW3mVer", (st.w3m && st.w3m.installed) ? (st.w3m.version ? "v" + st.w3m.version : "installed") : "–");
                 set("settingsUpFirefoxVer", (st.firefox && st.firefox.installed) ? (st.firefox.version ? "v" + st.firefox.version : "installed") : "–");
                 set("settingsUpBtopVer", (st.btop && st.btop.version) ? "v" + st.btop.version : "–");
                 set("settingsUpAercVer", (st.aerc && st.aerc.version) ? "v" + st.aerc.version : "–");
@@ -3922,7 +3946,6 @@ window.openSettings = async () => {
                  <div class="settings_bg_status" id="settingsBgStatus"></div>`,
                 "settings.backgroundImage.help"),
             settingsRow("settings.termFontSize", `<input type="text" id="settingsEditor-termFontSize" value="${window.settings.termFontSize}">`),
-            settingsRow("settings.shell", `<input type="text" id="settingsEditor-shell" value="${window.settings.shell}">`, "settings.shell.help"),
             settingsRow("settings.showKeyboard", `<select id="settingsEditor-showKeyboard">
                 <option>${window.settings.showKeyboard === true}</option>
                 <option>${window.settings.showKeyboard !== true}</option>
@@ -4036,7 +4059,7 @@ window.openSettings = async () => {
         { id: "apps", titleKey: "settings.cat.apps", html: () => [
             section("settings.cat.apps"),
             settingsRow("settings.appMonitor.showGui",
-                `<select id="settingsEditor-showGui" onchange="window.showGui.apply()">
+                `<select id="settingsEditor-showGui">
                     <option>${!!((window.settings.appMonitor || {}).showGui)}</option>
                     <option>${!((window.settings.appMonitor || {}).showGui)}</option>
                 </select>`,
@@ -4166,9 +4189,15 @@ window.openSettings = async () => {
                 settingsRow("settings.clash.rules", `<pre id="settingsClashRules" class="settings_net_log">–</pre>`, "settings.clash.rules.help"),
                 settingsRow("settings.clash.configPath", `<span id="settingsClashConfigPath" class="settings_net_info">–</span>
                     <div class="settings_net_actions">
-                        <button type="button" id="settingsClashOpenConfig" class="settings_net_btn">${t("settings.clash.openConfig")}</button>
-                        <button type="button" id="settingsClashOpenDashboard" class="settings_net_btn">${t("settings.clash.openDashboard")}</button>
+                        <button type="button" id="settingsClashImportFile" class="settings_net_btn">${t("settings.clash.importFile")}</button>
                     </div>`),
+                settingsRow("settings.clash.transfer", `<select id="settingsClashTransfer">
+                        <option value="true">${t("settings.network.on")}</option>
+                        <option value="false" selected>${t("settings.network.off")}</option>
+                    </select>
+                    <div id="settingsClashTransferUrlWrap" style="display:none;margin-top:1vh;width:100%">
+                        <span id="settingsClashTransferUrl" class="settings_net_info">–</span>
+                    </div>`, "settings.clash.transfer.help"),
                 settingsRow("settings.clash.log", `<pre id="settingsClashLog" class="settings_net_log">–</pre>`),
             ].join("");
         } },
@@ -4241,7 +4270,7 @@ window.openSettings = async () => {
                     </div>
                 </div>`),
             settingsRow("settings.updates.claude", `<span id="settingsUpClaudeVer" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.auto")}</span>`),
-            settingsRow("settings.updates.links2", `<span id="settingsUpLinks2Ver" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.apt")}</span>`),
+            settingsRow("settings.updates.w3m", `<span id="settingsUpW3mVer" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.apt")}</span>`),
             settingsRow("settings.updates.firefox", `<span id="settingsUpFirefoxVer" class="settings_net_info">–</span>`),
             settingsRow("settings.updates.btop", `<span id="settingsUpBtopVer" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.apt")}</span>`),
             settingsRow("settings.updates.mail", `<span id="settingsUpAercVer" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.apt")}</span>`),
@@ -4288,7 +4317,6 @@ window.openSettings = async () => {
         buttons: [
             {label: t("settings.btn.save"), action: "window.eventPlay('settings_save');window.writeSettingsFile()"},
             {label: t("settings.btn.shortcuts"), action: "window.openShortcutsHelp()"},
-            {label: t("settings.btn.reload"), action: "window.location.reload(true);"},
             {label: t("settings.btn.restart"), action: "remote.app.relaunch();remote.app.quit();"}
         ]
     }, () => {
@@ -4365,6 +4393,12 @@ window.openSettings = async () => {
         // dropdown's list click via the change dispatch in setupSettingsDropdowns.
         const claudeProvider = document.getElementById("settingsEditor-claude-provider");
         if (claudeProvider) claudeProvider.addEventListener("change", () => window.sysCmd.applyClaudeProvider());
+        // Same pattern for the showGui toggle: its <select> is replaced by the
+        // custom dropdown (hidden input keeps the id), so an inline onchange on
+        // the original select would be lost and showGui would never persist
+        // (reverting to false on restart). Bind the real change listener here.
+        const showGuiSel = document.getElementById("settingsEditor-showGui");
+        if (showGuiSel) showGuiSel.addEventListener("change", () => window.showGui.apply());
         // The model combo boxes are bound here too (open/close, pick, keyboard).
         // Then re-sync everything from the saved provider (fill defaults only
         // where a field is still empty, so a saved custom model name is not
@@ -4392,8 +4426,9 @@ window.openSettings = async () => {
         bindClash("settingsClashStart", () => window.clash.start());
         bindClash("settingsClashStop", () => window.clash.stop());
         bindClash("settingsClashSubFetch", () => window.clash.fetchSub());
-        bindClash("settingsClashOpenConfig", () => window.clash.openConfig());
-        bindClash("settingsClashOpenDashboard", () => window.clash.openDashboard());
+        bindClash("settingsClashImportFile", () => window.clash.importFile());
+        const clashTransfer = document.getElementById("settingsClashTransfer");
+        if (clashTransfer) clashTransfer.addEventListener("change", () => window.clash.transferToggle());
         bindClash("settingsClashGroupsRefresh", () => { window.clash.refreshGroups(); window.clash.refreshRules(); });
         const clashMode = document.getElementById("settingsClashMode");
         if (clashMode) clashMode.addEventListener("change", () => window.clash.setMode());
@@ -5269,7 +5304,6 @@ window.writeSettingsFile = () => {
     // iface, monitor, keepGeometry, …). Those are still editable via the "open
     // in external editor" button, so they must survive a save.
     const s = Object.assign({}, window.settings);
-    s.shell = document.getElementById("settingsEditor-shell").value;
     s.username = document.getElementById("settingsEditor-username").value;
     s.theme = document.getElementById("settingsEditor-theme").value;
     s.termFontSize = Number(document.getElementById("settingsEditor-termFontSize").value);

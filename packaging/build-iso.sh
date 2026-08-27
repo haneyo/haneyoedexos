@@ -99,7 +99,7 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
     pulseaudio rtkit alsa-utils \
     btop ffmpeg axel \
     openssh-server \
-    aerc less links2 \
+    aerc less w3m \
     flatpak xdg-desktop-portal xdg-desktop-portal-gtk \
     playerctl \
     gvfs gvfs-backends libglib2.0-bin \
@@ -190,7 +190,7 @@ for m in /proc /sys /dev; do sudo umount "$WORK/rootfs$m" 2>/dev/null || true; d
 # WebExtension bootstrap needs Firefox's removed Cu.import, so it can never
 # connect to any maintained Firefox — 128 ESR is EOL and still fails) and
 # carbonyl (clicks land one row off); the CLI-panel Browser is now the apt
-# text-mode links2 (added to APTOPTS), which needs no headless engine. Firefox
+# text-mode w3m (added to APTOPTS), which needs no headless engine. Firefox
 # stays ONLY for the GUI fullscreen browser (#162's "内置程序" row), so the
 # official tarball is baked at /opt/firefox and registered as a .desktop app.
 # Firefox is a HARD requirement (the GUI browser is unusable without it) — a
@@ -423,11 +423,11 @@ fi
 sudo mkdir -p "$WORK/rootfs/opt/edex"
 sudo cp "$EDEX_TO_BAKE" "$WORK/rootfs/opt/edex/eDEX-UI.AppImage"
 sudo chmod 755 "$WORK/rootfs/opt/edex/eDEX-UI.AppImage"
-# #136:#189 后 CLI 浏览器(links2)主页 = 本地深色搜索页(搜索栏为原生 GET 表单 →
-# DuckDuckGo Lite,文本模式 links2 不跑 JS 也能搜;JS 环境才可换引擎),
-# links2 启动 URL 指向 file:///opt/edex/cli-start.html(见 cliPanel.class.js)。
+# #136:#189 后 CLI 浏览器(w3m)主页 = 本地深色搜索页(搜索栏为原生 GET 表单 →
+# DuckDuckGo Lite,文本模式浏览器(w3m)不跑 JS 也能搜;JS 环境才可换引擎),
+# w3m 启动 URL 指向 file:///opt/edex/cli-start.html(见 cliPanel.class.js)。
 sudo install -m 644 "$REPO_DIR/src/assets/browser/cli-start.html" "$WORK/rootfs/opt/edex/cli-start.html"
-echo "[edex] cli-start.html (links2 search page) OK"
+echo "[edex] cli-start.html (w3m search page) OK"
 # Never ship a pre-created /home: a leftover directory from the build host (e.g.
 # /home/runner on a GitHub Actions runner) would leak into the squashfs, get
 # copied to every target disk, and then be mistaken for the real user by naive
