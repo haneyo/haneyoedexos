@@ -3604,6 +3604,12 @@ async function initUI() {
     // The real desktop is fully built (terminals + tabs + browser registered).
     // From here on, show() means a real code/matrix lock, never the boot lock.
     window._uiReady = true;
+    // Boot-time guarantee: the app-monitor dropdowns are created during
+    // initUI (right after the boot unlock) and must start hidden — force-close
+    // both so no app list lingers at the edge of the screen.
+    [window.appmonitorA, window.appmonitorB].forEach(p => {
+        if (p && typeof p.closeMenu === "function") { try { p.closeMenu(); } catch (e) {} }
+    });
 }
 
 window.themeChanger = theme => {

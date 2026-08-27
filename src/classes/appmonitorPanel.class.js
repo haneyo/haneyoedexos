@@ -81,6 +81,10 @@ class AppMonitorPanel {
        the window, so it may still be coming up), then the app list, then show
        the saved / first app. */
     async init() {
+        // Boot-time guarantee: the menu must never be visible right after the
+        // boot unlock — closeMenu is idempotent, so this also covers a lost
+        // inline style or a stray open from a previous renderer state.
+        this.closeMenu();
         this.config = await this._getConfig();
         try {
             const res = await window.appmonitorApi.nativeList();
