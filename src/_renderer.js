@@ -6726,6 +6726,13 @@ const bumpActivity = () => {
         // jump straight into the passcode box. Ignore any input for the first
         // ~400ms of a screensaver run — the next real interaction dismisses it.
         if (Date.now() - (window.screensaver.shownAt || 0) < 400) return;
+        // The POWER menu can be open over the screensaver (OS power button
+        // while idle). While it is up, input must NOT dismiss the screensaver
+        // into the passcode box — that would cover the menu mid-use. Stay in
+        // the screensaver until the menu closes; the next input then dismisses
+        // normally into the lock.
+        const powerMenuOpen = Object.values(window.modals || {}).some(m => m && m.title === "POWER");
+        if (powerMenuOpen) return;
         // Dismissing the screensaver leads into the lock screen when a passcode
         // is configured (lockOnIdle + non-empty lockCode), or when the
         // screensaver was started from the power menu's Lock Screen button
