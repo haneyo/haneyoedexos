@@ -1213,7 +1213,7 @@ async function initUI() {
             <li id="shell_tab1" onclick="window.focusShellTab(1);"><p>EMPTY</p></li>
             <li id="shell_tab2" onclick="window.focusShellTab(2);"><p>EMPTY</p></li>
             <li id="shell_tab3" onclick="window.focusShellTab(3);"><p><span id="shell_tab3_label">APP</span> <span class="webapp_chevron" title="Switch app" onclick="event.stopPropagation();window.appmonitorA.toggleMenu(event);">${Icons.chevronDown}</span></p></li>
-            <li id="shell_tab4" onclick="window.focusShellTab(4);"><p>${(window.settings.appMonitor||{}).showGui?'<button class="appmonitor_fs_tab" title="Fullscreen" onclick="event.stopPropagation();window.appmonitorB.fullscreenButton()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2 2h20L2 22z"/></svg></button>':''}<span id="shell_tab4_label">APP</span> <span class="webapp_chevron" title="Switch app" onclick="event.stopPropagation();window.appmonitorB.toggleMenu(event);">${Icons.chevronDown}</span></p></li>
+            <li id="shell_tab4" onclick="window.focusShellTab(4);"><p><span id="shell_tab4_label">APP</span> <span class="webapp_chevron" title="Switch app" onclick="event.stopPropagation();window.appmonitorB.toggleMenu(event);">${Icons.chevronDown}</span></p></li>
         </ul>
         <div id="main_shell_innercontainer">
             <pre id="terminal0" class="active"></pre>

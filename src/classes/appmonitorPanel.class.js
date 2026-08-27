@@ -1,7 +1,8 @@
 // AppMonitorPanel — the GUI-app "virtual display" entry (terminal tab 5, only
 // when settings.appMonitor.showGui is on). Displays an installed app inside the
 // sci-fi frame, selected from a dropdown on the tab label (the same interaction
-// the webapp panel used). Tab 5's fullscreen triangle calls fullscreenButton().
+// the webapp panel used). The panel's top-right corner button calls
+// fullscreenButton().
 //
 //   kind "native" → the <webview> loads the themed noVNC client page, which
 //                    streams a nested X display running the app (mock RFB on
@@ -53,8 +54,27 @@ class AppMonitorPanel {
 
         this._bindOutsideClose();
         this._bindMenuKeys();
+        this._buildCornerControls();
 
         this.init();
+    }
+
+    /* Fullscreen control lives in the top-right corner of the GUI panel (the
+       old tab-label triangle stretched the tab). A small floating button over
+       the app view; only present in GUI mode (this class is only constructed
+       when showGui is on). */
+    _buildCornerControls() {
+        if (!this.container) return;
+        this.fsBtn = document.createElement("button");
+        this.fsBtn.type = "button";
+        this.fsBtn.className = "appmonitor_fs_corner";
+        this.fsBtn.title = "Fullscreen";
+        this.fsBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>';
+        this.fsBtn.addEventListener("click", ev => {
+            ev.stopPropagation();
+            this.fullscreenButton();
+        });
+        this.container.appendChild(this.fsBtn);
     }
 
     /* Fetch backend config (with retry — the backend is spawned right before
@@ -176,7 +196,7 @@ class AppMonitorPanel {
         return "http://127.0.0.1:" + this.config.httpPort + "/client.html?" + q.toString();
     }
 
-    /* Enter fullscreen from the tab's top-left triangle button. */
+    /* Enter fullscreen from the panel corner button (top-right of the app view). */
     fullscreenButton() {
         if (!this.selected) return;
         // Native apps: run COMPLETELY natively on the real display (the

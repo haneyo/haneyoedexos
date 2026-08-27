@@ -207,45 +207,36 @@ ul#main_shell_tabs > li.active {
     z-index: 2;
 }
 
-/* Small sci-fi triangle that enters fullscreen, tucked into the top-left
-   corner of the app-monitor tabs. It deliberately inherits the tab's
-   skewX(35deg) (no un-skew) so its top edge runs parallel to the
-   parallelogram's slanted top edge and it hugs the corner. */
-ul#main_shell_tabs > li#shell_tab3,
-ul#main_shell_tabs > li#shell_tab4 {
-    position: relative;
-}
-.appmonitor_fs_tab {
+/* Fullscreen control in the top-right corner of the GUI-app panel (the old
+   tab-label triangle stretched the tab, so it now floats over the app view).
+   The button is added by AppMonitorPanel._buildCornerControls. */
+.appmonitor_fs_corner {
     position: absolute;
-    top: 0;
-    left: 0;
-    width: 2vh;
-    height: 2vh;
+    top: 1vh;
+    right: 1vh;
+    width: 2.8vh;
+    height: 2.8vh;
     padding: 0;
     border: none;
-    background: transparent;
-    color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.85);
+    border-radius: 0.4vh;
+    background: rgba(5, 8, 13, 0.45);
+    color: rgba(var(--color_r), var(--color_g), var(--color_b), 0.9);
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    z-index: 2;
-    filter: drop-shadow(0 0 0.5vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.45));
-    transition: color .2s, filter .2s;
+    z-index: 3;
+    opacity: 0.65;
+    transition: opacity .2s, background .2s, color .2s;
 }
-.appmonitor_fs_tab:hover {
-    color: rgb(var(--color_r), var(--color_g), var(--color_b));
-    filter: drop-shadow(0 0 0.8vh rgba(var(--color_r), var(--color_g), var(--color_b), 0.8));
+.appmonitor_fs_corner svg {
+    width: 68%;
+    height: 68%;
 }
-.appmonitor_fs_tab svg {
-    width: 100%;
-    height: 100%;
-}
-/* The active tab is filled with the theme color, so the triangle must switch
-   to the dark label color to stay visible there. */
-ul#main_shell_tabs > li.active .appmonitor_fs_tab {
+.appmonitor_fs_corner:hover {
+    opacity: 1;
+    background: rgb(var(--color_r), var(--color_g), var(--color_b));
     color: var(--color_light_black);
-    filter: drop-shadow(0 0 0.5vh rgba(0, 0, 0, 0.4));
 }
 
 div#main_shell_innercontainer, div#main_shell_innercontainer pre {
