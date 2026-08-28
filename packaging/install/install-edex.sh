@@ -11,6 +11,18 @@ set -euo pipefail
 # section for the full WHY). This is the ONLY user-config deliverable.
 # ---------------------------------------------------------------------------
 rm -f /etc/edex-firstboot.done
+
+# Disable ALSA HDA power-save. On CX20753/4 laptops a 1s idle suspends the codec
+# (D3) and the DC jump produces a click/pop right after a sound finishes — seen
+# right after the boot welcome voice on the 2026-08-28 device. Persist the module
+# option here so every ISO re-flash ships the fix (same content as the live fix
+# applied to /etc/modprobe.d/99-edex-nopwrsave.conf).
+mkdir -p /etc/modprobe.d
+cat > /etc/modprobe.d/99-edex-nopwrsave.conf <<'EOF'
+# eDEX-OS: disable HDA power-save to stop the on/off click after sound playback
+options snd-hda-intel power_save=0 power_save_controller=N
+EOF
+
 cat > /usr/local/sbin/edex-firstboot.sh <<'FBEOF'
 #!/usr/bin/env bash
 # eDEX-OS first-boot user setup.
