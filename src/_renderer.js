@@ -700,8 +700,49 @@ function waitForFonts() {
 }
 
 // A proxy function used to add multithreading to systeminformation calls - see backend process manager @ _multithread.js
+//
+// Performance note: every `window.si.x()` used to fire its own IPC round-trip
+// plus a shell subprocess in the main process. Several modules poll the SAME
+// data on overlapping timers (processes() from toplist+cpuinfo+cyberPanel,
+// mem() from ramwatcher+cyberPanel, currentLoad() from cpuinfo+cyberPanel,
+// networkStats() from conninfo+cyberPanel, ...), so a long session spawned a
+// steady stream of redundant `ps`/`sysctl`/`lsof` calls — the dominant CPU cost
+// behind "越用越卡". This cache collapses those into one in-flight call + a
+// short TTL cache. The TTL for each key is tuned to stay <= its fastest
+// feeder's interval, so NO live chart loses a sample (CPU curve stays 500ms,
+// NET curve stays 1s). Animations are untouched — only the data plumbing is
+// deduplicated.
 function initSystemInformationProxy() {
     const { nanoid } = require("nanoid/non-secure");
+
+    // Per-method cache lifetime (ms). Methods not listed are not cached (only
+    // deduplicated while an identical call is already in flight).
+    const CACHE_TTL = {
+        cpu: 900,               // dynamic speed/speedMax readout (cpuinfo 1s)
+        cpuTemperature: 1900,   // 2s temperature readout
+        currentLoad: 450,       // feeds the CPU curve (500ms) — kept live
+        mem: 1400,              // ramwatcher 1.5s (shared with cyberPanel)
+        processes: 1900,        // toplist 2s (shared with cpuinfo/cyberPanel)
+        networkInterfaces: 1900,// netstat 2s
+        networkStats: 900,      // feeds the NET curve (1s) — kept live
+        battery: 30000,         // slow-changing (was 3s)
+        fsSize: 1900            // cyberPanel 2s + filesystem space bar
+    };
+
+    // `processes()` results are mutated in place by toplist (data.list.sort /
+    // .splice and per-item cpu/mem writes), so a cached/shared object MUST be
+    // cloned before serving to keep the cached copy pristine for later readers.
+    const CLONE_KEYS = new Set(["processes"]);
+    const cloneValue = v => {
+        try { return (typeof structuredClone === "function") ? structuredClone(v) : JSON.parse(JSON.stringify(v)); }
+        catch (e) { return v; }
+    };
+
+    const inflight = new Map(); // key -> Promise (dedup concurrent identical calls)
+    const cache = new Map();    // key -> { value, expires }
+    const cacheKey = (prop, args) =>
+        prop + "::" + args.map(a => (typeof a === "function" ? "fn" : String(a))).join("|");
+    const isHidden = () => (typeof document !== "undefined" && document.hidden);
 
     window.si = new Proxy({}, {
         apply: () => {throw new Error("Cannot use sysinfo proxy directly as a function")},
@@ -709,10 +750,42 @@ function initSystemInformationProxy() {
         get: (target, prop, receiver) => {
             return function(...args) {
                 let callback = (typeof args[args.length - 1] === "function") ? true : false;
+                let key = cacheKey(prop, args);
+                let ttl = CACHE_TTL[prop] || 0;
 
-                return new Promise((resolve, reject) => {
-                    let id = nanoid();
-                    ipc.once("systeminformation-reply-"+id, (e, res) => {
+                const resolveServed = value => {
+                    if (callback) args[args.length - 1](value);
+                    return Promise.resolve(value);
+                };
+
+                // Window occluded/hidden: serve the last known value and skip the
+                // subprocess entirely (cheap data poll like the animation gate).
+                let hit = cache.get(key);
+                if (hit && isHidden()) {
+                    return resolveServed(CLONE_KEYS.has(prop) ? cloneValue(hit.value) : hit.value);
+                }
+
+                // Still fresh within TTL.
+                if (hit && Date.now() < hit.expires) {
+                    return resolveServed(CLONE_KEYS.has(prop) ? cloneValue(hit.value) : hit.value);
+                }
+
+                // An identical call is already in flight — share its result.
+                if (inflight.has(key)) {
+                    return inflight.get(key).then(v =>
+                        resolveServed(CLONE_KEYS.has(prop) ? cloneValue(v) : v)
+                    );
+                }
+
+                let id = nanoid();
+                let p = new Promise((resolve, reject) => {
+                    ipc.once("systeminformation-reply-" + id, (e, res) => {
+                        inflight.delete(key);
+                        if (ttl > 0) {
+                            // Store a clone for mutating callers so the cached
+                            // copy is never corrupted by downstream sort/splice.
+                            cache.set(key, { value: CLONE_KEYS.has(prop) ? cloneValue(res) : res, expires: Date.now() + ttl });
+                        }
                         if (callback) {
                             args[args.length - 1](res);
                         }
@@ -720,6 +793,8 @@ function initSystemInformationProxy() {
                     });
                     ipc.send("systeminformation-call", prop, id, ...args);
                 });
+                inflight.set(key, p);
+                return p;
             };
         }
     });
@@ -1163,6 +1238,12 @@ async function initUI() {
         setInterval(() => battery.refresh(), 30000);
         // Refresh soon after (un)plug transitions too.
         setTimeout(() => battery.refresh(), 4000);
+        // AC plug/unplug arrives as an immediate powerMonitor event from the main
+        // process (instead of waiting up to 30s for the next poll) — refresh now
+        // so the plug-in/out voice + toast fire instantly. The 30s poll stays as
+        // the battery percentage fallback, and the existing transition state
+        // machine de-duplicates so no double sound is played.
+        ipc.on("pm:ac", () => { try { battery.refresh(); } catch (e) {} });
         window.battery = battery; // exposed so the settings save can re-run it
     }
 

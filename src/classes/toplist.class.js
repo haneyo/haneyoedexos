@@ -26,18 +26,9 @@ class Toplist {
         // Cover mode (lock / screensaver): show fabricated launch-systems
         // processes instead of the real process table.
         if (window.cover && window.cover.isActive()) {
-            const rows = window.cover.fakeProcesses();
-            document.querySelectorAll("#mod_toplist_table > tr").forEach(el => {
-                el.remove();
-            });
-            rows.forEach(proc => {
-                let el = document.createElement("tr");
-                el.innerHTML = `<td>${proc.pid}</td>
-                                <td><strong>${proc.name}</strong></td>
-                                <td>${proc.cpu}%</td>
-                                <td>${proc.mem}%</td>`;
-                document.getElementById("mod_toplist_table").append(el);
-            });
+            this._renderToplist(window.cover.fakeProcesses().map(p => ({
+                pid: p.pid, name: p.name, cpu: p.cpu + "%", mem: p.mem + "%"
+            })));
             this.currentlyUpdating = false;
             return;
         }
@@ -67,19 +58,35 @@ class Toplist {
                 return ((b.cpu-a.cpu)*100 + b.mem-a.mem);
             }).splice(0, 5);
 
-            document.querySelectorAll("#mod_toplist_table > tr").forEach(el => {
-                el.remove();
-            });
-            list.forEach(proc => {
-                let el = document.createElement("tr");
-                el.innerHTML = `<td>${proc.pid}</td>
-                                <td><strong>${proc.name}</strong></td>
-                                <td>${Math.round(proc.cpu*10)/10}%</td>
-                                <td>${Math.round(proc.mem*10)/10}%</td>`;
-                document.getElementById("mod_toplist_table").append(el);
-            });
+            this._renderToplist(list.map(p => ({
+                pid: p.pid, name: p.name,
+                cpu: Math.round(p.cpu * 10) / 10 + "%",
+                mem: Math.round(p.mem * 10) / 10 + "%"
+            })));
             this.currentlyUpdating = false;
         });
+    }
+
+    // Render the 4-column process table in one DOM pass (DocumentFragment +
+    // replaceChildren) instead of removing every <tr> and re-appending one by
+    // one. Values go through textContent, which also avoids re-parsing injected
+    // HTML from process names.
+    _renderToplist(rows) {
+        const table = document.getElementById("mod_toplist_table");
+        if (!table) return;
+        const frag = document.createDocumentFragment();
+        rows.forEach(p => {
+            const tr = document.createElement("tr");
+            const tdPid = document.createElement("td"); tdPid.textContent = p.pid;
+            const tdName = document.createElement("td");
+            const strong = document.createElement("strong"); strong.textContent = p.name;
+            tdName.append(strong);
+            const tdCpu = document.createElement("td"); tdCpu.textContent = p.cpu;
+            const tdMem = document.createElement("td"); tdMem.textContent = p.mem;
+            tr.append(tdPid, tdName, tdCpu, tdMem);
+            frag.append(tr);
+        });
+        table.replaceChildren(frag);
     }
 
     processList(){
@@ -196,22 +203,29 @@ class Toplist {
 
                 if (removed) clearInterval(updateInterval);
                 else {
-                    document.querySelectorAll("#processList > tr").forEach(el => {
-                        el.remove();
-                    });
-
+                    const tbody = document.getElementById("processList");
+                    const frag = document.createDocumentFragment();
                     list.forEach(proc => {
-                        let el = document.createElement("tr");
-                        el.innerHTML = `<td class="pid">${proc.pid}</td>
-                            <td class="name">${proc.name}</td>
-                            <td class="user">${proc.user}</td>
-                            <td class="cpu">${Math.round(proc.cpu * 10) / 10}%</td>
-                            <td class="mem">${Math.round(proc.mem * 10) / 10}%</td>
-                            <td class="state">${proc.state}</td>
-                            <td class="started">${proc.started}</td>
-                            <td class="runtime">${formatRuntime(proc.runtime)}</td>`;
-                        document.getElementById("processList").append(el);
+                        const tr = document.createElement("tr");
+                        const cells = [
+                            ["pid", proc.pid],
+                            ["name", proc.name],
+                            ["user", proc.user],
+                            ["cpu", Math.round(proc.cpu * 10) / 10 + "%"],
+                            ["mem", Math.round(proc.mem * 10) / 10 + "%"],
+                            ["state", proc.state],
+                            ["started", proc.started],
+                            ["runtime", formatRuntime(proc.runtime)]
+                        ];
+                        cells.forEach(([cls, val]) => {
+                            const td = document.createElement("td");
+                            td.className = cls;
+                            td.textContent = val;
+                            tr.append(td);
+                        });
+                        frag.append(tr);
                     });
+                    tbody.replaceChildren(frag);
                 }
             });
         }

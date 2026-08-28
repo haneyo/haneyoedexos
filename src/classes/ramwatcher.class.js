@@ -27,6 +27,10 @@ class RAMwatcher {
 
         this.points = Array.from(document.querySelectorAll("div.mod_ramwatcher_point"));
         this.shuffleArray(this.points);
+        // Mirrors the current class of each point in JS so the 1.5s refresh only
+        // touches the DOM for points that actually changed (avoiding 440 DOM
+        // attribute reads + string compares per tick).
+        this._pointState = this.points.map(() => "free");
 
         // Init updaters
         this.currentlyUpdating = false;
@@ -51,22 +55,19 @@ class RAMwatcher {
             let active = Math.round((440*data.active)/data.total);
             let available = Math.round((440*(data.available-data.free))/data.total);
 
-            // Update grid
-            this.points.slice(0, active).forEach(domPoint => {
-                if (domPoint.attributes.class.value !== "mod_ramwatcher_point active") {
-                    domPoint.setAttribute("class", "mod_ramwatcher_point active");
+            // Update grid — only write a point when its class actually changes
+            // (JS state compare instead of reading/writing the DOM attribute).
+            const applyState = (start, end, cls) => {
+                for (let i = start; i < end; i++) {
+                    if (this._pointState[i] !== cls) {
+                        this._pointState[i] = cls;
+                        this.points[i].className = "mod_ramwatcher_point " + cls;
+                    }
                 }
-            });
-            this.points.slice(active, active+available).forEach(domPoint => {
-                if (domPoint.attributes.class.value !== "mod_ramwatcher_point available") {
-                    domPoint.setAttribute("class", "mod_ramwatcher_point available");
-                }
-            });
-            this.points.slice(active+available, this.points.length).forEach(domPoint => {
-                if (domPoint.attributes.class.value !== "mod_ramwatcher_point free") {
-                    domPoint.setAttribute("class", "mod_ramwatcher_point free");
-                }
-            });
+            };
+            applyState(0, active, "active");
+            applyState(active, active + available, "available");
+            applyState(active + available, this.points.length, "free");
 
             // Update info text
             let totalGiB = Math.round((data.total/1073742000)*10)/10; // 1073742000 bytes = 1 Gibibyte (GiB), the *10 is to round to .1 decimal

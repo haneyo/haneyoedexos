@@ -16,8 +16,14 @@ class CyberPanel {
         this.parent = document.getElementById(opts.container);
         this._buildDOM();
 
-        // Theme color (RGB components) for canvas drawing
-        this._css = window.getComputedStyle(document.documentElement);
+        // Theme color (RGB components) for canvas drawing. Cached once up front
+        // (a theme switch reloads the renderer, so this re-runs) instead of being
+        // read via getComputedStyle().getPropertyValue() on every draw — that
+        // forced a style/layout recalculation dozens of times per frame inside
+        // the radar/waveform hot loop, the main source of per-frame jank.
+        this._tr = (window.theme && window.theme.r != null) ? window.theme.r : 0;
+        this._tg = (window.theme && window.theme.g != null) ? window.theme.g : 255;
+        this._tb = (window.theme && window.theme.b != null) ? window.theme.b : 255;
 
         // Radar state
         this.radar = document.getElementById("cyber_radar_canvas");
@@ -170,10 +176,7 @@ class CyberPanel {
 
     // Theme-aware rgba() helper for the canvas
     _themeColor(alpha) {
-        let r = this._css.getPropertyValue("--color_r").trim() || "0";
-        let g = this._css.getPropertyValue("--color_g").trim() || "255";
-        let b = this._css.getPropertyValue("--color_b").trim() || "255";
-        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        return `rgba(${this._tr}, ${this._tg}, ${this._tb}, ${alpha})`;
     }
 
     _resize() {
@@ -504,7 +507,15 @@ class CyberPanel {
         }
         // Keep the log area full (fits the box height)
         if (this._logQueue.length > 14) this._logQueue.splice(0, this._logQueue.length - 14);
-        this.logLines.innerHTML = this._logQueue.map(l => `<div class="cyber_log_line">${l}</div>`).join("");
+        // Rebuild in one DOM pass via textContent (no innerHTML re-parse).
+        const frag = document.createDocumentFragment();
+        this._logQueue.forEach(l => {
+            const div = document.createElement("div");
+            div.className = "cyber_log_line";
+            div.textContent = l;
+            frag.append(div);
+        });
+        this.logLines.replaceChildren(frag);
     }
 
     /* ------------------------------- Main loop ---------------------------- */

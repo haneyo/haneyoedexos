@@ -81,3 +81,4 @@ id_ed25519*
 *.swp
 # App runtime data (never commit a real settings.json with lockCode / apiKey)
 settings.json
+HANDOVER_LOCAL.md

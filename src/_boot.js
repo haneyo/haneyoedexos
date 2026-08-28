@@ -360,7 +360,15 @@ function createWindow(settings) {
     // render) appears already dark. A safety timer force-shows if the renderer
     // stalls before first paint, so a slow first boot never sits on black forever.
     const showWindow = () => {
-        if (win && !win.isDestroyed()) win.show();
+        if (win && !win.isDestroyed()) {
+            win.show();
+            // Take keyboard focus the instant the window appears. win.show()
+            // alone can leave the freshly-shown (fullscreen) window unfocused on
+            // Linux/openbox, so the boot lock's PIN field reads as "dead" until
+            // the WM hands focus over — the cause of the delayed first keystrokes.
+            win.focus();
+            win.moveTop();
+        }
     };
     win.once("ready-to-show", showWindow);
     setTimeout(showWindow, 4000);
@@ -2161,6 +2169,15 @@ function show(cls,msg){status.className=cls;status.textContent=msg}
                 win.focus();
                 if (win.webContents) win.webContents.focus();
             }
+        });
+        // AC plug/unplug: powerMonitor fires these immediately, unlike the
+        // renderer's 30s battery poll — forward them so the plug-in/out voice
+        // and toast play at once instead of up to half a minute later.
+        pm.on("on-ac", () => {
+            if (win && !win.isDestroyed()) win.webContents.send("pm:ac", "on");
+        });
+        pm.on("on-battery", () => {
+            if (win && !win.isDestroyed()) win.webContents.send("pm:ac", "off");
         });
     } catch (e) {}
 
