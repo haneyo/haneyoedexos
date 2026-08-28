@@ -1404,12 +1404,14 @@ const targets = [
   {
     name: 'ramwatcher.class.js (#12 MEMORY USING 超负荷红光闪烁)',
     path: ['classes', 'ramwatcher.class.js'],
-    expectIn: 'document.getElementById("mod_ramwatcher_info").innerText = `USING ${usedGiB} OUT OF ${totalGiB} GiB`',
+    expectIn: 'document.getElementById("mod_ramwatcher_info").innerText=`USING ${n} OUT OF ${i} GiB`',
     expectOut: '_m.classList.add("edex_overload")',
     // #12:内存占用 ≥90%(used/total)时 MEMORY 行文字红光闪烁(每 1.5s 刷新)。
+    // 注意:锚点匹配的是 prebuild-minify.js(terser)压缩后的 asar 内容 —— 源码
+    // ramwatcher 的变量 usedGiB/totalGiB 会被 mangle 成 n/i,且去掉空格。
     transform: c => c
-      .split('document.getElementById("mod_ramwatcher_info").innerText = `USING ${usedGiB} OUT OF ${totalGiB} GiB`')
-      .join('document.getElementById("mod_ramwatcher_info").innerText = `USING ${usedGiB} OUT OF ${totalGiB} GiB`,(()=>{try{var _m=document.getElementById("mod_ramwatcher_info");_m&&(totalGiB>0&&usedGiB/totalGiB>=.9?_m.classList.add("edex_overload"):_m.classList.remove("edex_overload"))}catch(_){}})()'),
+      .split('document.getElementById("mod_ramwatcher_info").innerText=`USING ${n} OUT OF ${i} GiB`')
+      .join('document.getElementById("mod_ramwatcher_info").innerText=`USING ${n} OUT OF ${i} GiB`,(()=>{try{var _m=document.getElementById("mod_ramwatcher_info");_m&&(i>0&&n/i>=.9?_m.classList.add("edex_overload"):_m.classList.remove("edex_overload"))}catch(_){}})()'),
   },
   {
     name: 'conninfo.class.js (#12 NETWORK UP/DOWN 高流量红光闪烁)',
