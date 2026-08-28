@@ -388,6 +388,24 @@ export XCURSOR_THEME=edex
 # this too once it maps, but doing it here covers the very first frames of X).
 xsetroot -cursor_name left_ptr 2>/dev/null || true
 openbox --replace >/dev/null 2>&1 &
+# Force keyboard focus onto the eDEX window the moment it maps. On some laptops
+# (e.g. the ThinkPad E580) the X input focus lags the first frame, so the first
+# keystrokes on the boot lock get dropped for a second or two — the user sees the
+# PIN box, types a digit, and nothing shows until focus catches up. openbox
+# focusNew=yes normally covers it, but this is a belt-and-braces grab that
+# activates eDEX by WM_CLASS as soon as it exists (same wmctrl technique as the
+# in-app fullscreen patch). Runs in a background subshell so the `exec` below
+# (which replaces this shell) does not kill it.
+(
+    for _ in $(seq 1 60); do
+        sleep 0.2
+        wid=$(wmctrl -l 2>/dev/null | awk '/eDEX-UI/{print $1; exit}')
+        if [ -n "$wid" ]; then
+            wmctrl -i -a "$wid" 2>/dev/null
+            break
+        fi
+    done
+) >/dev/null 2>&1 &
 # Kill Xorg's own screen blanking/DPMS. X ships a ~10-minute idle default that
 # physically blanks the display regardless of the app, so on real hardware the
 # panel would go dark before eDEX's configured screen-off timeout (and a wake
