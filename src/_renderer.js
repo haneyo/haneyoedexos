@@ -869,10 +869,19 @@ function displayLine() {
         // Real boot log finished. Instead of the old centre logo, roll the boot
         // passcode panel in from the bottom so it lands centre-screen and feels
         // like the last line of the log ("FACILITY NOMINAL").
-        // bootLockThenRun wires _onUnlocked (so a correct passcode runs initUI)
-        // and calls bootShow() (idempotent — only builds the panel once). No
-        // passcode configured → it falls through to run initUI directly.
-        setTimeout(() => bootLockThenRun(() => initUI()), 300);
+        // This mirrors the tail of the old displayTitleScreen path: run the same
+        // error/telemetry init, wait for fonts, remove the black boot_screen
+        // overlay, then wire _onUnlocked (so a correct passcode runs initUI) and
+        // call bootShow() (idempotent — only builds the panel once). No passcode
+        // configured → it falls through to run initUI directly.
+        initGraphicalErrorHandling();
+        initSystemInformationProxy();
+        waitForFonts().then(() => {
+            const bsc = document.getElementById("boot_screen");
+            if (bsc) bsc.remove();
+            window.audioManager.theme.play();
+            bootLockThenRun(() => initUI());
+        });
         return;
     }
 
