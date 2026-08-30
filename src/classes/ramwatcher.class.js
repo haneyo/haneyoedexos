@@ -72,8 +72,9 @@ class RAMwatcher {
             // Update info text
             let totalGiB = Math.round((data.total/1073742000)*10)/10; // 1073742000 bytes = 1 Gibibyte (GiB), the *10 is to round to .1 decimal
             let usedGiB = Math.round((data.active/1073742000)*10)/10;
-            // i/r 别名对齐 patch-appimage.sh 的 ramwatcher #12 锚点(模板字符串字面量含 ${i}/${r},
-            // terser 不改字面量,故压缩后仍精确匹配 expectIn)。
+            // 保留 i/r 别名:patch-appimage.sh 的 ramwatcher #12 锚点匹配的是 terser 压缩产物,
+            // 锚点是压缩后模板字符串里的 mangle 名(usedGiB→o、totalGiB→d)。删掉别名会打乱
+            // mangle 序列 → 压缩后 ${} 名变化 → 锚点失效。要动这里必须先重跑 minify 重新取锚点。
             const i = usedGiB, r = totalGiB;
             document.getElementById("mod_ramwatcher_info").innerText=`USING ${i} OUT OF ${r} GiB`;
 
