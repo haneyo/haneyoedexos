@@ -44,23 +44,71 @@ infrared grid ... 64 cells scanned, 0 returns
 LIDAR sweep @ 847 nm ... canopy density 62%, reflectance 91%
 sonar line scan ... 16 pings, no saturation
 seismic array ... 8 geophones calibrated, drift 0.02%
+atmospheric probe ... pressure 1013 mb, humidity 71%
+water gauge ... 3 stations reporting, flow nominal
+soil moisture mesh ... 24 cells, within tolerances
+wind vector ... heading 214, speed 6.2 m/s
+visibility ... 41 km, no obstruction
+air quality ... AQI 22, particulate low
+radiation survey ... 0.09 uSv/h, background normal
+biosignal panel ... nominal, all clear
 terrain normalisation ... elevation model + drainage deltas applied
 render warmup — relief rasterising 2 048 segments
 channel mesh: 96 control points, width profile lerp = on
 bank profile fitted — 6 riverbanks, roughness 0.034
 contour isolines regenerated at 10 m interval — 741 closed loops
 spillway table... 9 gates armed, no overflow
+sediment load ... 0.41 kg/s, bed load stable
+tidal datum ... mean sea level locked, offset 0.000
+river stage ... 2.31 m, within band
+culvert check ... 4 drains clear, no clog
+pump station ... 2 duty, 1 standby, pressure good
 riverside structures: reflow to drainage ... 6 units re-anchored
+levee integrity ... 7 sections, no seepage
+cable manholes ... 9 vaults inspected, 0 degraded
 cabling pull-down ... 7 clusters settled, tension stable
 power rail A ... 3 feeders healthy, phase 0 lag
 power rail B ... 2 feeders healthy, phase 0 lag
+generator bank ... 2 online, 1 standby, fuel 96%
+battery string ... 8 cells balanced, 12.4 V nominal
+solar array ... 5 strings, 62% max, no shading
+load profile ... 3.2 kW, below cap
+grid sync ... frequency 50.0 Hz, no drift
 uplink 26.4 — latency 18 ms, jitter 0.8 ms
+redundant link 27.1 — latency 21 ms, jitter 1.1 ms
+backhaul route ... primary + fallback, no flap
+packet loss ... 0.0% over last hour
+survey datum ... WGS-84, epoch 2025.4, sound
+grid convergence ... -1.6 deg, applied
+vertical datum ... ellipsoid, geoid sep 34 m
+photogrammetry ... 18 tie points, residual 0.4 px
+CORS base ... station 0x2A1, lock acquired
+telemetry backplane ... 3 frames, checksum ok
+field bus ... 2 branches, terminated
+datalogger ... 64 K buckets, free 91%
+repeater chain ... 5 hops, green
+lightning rod ... grounded, continuity ok
+surge clamp ... 3 units, nominal
+wireless mesh ... 6 nodes, rssi -63 dBm
+sat downlink ... 4 kbps steady
+geo net ... 142 epochs, RMS 0.9 cm
+tide predictor ... harmonic 7, set loaded
+weir flow ... 0.3 m3/s, within rating
+pressure line ... 8 taps, no leak
+thermo string ... 5 depths, gradient normal
+compass ... declination 4.2 W, corrected
+gyro ... drift 0.02 deg/h, aligned
+inclinometer ... 0.4 deg, stable
+anemometer ... 3 cups, RPM ok
+rain gauge ... 4 collector, empty
+stream gauge ... 2 sensors, concordant
 CLOCK sync — control grid + field telemetry + time ... GREEN
 com.eDEX.eDEXIntelCPUPowerManagementClient: ready
 rooting via boot-uuid from /chosen: F5670083-AC74-33D3-8361-AC1977EE4AA2
 Got boot device = IOService:/eDEXACPIPlatformExpert/PCI0@0/eDEXACPIPCI/SATA@1F,2/
 eDEX SSD TS128C Media/IOGUIDPartitionScheme/Customer@2
 BSD root: disk0s2, major 14, minor 2
+kernel mc config load ... 0x0238, sane
 Kernel is LP64
 MottIsAScrub::checkstatus - true, Mott::Scrub
 DSMOS has arrived
@@ -72,6 +120,10 @@ Created virtif 0xffffff800c32ee00 p2p0
 firmware page table ... 64 Kb mapped, checksum good
 nvram replay ... 12 keys loaded, 0 corrupt
 boot loader handshake ... GPT verified, fallback empty
+root volume journal ... replay complete, clean
+swap device ... attached, no errors
+page cache ... warmed, reclaim pressure low
+memory map ... 64 Gb addressed, no holes
 integrity_scan.cfg ... 0 anomalies on readback
 failover.ctl armed; failover.ctl latent — failover chain CLEAR
 mesh_topology.json converged in 3 rounds — 22 nodes, 0 flaps
@@ -80,6 +132,13 @@ coolant_pressure.dat ... 1.20 bar, within envelope
 antenna_array.cfg ... 4 elements phased, gain 6.2 dBi
 self_test.suite ... sensors 14/14, actuators 9/9, no faults
 redundancy_matrix.json ... single point of failure: NONE
+kernel module whitelist ... pass
+watchdog ... armed at 60 s, no bite
+clock discipline ... stratum 2, offset 0.0003 s
+time sync ... NTP jitter 0.9 ms, locked
+audit trail ... 0 shadow entries, clean
+keyring ... loaded, 2 keys present
+secrets vault ... sealed, no tamper
 deployment: current_deployment.cfg — sector 07 sheet, rigged
 roster ... 2 operators on-station, clearance DELTA
 duty_rotation.sched ... watch 1 standing, relief in 04:20:00
