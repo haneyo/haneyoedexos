@@ -7,10 +7,6 @@
 #    AppImage and uploads the finished ISO (+ sha256) as a workflow artifact.
 #    The ISO cannot be a Release asset: GitHub caps single assets at 2 GB and
 #    the ISO is ~4.9 GB, so it is delivered as a run artifact instead.
-#  - if the ALIYUN_OSS_* secrets are configured, the same ISO is also
-#    mirrored to Aliyun OSS (a fast, permanent link for mainland-China
-#    users). Without those secrets the step is skipped and GitHub-only
-#    delivery still works.
 #
 #   git tag v2.3.0 && git push origin v2.3.0
 #
@@ -151,58 +147,3 @@ jobs:
             eDEX-OS-${{ github.ref_name }}.iso.sha256
           if-no-files-found: error
 
-      # China mirror: push the ISO (+ sha256) to Aliyun OSS so mainland users
-      # get a fast, permanent link instead of a 90-day GitHub artifact. Both a
-      # per-version path and a stable `latest/` path are published; the latter
-      # backs the README download link. Skipped when the secrets are unset.
-      - name: Publish ISO to Aliyun OSS (China mirror)
-        env:
-          OSS_AK_ID: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_ID }}
-          OSS_AK_SECRET: ${{ secrets.ALIYUN_OSS_ACCESS_KEY_SECRET }}
-          OSS_ENDPOINT: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
-          OSS_REGION: ${{ secrets.ALIYUN_OSS_REGION }}
-          OSS_BUCKET: ${{ secrets.ALIYUN_OSS_BUCKET }}
-        run: |
-          set -euo pipefail
-          # `secrets` cannot be read in an `if:` condition (invalid workflow),
-          # so guard in shell instead: unset secrets are empty and just skip.
-          if [ -z "$OSS_AK_ID" ] || [ -z "$OSS_AK_SECRET" ] || \
-             [ -z "$OSS_ENDPOINT" ] || [ -z "$OSS_REGION" ] || [ -z "$OSS_BUCKET" ]; then
-            echo "ALIYUN_OSS_* secrets not configured — skipping China mirror."
-            exit 0
-          fi
-          TAG="${{ github.ref_name }}"
-          ISO="eDEX-OS-$TAG.iso"
-
-          echo "Installing ossutil 2.3.0 ..."
-          curl -fsSL -o /tmp/ossutil.zip https://gosspublic.alicdn.com/ossutil/v2/2.3.0/ossutil-2.3.0-linux-amd64.zip
-          unzip -o /tmp/ossutil.zip -d /tmp/ossutil >/dev/null
-          OSSUTIL=$(find /tmp/ossutil -type f -name ossutil | head -1)
-          chmod +x "$OSSUTIL"
-          "$OSSUTIL" version
-
-          # ossutil v2 flags only: `--version` is invalid (use `version`), and
-          # the v1 `--checkpoint-dir`/`--part-size` flags don't exist here — v2
-          # retries + multiparts automatically via the SDK. Keep AUTH only.
-          AUTH=(-e "$OSS_ENDPOINT" --region "$OSS_REGION" -i "$OSS_AK_ID" -k "$OSS_AK_SECRET")
-
-          # `-f`: ossutil v2's cp prompts "overwrite ... (y or N)?" when the
-          # target already exists. In CI there is no TTY, so the prompt reads
-          # EOF = "no" and the copy is silently SKIPPED while still exiting 0
-          # ("Upload done: 0 objects") — `set -euo pipefail` cannot catch it.
-          # That is how `latest/` stopped updating after its first upload
-          # (v2.2.9) while per-version paths (always new keys) kept working.
-          # -f forces the overwrite without asking.
-          echo "Uploading $ISO (per-version path) ..."
-          "$OSSUTIL" cp -f "$ISO" "oss://$OSS_BUCKET/edex-os/$TAG/" "${AUTH[@]}"
-          "$OSSUTIL" cp -f "$ISO.sha256" "oss://$OSS_BUCKET/edex-os/$TAG/" "${AUTH[@]}"
-
-          echo "Copying to stable 'latest' path ..."
-          "$OSSUTIL" cp -f "$ISO" "oss://$OSS_BUCKET/edex-os/latest/eDEX-OS-latest.iso" "${AUTH[@]}"
-          "$OSSUTIL" cp -f "$ISO.sha256" "oss://$OSS_BUCKET/edex-os/latest/eDEX-OS-latest.iso.sha256" "${AUTH[@]}"
-
-          # Log only the object paths — never the full public URL (bucket +
-          # endpoint would let anyone reconstruct the download link).
-          echo "China mirror upload complete:"
-          echo "  per-version:  edex-os/$TAG/eDEX-OS-$TAG.iso (+ .sha256)"
-          echo "  latest:       edex-os/latest/eDEX-OS-latest.iso (+ .sha256)"
