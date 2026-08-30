@@ -63,20 +63,6 @@ npm start
 
 > Without a real Linux box nearby, tabs 4/5 automatically fall back to a built-in **mock backend** (pure-code rendered frames) so the whole pipeline is demo-able with no X server.
 
-## 📦 Building
-
-```bash
-# Build the Linux x64 AppImage
-npm install
-npm run prebuild-linux
-./node_modules/.bin/electron-builder build -l --x64
-
-# Build the installable eDEX-OS ISO
-#   Option 1: trigger "Build eDEX-OS ISO" manually in GitHub Actions
-#   Option 2: on an Ubuntu 24.04 machine
-bash packaging/build-iso-local.sh
-```
-
 ## ⬇️ Downloads
 
 The installable ISO is ~4.9 GB. Grab the `eDEX-OS-ISO` artifact (ISO + `.iso.sha256`) from the [release run](https://github.com/haneyo/haneyoedexos/actions/workflows/release.yml) for the version you want. Works everywhere, though GitHub Actions downloads can be slow in mainland China; artifacts expire after 90 days.
@@ -89,7 +75,7 @@ sha256sum -c eDEX-OS-<version>.iso.sha256
 
 ## 💽 Installing on a laptop
 
-1. Grab the ISO from the [Downloads](#-downloads) section above, or build locally with `build-iso-local.sh`.
+1. Download the ISO from the [Downloads](#-downloads) section above.
 2. Flash a USB stick: `dd if=eDEX-OS-*.iso of=/dev/sdX bs=4M status=progress` (or balenaEtcher / Rufus).
 3. Boot the laptop from USB and run through the Ubuntu-style installer (pick language / partition / create a user — everything else is automated).
 4. Reboot → **auto-login straight into fullscreen eDEX**.
@@ -104,7 +90,7 @@ src/                    # eDEX-UI frontend + Electron main process
   classes/              # UI modules (incl. appmonitorPanel / webapps / miniAudio ...)
 packaging/              # Distro packaging (autoinstall / install scripts / ISO build)
 scripts/                # Helper scripts (e.g. app-monitor dependencies)
-.github/workflows/      # CI (build AppImage / build eDEX-OS ISO)
+.github/workflows/      # CI (release AppImage + ISO)
 ```
 
 ## 📄 License & credits
