@@ -955,6 +955,44 @@ app.on('ready', async () => {
             (err, stdout, stderr) => resolve(err ? { ok: false, error: (stderr || err.message).trim() } : { ok: true }));
     }));
 
+    // Cyber panel HUD probe: real active connection count + WiFi signal, read
+    // straight from /proc (fs.readFileSync — no subprocess). The cyber panel
+    // polls this every ~3s. Linux-only; other platforms return a no-op.
+    ipc.handle("net:hud", () => {
+        if (process.platform !== "linux") return { conns: 0, wifiPct: null };
+
+        // Active connections: TCP ESTABLISHED (st=01) + open UDP sockets (st=07).
+        let conns = 0;
+        try {
+            for (const f of ["/proc/net/tcp", "/proc/net/tcp6", "/proc/net/udp", "/proc/net/udp6"]) {
+                const lines = fs.readFileSync(f, "utf8").split("\n");
+                for (let i = 1; i < lines.length; i++) { // skip header
+                    const col = lines[i].trim().split(/\s+/);
+                    if (col.length < 4) continue;
+                    if (col[3] === "01" || col[3] === "07") conns++;
+                }
+            }
+        } catch (e) {}
+
+        // WiFi signal % from /proc/net/wireless (line 3+, the "level" field is
+        // already dBm). null when the file is absent (wired/no-wifi).
+        let wifiPct = null;
+        try {
+            const lines = fs.readFileSync("/proc/net/wireless", "utf8").split("\n");
+            for (const line of lines.slice(2)) {
+                const col = line.trim().split(/\s+/);
+                if (col.length < 4) continue;
+                const dbm = parseInt(col[3], 10);
+                if (!isNaN(dbm)) {
+                    wifiPct = Math.max(0, Math.min(100, Math.round(100 - (Math.abs(dbm) - 50) * 2)));
+                    break; // first (usually only) interface
+                }
+            }
+        } catch (e) {}
+
+        return { conns, wifiPct };
+    });
+
     // Let the renderer open the WiFi panel (floating button / hotkey).
     ipc.on("open-wifi-panel", () => { if (win && !win.isDestroyed()) win.webContents.send("open-wifi-panel"); });
 

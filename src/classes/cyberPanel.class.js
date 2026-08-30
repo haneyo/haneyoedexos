@@ -36,16 +36,16 @@ class CyberPanel {
         this.radarAngle = 0;
         this.radarPulses = [];   // { r, maxR, alpha, speed }
         this.radarBlips = [];    // { x, y, angle, dist, r, alpha }
-        this._pulseTimer = null;
         this._pulseCount = 0;
+        // Real telemetry readouts (honest labels, every value a real measurement).
         this._radarData = {
-            azm: document.getElementById("cyber_radar_azm"),
-            rng: document.getElementById("cyber_radar_rng"),
-            contacts: document.getElementById("cyber_radar_contacts"),
-            signal: document.getElementById("cyber_radar_signal"),
-            freq: document.getElementById("cyber_radar_freq"),
+            io: document.getElementById("cyber_radar_io"),
+            conn: document.getElementById("cyber_radar_conn"),
+            wifi: document.getElementById("cyber_radar_wifi"),
+            clk: document.getElementById("cyber_radar_clk"),
             load: document.getElementById("cyber_radar_load"),
-            pulses: document.getElementById("cyber_radar_pulses"),
+            temp: document.getElementById("cyber_radar_temp"),
+            events: document.getElementById("cyber_radar_events"),
             threat: document.getElementById("cyber_radar_threat")
         };
 
@@ -61,11 +61,25 @@ class CyberPanel {
         this.metrics = {cpu: 0, mem: 0, dsk: 0, net: 0};
         this._lastCPU = 0;
 
-        // Log (multi-line, fast code-like stream)
+        // Real telemetry state (fed by the si proxy cache + the net:hud IPC).
+        // All fields are initialized here so _genLogLine() can run before the
+        // first poll without throwing.
+        this._conns = 0;              // active TCP/UDP connection count (net:hud)
+        this._wifiPct = null;         // 0-100, null = wired / no wifi → show --
+        this._lastDskOverload = false;// rising edge: heavy disk burst → pulse
+        this._lastNetBurst = 0;       // rising edge: network burst → pulse
+        this.cpuTemp = null;          // CPU temp °C, null = unavailable
+        this.netRxMbps = 0;           // [NET] log line (split from this.netMbps)
+        this.netTxMbps = 0;
+        this.swapPct = 0;             // [MEM]/[SYS] log line
+        this._topProc = null;         // { name, cpu, mem } — [PROC] log line
+        this._battery = null;         // { pct, charging } or null
+
+        // Log (multi-line, code-like stream — every line is now real data)
         this.logLines = document.getElementById("cyber_log_lines");
-        this._logQueue = ["[SYS] boot sequence ok · kernel 2.2.8 · modules 14",
-            "[NET] uplink secured · handshake ack · latency 12ms",
-            "[CORE] radar sweep nominal · 3 contacts tracked"];
+        this._logQueue = ["[SYS] init ok",
+            "[NET] link up",
+            "[RDR] radar ready"];
 
         this._resize();
         window.addEventListener("resize", () => this._resize());
@@ -84,8 +98,10 @@ class CyberPanel {
         // responsive without a second 500ms process list query.
         setInterval(() => this._sampleDiskIO(), 1000);
         setInterval(() => this._appendLog(), 1200); // code-like stream (throttled 3x for CPU, #92)
-        setInterval(() => this._spawnBlip(), 2200);
-        this._schedulePulse(4000);
+        // Real HUD probe (connection count + wifi signal) via the net:hud IPC.
+        // Runs immediately so the panel isn't empty at boot, then every 3s.
+        this._pollHUD();
+        setInterval(() => this._pollHUD(), 3000);
 
         // Animation loop
         // #92: cap at 10fps (the radar only completes one sweep every ~9s, so
@@ -154,13 +170,13 @@ class CyberPanel {
         radar.innerHTML = `<div id="cyber_radar_canvas_wrap"><canvas id="cyber_radar_canvas"></canvas></div>
             <div id="cyber_radar_data">
                 <div class="cyber_radar_data_label">TELEMETRY</div>
-                <div class="cyber_radar_stat"><span>AZM</span><b id="cyber_radar_azm">000°</b></div>
-                <div class="cyber_radar_stat"><span>RNG</span><b id="cyber_radar_rng">--</b></div>
-                <div class="cyber_radar_stat"><span>CONTACTS</span><b id="cyber_radar_contacts">0</b></div>
-                <div class="cyber_radar_stat"><span>SIGNAL</span><b id="cyber_radar_signal">--%</b></div>
-                <div class="cyber_radar_stat"><span>FREQ</span><b id="cyber_radar_freq">--</b></div>
+                <div class="cyber_radar_stat"><span>IO</span><b id="cyber_radar_io">0.0</b></div>
+                <div class="cyber_radar_stat"><span>CONN</span><b id="cyber_radar_conn">0</b></div>
+                <div class="cyber_radar_stat"><span>WIFI</span><b id="cyber_radar_wifi">--</b></div>
+                <div class="cyber_radar_stat"><span>CLK</span><b id="cyber_radar_clk">--</b></div>
                 <div class="cyber_radar_stat"><span>LOAD</span><b id="cyber_radar_load">--%</b></div>
-                <div class="cyber_radar_stat"><span>PULSES</span><b id="cyber_radar_pulses">0</b></div>
+                <div class="cyber_radar_stat"><span>TEMP</span><b id="cyber_radar_temp">--°C</b></div>
+                <div class="cyber_radar_stat"><span>EVENTS</span><b id="cyber_radar_events">0</b></div>
                 <div class="cyber_radar_stat"><span>THREAT</span><b id="cyber_radar_threat">LOW</b></div>
             </div>`;
         // The radar is a sibling of #cyber_panel (appended to <body>), so the
@@ -227,27 +243,39 @@ class CyberPanel {
         this._pulseCount++;
     }
 
-    _schedulePulse(delay) {
-        clearTimeout(this._pulseTimer);
-        this._pulseTimer = setTimeout(() => {
-            this.pulse();
-            this._schedulePulse(5000 + Math.random() * 5000);
-        }, delay);
-    }
-
-    _spawnBlip() {
+    // Reconcile the radar "contacts" to the REAL active connection count
+    // (capped at 24 for rendering). Positions stay random/aesthetic — only the
+    // count is honest: blips appear as connections open, vanish as they close.
+    _syncBlips() {
         let size = this._radarSize;
         if (!size) return;
-        let angle = Math.random() * Math.PI * 2;
-        let dist = (0.15 + Math.random() * 0.6) * size * 0.42;
-        this.radarBlips.push({
-            x: size / 2 + Math.cos(angle) * dist,
-            y: size / 2 + Math.sin(angle) * dist,
-            angle,
-            r: 1.2 + Math.random() * 1.8,
-            alpha: 0
-        });
-        if (this.radarBlips.length > 24) this.radarBlips.shift();
+        const target = Math.min(this._conns, 24);
+        while (this.radarBlips.length < target) {
+            let angle = Math.random() * Math.PI * 2;
+            let dist = (0.15 + Math.random() * 0.6) * size * 0.42;
+            this.radarBlips.push({
+                x: size / 2 + Math.cos(angle) * dist,
+                y: size / 2 + Math.sin(angle) * dist,
+                angle,
+                r: 1.2 + Math.random() * 1.8,
+                alpha: 0
+            });
+        }
+        if (this.radarBlips.length > target) this.radarBlips.splice(target);
+    }
+
+    // Poll the real HUD probe (net:hud IPC): active connection count + wifi
+    // signal. A rising connection count is a REAL event → radar pulse.
+    async _pollHUD() {
+        try {
+            const r = await require("electron").ipcRenderer.invoke("net:hud");
+            if (r && typeof r.conns === "number") {
+                if (r.conns > this._conns) this.pulse();
+                this._conns = r.conns;
+                this._syncBlips();
+            }
+            if (r && "wifiPct" in r) this._wifiPct = r.wifiPct;
+        } catch (e) { /* keep previous values */ }
     }
 
     _drawRadar() {
@@ -422,6 +450,10 @@ class CyberPanel {
             this._dskScale = Math.max(5, Math.max(total, this._dskScale * 0.985));
 
             this._dskOverload = total >= DSK_OVERLOAD_MB;
+            // Real event: heavy disk burst (rising edge — pulses once per burst,
+            // not every second of a sustained copy).
+            if (this._dskOverload && !this._lastDskOverload) this.pulse();
+            this._lastDskOverload = this._dskOverload;
         } catch (e) { /* keep previous values */ }
     }
 
@@ -432,12 +464,14 @@ class CyberPanel {
             let res = await Promise.all([
                 window.si.currentLoad(),
                 window.si.mem(),
-                window.si.fsSize()
+                window.si.fsSize(),
+                window.si.cpuTemperature() // cached 1900ms (cpuinfo keeps it warm) → free
             ]);
             this.metrics.cpu = res[0].avgLoad;
             this.memUsed = res[1].used;
             this.memTotal = res[1].total;
             this.metrics.mem = (this.memUsed / this.memTotal) * 100;
+            this.cpuTemp = (res[3] && res[3].max) ? res[3].max : null;
             let root = res[2].find(f => f.mount === "/") || res[2][0];
             if (root && root.size > 0) {
                 this.metrics.dsk = (root.used / root.size) * 100;
@@ -459,11 +493,23 @@ class CyberPanel {
             if (window.mods && window.mods.netstat && window.mods.netstat.iface) {
                 let ns = await window.si.networkStats(window.mods.netstat.iface);
                 if (ns && ns[0]) {
-                    this.netMbps = (ns[0].tx_sec + ns[0].rx_sec) / 125000;
+                    this.netRxMbps = (ns[0].rx_sec || 0) / 125000;
+                    this.netTxMbps = (ns[0].tx_sec || 0) / 125000;
+                    this.netMbps = this.netRxMbps + this.netTxMbps;
                     this.metrics.net = Math.min(100, this.netMbps);
                 }
             }
         } catch (e) { /* no network */ }
+
+        // Battery — slow-changing, 30s-throttled. si.battery() is cached 30s and
+        // kept warm by sysinfo's 3s poll, so this adds no new subprocess.
+        try {
+            if (!this._battTick || Date.now() - this._battTick > 30000) {
+                this._battTick = Date.now();
+                let b = await window.si.battery();
+                this._battery = (b && b.hasBattery) ? { pct: Math.round(b.percent), charging: b.isCharging } : null;
+            }
+        } catch (e) { /* no battery */ }
 
         // Update DOM bars - percentage + a concrete value
         this._setBar("cpu", this.metrics.cpu, this.cpuSpeed ? this.cpuSpeed.toFixed(1) + "G" : "--");
@@ -471,11 +517,15 @@ class CyberPanel {
         this._setBar("dsk", this.metrics.dsk, `${(this.dskUsed / 1e9).toFixed(0)}G/${(this.dskSize / 1e9).toFixed(0)}G`);
         this._setBar("net", this.metrics.net, (this.netMbps || 0).toFixed(1) + "M");
 
-        // Pulse when the system load spikes (simulates a "task / AI response")
+        // Pulse on real CPU load spikes
         if (this.metrics.cpu - this._lastCPU > 14 && this.metrics.cpu > 30) {
             this.pulse();
         }
         this._lastCPU = this.metrics.cpu;
+
+        // Pulse on a network burst (rising edge above 15 Mbps)
+        if (this.netMbps > 15 && this._lastNetBurst <= 15) this.pulse();
+        this._lastNetBurst = this.netMbps;
     }
 
     _setBar(key, value, detail) {
@@ -506,30 +556,42 @@ class CyberPanel {
             this._extraTick = Date.now();
             try {
                 let [mem, procs] = await Promise.all([window.si.mem(), window.si.processes()]);
-                let swapPct = mem.swaptotal > 0 ? (mem.swapused / mem.swaptotal) * 100 : 0;
-                if (x.swap) x.swap.innerText = Math.round(swapPct) + "%";
+                this.swapPct = mem.swaptotal > 0 ? (mem.swapused / mem.swaptotal) * 100 : 0;
+                if (x.swap) x.swap.innerText = Math.round(this.swapPct) + "%";
                 if (x.procs) x.procs.innerText = procs.all;
+                // Top process by CPU (for the [PROC] log line). The si proxy
+                // clones `processes` before sharing, so sorting is safe.
+                if (procs.list && procs.list.length) {
+                    let list = procs.list.sort((a, b) => (b.cpu - a.cpu) * 100 + b.mem - a.mem);
+                    let t = list[0];
+                    this._topProc = { name: t.name, cpu: t.cpu, mem: t.mem };
+                } else {
+                    this._topProc = null;
+                }
             } catch (e) { /* keep previous values */ }
         }
     }
 
-    // Generate a dense, code-like log line (long enough to fill the log width)
+    // Generate a real, code-like log line. Pure sync — reads only this.* fields
+    // (fed by the si proxy cache + the net:hud IPC), so no extra system probes.
+    // Values sit near the left: .cyber_log_line is nowrap/ellipsis, so the right
+    // edge gets truncated.
     _genLogLine() {
-        const stamps = ["OK", "RX", "TX", "SYNC", "SCAN", "ACK", "READ", "WRITE", "INIT", "LOAD", "CACHE", "POLL", "DEC", "ENC"];
-        const comps = ["sys.mem", "net.link", "io.dev", "core.radar", "pxl.grid", "audio.fx", "fs.cache", "proc.mgr", "enc.layer", "vtx.array", "drv.i2c", "sec.auth", "dsp.core", "vfs.node"];
-        const hex = () => "0x" + Math.floor(Math.random() * 0xFFFF).toString(16).toUpperCase().padStart(4, "0");
-        const n = max => Math.floor(Math.random() * max);
         const t = new Date();
         const stamp = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}:${String(t.getSeconds()).padStart(2, "0")}`;
-        const s = stamps[Math.floor(Math.random() * stamps.length)];
-        const c = comps[Math.floor(Math.random() * comps.length)];
+        const last = this._dskHist[this._dskHist.length - 1];
+        const io = last ? (last.r + last.w).toFixed(1) : "0.0";
+        const m = this.metrics;
+        const top = this._topProc;
+        const bat = this._battery;
         const patterns = [
-            `[${stamp}] ${s} ${hex()} ${1 + n(512)}B ${c} seg=${hex()} off=${hex()} t=${(Math.random() * 3).toFixed(2)}ms rt=${n(90)}ms dma=ok`,
-            `[${stamp}] >> ${hex()} ${c}.write n=${n(100)} err=${Math.random() < 0.08 ? 1 : 0} buf=${hex()}${hex()} win=${n(64000)} rto=${200 + n(40)}`,
-            `[${stamp}] ${s} ${c} peer=10.0.${n(255)}.${n(255)}:${1000 + n(9000)} buf=${hex()} ack=${hex()} seq=${String(n(9999)).padStart(4, "0")}`,
-            `[${stamp}] <${s}> ${c} idx=${hex()} cpu=${n(100)}% mem=${n(100)}% lat=${(Math.random() * 50).toFixed(1)}ms crc=${hex()}`,
-            `[${stamp}] .. ${c} chunk seq=${String(n(9999)).padStart(4, "0")} sz=${n(4000)}B mode=burst fill=${n(100)}% bank=${hex()}`,
-            `[${stamp}] ${s} ${c} hw=${hex()} ver=${n(9)}.${n(9)}.${n(9)} temp=${20 + n(40)}C vdd=${(3.1 + Math.random()).toFixed(2)}V stat=nominal`
+            `[${stamp}] [SYS] cpu=${Math.round(m.cpu)}% load=${require("os").loadavg()[0].toFixed(2)} temp=${this.cpuTemp != null ? Math.round(this.cpuTemp) + "C" : "--"} clk=${this.cpuSpeed ? this.cpuSpeed.toFixed(2) + "G" : "--"}`,
+            `[${stamp}] [MEM] used=${((this.memUsed || 0) / 1e9).toFixed(1)}G size=${((this.memTotal || 0) / 1e9).toFixed(0)}G swap=${Math.round(this.swapPct)}%`,
+            `[${stamp}] [DSK] / ${Math.round(m.dsk)}% io=${io}MB/s`,
+            `[${stamp}] [NET] rx=${this.netRxMbps.toFixed(1)} tx=${this.netTxMbps.toFixed(1)} Mbps conn=${this._conns}`,
+            `[${stamp}] [WIFI] sig=${this._wifiPct == null ? "--" : Math.round(this._wifiPct)}%`,
+            `[${stamp}] [PROC] ${top ? top.name.slice(0, 10) : "--"} cpu=${top ? top.cpu.toFixed(1) : "0"}% mem=${top ? top.mem.toFixed(1) : "0"}%`,
+            `[${stamp}] [BAT] ${bat ? bat.pct + "% " + (bat.charging ? "chg" : "bat") : "--"}`
         ];
         return patterns[Math.floor(Math.random() * patterns.length)];
     }
@@ -573,39 +635,41 @@ class CyberPanel {
             this._drawWaveform();
         }
 
-        // Refresh the radar telemetry column ~5x/sec with live, animated values
+        // Refresh the radar telemetry column ~5x/sec with REAL live values
         if (!this._dataTick || now - this._dataTick > 200) {
             this._dataTick = now;
             let d = this._radarData;
 
-            // Azimuth - follows the rotating sweep beam (always moving)
-            let azm = Math.round(this.radarAngle * 180 / Math.PI) % 360;
-            if (d.azm) d.azm.innerText = String(azm).padStart(3, "0") + "°";
+            // IO — total disk read+write MB/s (newest fsStats sample)
+            let last = this._dskHist[this._dskHist.length - 1];
+            if (d.io) d.io.innerText = last ? (last.r + last.w).toFixed(1) : "0.0";
 
-            // Range - oscillates, spikes when a pulse wave is expanding
-            this._rng = 40 + Math.round(38 * (0.5 + 0.5 * Math.sin(now / 8000))) + (this.radarPulses.length > 0 ? 14 : 0);
-            if (d.rng) d.rng.innerText = this._rng;
+            // CONN — real active TCP/UDP connection count (uncapped here; the
+            // radar blips are the capped view)
+            if (d.conn) d.conn.innerText = String(this._conns);
 
-            // Contacts - live blip count
-            if (d.contacts) d.contacts.innerText = String(this.radarBlips.length).padStart(2, "0");
+            // WIFI — real signal %; "--" on wired/no-wifi (never a fake value)
+            if (d.wifi) d.wifi.innerText = this._wifiPct == null ? "--" : Math.round(this._wifiPct) + "%";
 
-            // Signal strength - smooth oscillation
-            if (d.signal) d.signal.innerText = Math.round(55 + 42 * (0.5 + 0.5 * Math.sin(now / 1500 + 2))) + "%";
+            // CLK — CPU clock GHz (real, refreshed ~15s)
+            if (d.clk) d.clk.innerText = this.cpuSpeed ? this.cpuSpeed.toFixed(2) + "G" : "--";
 
-            // Frequency - wobbles around the carrier
-            if (d.freq) d.freq.innerText = (9.2 + Math.sin(now / 6000) * 0.5).toFixed(2) + "G";
-
-            // System load - real CPU metric
+            // LOAD — real CPU %
             if (d.load) d.load.innerText = Math.round(this.metrics.cpu) + "%";
 
-            // Pulses - cumulative
-            if (d.pulses) d.pulses.innerText = String(this._pulseCount).padStart(3, "0");
+            // TEMP — real CPU temp, "--°C" when unavailable
+            if (d.temp) d.temp.innerText = this.cpuTemp != null ? Math.round(this.cpuTemp) + "°C" : "--°C";
 
-            // Threat level - shifts with contacts / pulses
+            // EVENTS — cumulative count of REAL pulse triggers
+            if (d.events) d.events.innerText = String(this._pulseCount);
+
+            // THREAT — derived from real thresholds
             let threat = "LOW";
-            if (this.radarBlips.length > 12 || this._pulseCount % 5 === 0) threat = "MED";
-            if (this.radarBlips.length > 20 || this._pulseCount % 11 === 0) threat = "HIGH";
+            if (this.metrics.cpu > 80 || this.metrics.mem > 85 || this._dskOverload) threat = "HIGH";
+            else if (this.metrics.cpu > 50 || this.metrics.mem > 50) threat = "MED";
             if (d.threat) d.threat.innerText = threat;
+
+            this._syncBlips(); // cheap reconcile — no-op when the count matches
         }
     }
 }
