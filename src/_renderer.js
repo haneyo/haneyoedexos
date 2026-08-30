@@ -873,19 +873,16 @@ function displayLine() {
         case i === 42:
             setTimeout(displayLine, 300);
             break;
-        case i > 42 && i < 82:
+        case i > 42:
+            // Keep every line after the intro at the same 25 ms cadence, so a
+            // longer boot log scrolls at the same speed as before (no later-
+            // line speed-up). The boot log is now intentionally long to cover
+            // the passcode-input style recalc; a constant per-line cadence keeps
+            // the visual rhythm unchanged while the animation runs longer.
             setTimeout(displayLine, 25);
-            break;
-        case i === 83:
-            if (isArchUser())
-                bootScreen.innerHTML += "btw i use arch<br/>";
-            setTimeout(displayLine, 25);
-            break;
-        case i >= log.length-2 && i < log.length:
-            setTimeout(displayLine, 300);
             break;
         default:
-            setTimeout(displayLine, Math.pow(1 - (i/1000), 3)*25);
+            setTimeout(displayLine, 25);
     }
 }
 
