@@ -1,33 +1,33 @@
-ENDFIELD-OS KERNEL 7.20 — RIVER OPS
-initializing tactical information grid ...
-mounting survey metatable: sector 07 / mountain & river 1:50 000
+EDEX-OS 7.20 — TERMINAL CONTROL
+initialising control interface ...
+mounting survey metatable: sector 07 / topographic 1:50 000
 loading terrain lattice [1920 x 1080] — contour mesh OK ... 84 288 nodes fused
-WAVELENGTH SYNC / DRIFT: 0.0003 — signal locked, uplink nominal
-handshake: TALOS-II ⟷ surface relay 0x3F2A ... AUTH OK
+WAVELENGTH SYNC / DRIFT: 0.0003 — carrier locked, uplink nominal
+handshake: MAINFRAME ⟷ field relay 0x3F2A ... AUTH OK
 coordinate bundle "coordinates.bin" validated — 6/6 keys matched
-priority matrix: [reentry_schedule.dat] decrypt-in ... cipher suite IV/XTEA
-strike_order.seq: 0 tasks queued — no hostile contact on this grid
-cold-start sensor array ... 12 thermals online, 3 in standby
-LIDAR sweep @ 847 nm ... canopy density 62%, river reflectance 91%
-terrain normalization ... elev model + hydrography deltas applied
-flow-shader warmup — river ribbon rasterizing 2 048 segments
-deepward channel mesh: 96 control points, width profile lerp = on
+priority table: [schedule.dat] decrypt-in ... cipher suite IV/XTEA
+task queue: 0 items pending — no external requests on this sector
+cold-start sensor array ... 12 channels online, 3 in standby
+LIDAR sweep @ 847 nm ... canopy density 62%, reflectance 91%
+terrain normalisation ... elevation model + drainage deltas applied
+render warmup — relief rasterising 2 048 segments
+channel mesh: 96 control points, width profile lerp = on
 contour isolines regenerated at 10 m interval — 741 closed loops
-bank buildings: reflow to hydrography ... 6 structures re-anchored
-wire lattice pull-down ... 7 clusters settled, tension stable
-sat-com link 26.4 — latency 18 ms, jitter 0.8 ms
-HELM sync — OPS grid + field telemetry + clock ... GREEN
+riverside structures: reflow to drainage ... 6 units re-anchored
+cabling pull-down ... 7 clusters settled, tension stable
+uplink 26.4 — latency 18 ms, jitter 0.8 ms
+CLOCK sync — control grid + field telemetry + time ... GREEN
 integrity_scan.cfg ... 0 anomalies on readback
 failover.ctl armed; failover.ctl latent — failover chain CLEAR
 mesh_topology.json converged in 3 rounds — 22 nodes, 0 flaps
 power_distribution.map ... bus 2A nominal, cells balanced
 coolant_pressure.dat ... 1.20 bar, within envelope
-uplink_antennas.cfg ... 4 array elements phased, gain 6.2 dBi
+antenna_array.cfg ... 4 elements phased, gain 6.2 dBi
 self_test.suite ... sensors 14/14, actuators 9/9, no faults
 redundancy_matrix.json ... single point of failure: NONE
-deployment: current_deployment.cfg — sector 07 river sheet, rig it
-roster.enc ... 2 operators on-station, clearance DELTA
+deployment: current_deployment.cfg — sector 07 sheet, rigged
+roster ... 2 operators on-station, clearance DELTA
 duty_rotation.sched ... watch 1 standing, relief in 04:20:00
-clearance_matrix.json ... launch device passcode armed
+access_control.json ... launch device passcode armed
 incident_reports.log ... tail clean, last entry +00:00
-WELCOME TO RIVER OPS — ALL SYSTEMS NOMINAL
+EDEX TERMINAL CONTROL — FACILITY NOMINAL

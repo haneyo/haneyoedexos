@@ -842,6 +842,9 @@ if (window.settings.nointro || window.settings.nointroOverride) {
     // no boot animation — lock before initUI reveals anything
     bootLockThenRun(() => waitForFonts().then(initUI));
 } else {
+    // Real boot: start the theme soundtrack as the boot log scrolls, then let
+    // displayLine roll the passcode panel in as the last line.
+    window.audioManager.theme.play();
     displayLine();
 }
 
@@ -865,7 +868,7 @@ function displayLine() {
         }
         // Real boot log finished. Instead of the old centre logo, roll the boot
         // passcode panel in from the bottom so it lands centre-screen and feels
-        // like the last line of the log ("WELCOME TO RIVER OPS").
+        // like the last line of the log ("FACILITY NOMINAL").
         // bootLockThenRun wires _onUnlocked (so a correct passcode runs initUI)
         // and calls bootShow() (idempotent — only builds the panel once). No
         // passcode configured → it falls through to run initUI directly.
@@ -873,7 +876,7 @@ function displayLine() {
         return;
     }
 
-    if (log[i] === "Boot Complete") {
+    if (log[i] === "EDEX TERMINAL CONTROL — FACILITY NOMINAL") {
         window.audioManager.granted.play();
     } else {
         window.audioManager.stdout.play();
