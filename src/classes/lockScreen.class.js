@@ -1109,6 +1109,11 @@ class LockScreen {
         this.active = true;
         this._pushLockState();
         this._buildBootLock();
+        // Boot lock reads as the last line of the boot log scrolling up: roll
+        // the passcode panel in from the bottom and let it settle centre-screen
+        // (see .lock_panel.lock_roll_in in browser.css).
+        const panel = document.querySelector("#lock_screen .lock_panel");
+        if (panel) panel.classList.add("lock_roll_in");
         if (window.cover) window.cover.set(true);
     }
 

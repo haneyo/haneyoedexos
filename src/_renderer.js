@@ -652,23 +652,15 @@ window._loadTheme = theme => {
 	}
 
     // The wallpaper lives in theme.injectCSS as a huge body{background-image}
-    // data-URI rule (100-300 KB). On the very first boot it is injected before
-    // initUI, and the boot lock's first paint triggers the full style recalc —
-    // stalling the main thread exactly while the user types the password (the
-    // "restart password input delay"). The lock covers the whole screen and only
-    // needs the :root colour vars above, so split the body rule off and apply it
-    // after the boot lock is dismissed (_uiReady). Theme switches after boot
-    // apply it immediately (_uiReady is already true).
-    let inject = theme.injectCSS || "";
-    let wall = "";
-    if (!window._uiReady) {
-        const m = inject.match(/body\s*\{[\s\S]*?\}/);
-        if (m && m[0].length > 1000) {
-            wall = m[0];
-            inject = inject.slice(0, m.index) + inject.slice(m.index + m[0].length);
-        }
-    }
-    window._deferredWallpaper = wall;
+    // data-URI rule. The previous "defer wallpaper until after the boot lock"
+    // hack split this body rule out and re-applied it only after _uiReady; on
+    // a large data-URI theme that left the wallpaper AND dependent UI styles
+    // unresolved, so the boot lock and the first desktop rendered blank.
+    // Colour-vars above are enough for the desktop chrome, but the wallpaper and
+    // UI must never be dropped — always inject the full theme CSS. The boot lock
+    // itself draws over this anyway, so keeping it present costs nothing visible.
+    const inject = theme.injectCSS || "";
+    window._deferredWallpaper = null;
 
     /* auto-hide the cursor after a quiet period — see cursorTrap below */
     .cursor_hidden, .cursor_hidden * { cursor: none !important; }
@@ -865,7 +857,19 @@ function displayLine() {
     }
 
     if (typeof log[i] === "undefined") {
-        setTimeout(displayTitleScreen, 300);
+        if (window._replayUI) {
+            // Matrix-screensaver replay: keep the old centre-logo flow so the
+            // panels re-run their entrance without re-locking or re-initing.
+            setTimeout(displayTitleScreen, 300);
+            return;
+        }
+        // Real boot log finished. Instead of the old centre logo, roll the boot
+        // passcode panel in from the bottom so it lands centre-screen and feels
+        // like the last line of the log ("WELCOME TO RIVER OPS").
+        // bootLockThenRun wires _onUnlocked (so a correct passcode runs initUI)
+        // and calls bootShow() (idempotent — only builds the panel once). No
+        // passcode configured → it falls through to run initUI directly.
+        setTimeout(() => bootLockThenRun(() => initUI()), 300);
         return;
     }
 
@@ -3710,9 +3714,9 @@ async function initUI() {
     [window.appmonitorA, window.appmonitorB].forEach(p => {
         if (p && typeof p.closeMenu === "function") { try { p.closeMenu(); } catch (e) {} }
     });
-    // Apply the deferred wallpaper (split off in _loadTheme so the boot lock's
-    // first paint never pays the huge style recalc — the restart password-input
-    // delay fix). Runs once the boot lock is gone and the desktop is built.
+    // Wallpaper (and full theme CSS) is injected up-front in _loadTheme; nothing
+    // is deferred any longer (see _loadTheme). The old deferred-wallpaper hook is
+    // now a no-op, kept only as a guard for anything still referencing it.
     if (window._deferredWallpaper) {
         try {
             const st = document.createElement("style");

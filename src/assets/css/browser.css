@@ -1559,6 +1559,17 @@ body:has(#lock_block) #main_shell_tabs > li.active {
     from { opacity: 1; transform: scale(1); }
     to { opacity: 0; transform: scale(0.96); }
 }
+/* Boot lock roll-in: the passcode panel scrolls up out of the bottom of the
+   log and settles centre-screen, so it reads as the last line of the boot log
+   continuing rather than a separate pop-in. Only applied to the boot lock
+   (class added by _buildBootLock), not the in-session locks. */
+.lock_panel.lock_roll_in {
+    animation: lock_roll_in 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes lock_roll_in {
+    from { opacity: 0; transform: translateY(56vh); }
+    to   { opacity: 1; transform: translateY(0); }
+}
 .lock_title {
     font-size: 2.6vh; letter-spacing: 0.35em; font-weight: bold;
     color: rgb(var(--color_r), var(--color_g), var(--color_b));
