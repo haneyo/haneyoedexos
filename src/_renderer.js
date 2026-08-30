@@ -629,7 +629,7 @@ window._loadTheme = theme => {
     :root {
         --font_main: "${window._purifyCSS(theme.cssvars.font_main)}";
         --font_main_light: "${window._purifyCSS(theme.cssvars.font_main_light)}";
-        --font_mono: "${window._purifyCSS(theme.terminal.fontFamily)}, 'Noto Sans Mono CJK SC', 'Noto Sans CJK SC', 'Noto Sans CJK TC', 'Noto Sans CJK JP', 'Noto Sans CJK KR', 'WenQuanYi Zen Hei Mono', monospace";
+        --font_mono: "${window._purifyCSS(theme.terminal.fontFamily)}";
         --color_r: ${window._purifyCSS(theme.colors.r)};
         --color_g: ${window._purifyCSS(theme.colors.g)};
         --color_b: ${window._purifyCSS(theme.colors.b)};
