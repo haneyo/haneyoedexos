@@ -3,11 +3,16 @@
 // Replaces the removed on-screen keyboard with a left-right split HUD:
 //   - Right: square holographic radar sweep (thin glowing lines, rotating beam,
 //     fading contacts, pulse waves).
-//   - Left: a live system-waveform canvas + 4 tech progress bars (CPU/MEM/DSK/NET)
-//     + a single-line auto-scrolling tech log.
+//   - Left: a real disk read/write I/O waveform canvas + 4 tech progress bars
+//     (CPU/MEM/DSK/NET) + a single-line auto-scrolling tech log.
 //
 // Everything is drawn against the active theme (--color_r/g/b) so it blends
 // seamlessly with the rest of eDEX-UI.
+
+// Heavy disk I/O threshold (total read+write, MB/s) that flashes the waveform
+// red. Tunable per machine — a busy laptop HDD sustains ~50-120MB/s, SSDs far
+// more, so raise it if the flash trips too often.
+const DSK_OVERLOAD_MB = 50;
 
 class CyberPanel {
     constructor(opts) {
@@ -44,11 +49,13 @@ class CyberPanel {
             threat: document.getElementById("cyber_radar_threat")
         };
 
-        // Waveform state
+        // Waveform state — the canvas now plots REAL disk read/write I/O
+        // (sampled every 1s) instead of the old decorative sine wave.
         this.wave = document.getElementById("cyber_waveform_canvas");
         this.waveCtx = this.wave.getContext("2d");
-        this.wavePhase = 0;
-        this._load = 0.05;       // smoothed system load 0..1
+        this._dskHist = [];       // [{ r, w }] MB/s samples, newest last
+        this._dskScale = 5;       // y-axis peak MB/s (floor keeps idle near centre)
+        this._dskOverload = false; // heavy total I/O → waveform lines flash red
 
         // Metrics (progress bars)
         this.metrics = {cpu: 0, mem: 0, dsk: 0, net: 0};
@@ -72,6 +79,10 @@ class CyberPanel {
         // Data refresh & periodic effects
         setInterval(() => this._updateMetrics(), 2000);
         setInterval(() => this._updateExtra(), 1000);
+        // Disk I/O sampler on its own 1s cadence: fsStats() rates come from a
+        // running delta (first call is the baseline), and 1s keeps the waveform
+        // responsive without a second 500ms process list query.
+        setInterval(() => this._sampleDiskIO(), 1000);
         setInterval(() => this._appendLog(), 1200); // code-like stream (throttled 3x for CPU, #92)
         setInterval(() => this._spawnBlip(), 2200);
         this._schedulePulse(4000);
@@ -99,7 +110,7 @@ class CyberPanel {
         this.parent.innerHTML = `
         <div id="cyber_panel_inner">
             <div class="cyber_panel_section" id="cyber_wave_wrap">
-                <h3 class="cyber_panel_title">DATA STREAM<i>SYSTEM WAVEFORM</i></h3>
+                <h3 class="cyber_panel_title">DISK I/O<i>READ / WRITE</i></h3>
                 <canvas id="cyber_waveform_canvas"></canvas>
             </div>
             <div class="cyber_panel_section" id="cyber_bars_wrap">
@@ -339,6 +350,8 @@ class CyberPanel {
         let ctx = this.waveCtx;
         let w = this._waveW, h = this._waveH;
         let dpr = this._dpr;
+        let hist = this._dskHist;
+        let n = hist.length;
 
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, w, h);
@@ -351,40 +364,65 @@ class CyberPanel {
         ctx.lineTo(w, h / 2);
         ctx.stroke();
 
-        // #166: the idle floor was 0.08 (~3% of canvas height — nearly
-        // invisible). Raise the floor so the DATA STREAM bars stay clearly
-        // visible at idle, while still swelling with real CPU load (capped at 1).
-        let amp = Math.max(0.34, Math.min(1, this._load * 1.35));
-        let phase = this.wavePhase;
+        // Real disk I/O waveform: READ trace above the centre line, WRITE below
+        // it (holographic split, echoing the old mirrored look). Samples arrive
+        // every 1s; the newest sits at the right edge and the whole line scrolls
+        // left as history fills up.
+        if (n < 2) return;
 
-        // Main signal
-        ctx.strokeStyle = this._themeColor(0.9);
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        for (let x = 0; x <= w; x += 2) {
-            let t = x / w;
-            let y = h / 2
-                + Math.sin(t * 9 + phase) * (h * 0.38) * amp
-                + Math.sin(t * 23 + phase * 1.7) * (h * 0.14) * amp
-                + Math.sin(t * 47 + phase * 0.7) * (h * 0.06) * amp;
-            ctx.lineTo(x, y);
-        }
-        ctx.stroke();
+        let scale = Math.max(5, this._dskScale);
+        // Overload flash: pulse 0.35..0.95 alpha over ~1s, the same feel as the
+        // CPU/MEM/NET edex_overload widgets — the lines themselves blink red.
+        let flash = this._dskOverload ? Math.max(0.35, 0.65 + 0.30 * Math.sin(performance.now() / 150)) : 0.9;
+        let rgb = this._dskOverload ? "255, 90, 90" : `${this._tr}, ${this._tg}, ${this._tb}`;
 
-        // Faint mirrored copy below center (holographic look)
-        ctx.strokeStyle = this._themeColor(0.18);
-        ctx.lineWidth = 0.7;
-        ctx.beginPath();
-        for (let x = 0; x <= w; x += 2) {
-            let t = x / w;
-            let y = h / 2
-                - Math.sin(t * 9 + phase) * (h * 0.38) * amp
-                - Math.sin(t * 23 + phase * 1.7) * (h * 0.14) * amp;
-            ctx.lineTo(x, y);
-        }
-        ctx.stroke();
+        const trace = (key, dir) => {
+            // Build the polyline once, stroke it twice: a soft halo pass then the
+            // main line. The halo (10fps × 2 traces, a few hundred pts) is cheap
+            // and makes the red flash read as a glow instead of a flat recolor.
+            let pts = [];
+            for (let x = 0; x <= w; x += 2) {
+                let f = (x / w) * (n - 1);
+                let i = Math.floor(f);
+                let j = Math.min(n - 1, i + 1);
+                let frac = f - i;
+                let v = hist[i][key] + (hist[j][key] - hist[i][key]) * frac;
+                let norm = Math.max(0, Math.min(1, v / scale));
+                pts.push([x, h / 2 + dir * norm * h * 0.40]);
+            }
+            const stroke = (lineWidth, alpha) => {
+                ctx.strokeStyle = `rgba(${rgb}, ${alpha})`;
+                ctx.lineWidth = lineWidth;
+                ctx.beginPath();
+                pts.forEach((p, idx) => idx ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+                ctx.stroke();
+            };
+            stroke(this._dskOverload ? 3 : 1.2, flash * (this._dskOverload ? 0.22 : 0.08));
+            stroke(1, flash);
+        };
+        trace("r", -1); // READ above centre
+        trace("w", 1);  // WRITE below centre
+    }
 
-        this.wavePhase += 0.06;
+    // Real disk read/write sampler — feeds the waveform. fsStats() reports
+    // bytes/sec across all mounted block devices, computed from a running delta
+    // (first call is just the baseline, so rates start at 0 and are real after
+    // the first 1s tick).
+    async _sampleDiskIO() {
+        try {
+            let s = await window.si.fsStats();
+            let rMB = ((s && s.rx_sec) || 0) / 1048576;
+            let wMB = ((s && s.wx_sec) || 0) / 1048576;
+            this._dskHist.push({ r: rMB, w: wMB });
+            if (this._dskHist.length > 120) this._dskHist.shift(); // 2min window
+
+            // Peak-hold y-axis: snap up to any burst, decay slowly on idle, so
+            // the auto-range rises instantly but only relaxes gradually.
+            let total = rMB + wMB;
+            this._dskScale = Math.max(5, Math.max(total, this._dskScale * 0.985));
+
+            this._dskOverload = total >= DSK_OVERLOAD_MB;
+        } catch (e) { /* keep previous values */ }
     }
 
     /* --------------------------- Metrics & log --------------------------- */
@@ -438,9 +476,6 @@ class CyberPanel {
             this.pulse();
         }
         this._lastCPU = this.metrics.cpu;
-
-        // Feed the waveform amplitude (smoothed)
-        this._load += ((this.metrics.cpu / 100) - this._load) * 0.25;
     }
 
     _setBar(key, value, detail) {
