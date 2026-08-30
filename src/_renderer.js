@@ -651,10 +651,29 @@ window._loadTheme = theme => {
    	   ${(window.settings.nocursorOverride || window.settings.nocursor) ? "cursor: none !important;" : ""}
 	}
 
+    // The wallpaper lives in theme.injectCSS as a huge body{background-image}
+    // data-URI rule (100-300 KB). On the very first boot it is injected before
+    // initUI, and the boot lock's first paint triggers the full style recalc —
+    // stalling the main thread exactly while the user types the password (the
+    // "restart password input delay"). The lock covers the whole screen and only
+    // needs the :root colour vars above, so split the body rule off and apply it
+    // after the boot lock is dismissed (_uiReady). Theme switches after boot
+    // apply it immediately (_uiReady is already true).
+    let inject = theme.injectCSS || "";
+    let wall = "";
+    if (!window._uiReady) {
+        const m = inject.match(/body\s*\{[\s\S]*?\}/);
+        if (m && m[0].length > 1000) {
+            wall = m[0];
+            inject = inject.slice(0, m.index) + inject.slice(m.index + m[0].length);
+        }
+    }
+    window._deferredWallpaper = wall;
+
     /* auto-hide the cursor after a quiet period — see cursorTrap below */
     .cursor_hidden, .cursor_hidden * { cursor: none !important; }
 
-    ${window._purifyCSS(theme.injectCSS || "")}
+    ${window._purifyCSS(inject)}
     </style>`;
     // The cursor-role style must stay AFTER the theming style so its rules win
     // the cascade; re-append it now that the theming block was rebuilt.
@@ -3691,6 +3710,17 @@ async function initUI() {
     [window.appmonitorA, window.appmonitorB].forEach(p => {
         if (p && typeof p.closeMenu === "function") { try { p.closeMenu(); } catch (e) {} }
     });
+    // Apply the deferred wallpaper (split off in _loadTheme so the boot lock's
+    // first paint never pays the huge style recalc — the restart password-input
+    // delay fix). Runs once the boot lock is gone and the desktop is built.
+    if (window._deferredWallpaper) {
+        try {
+            const st = document.createElement("style");
+            st.textContent = window._deferredWallpaper;
+            document.head.appendChild(st);
+        } catch (e) {}
+        window._deferredWallpaper = null;
+    }
 }
 
 window.themeChanger = theme => {
