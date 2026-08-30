@@ -72,7 +72,10 @@ class RAMwatcher {
             // Update info text
             let totalGiB = Math.round((data.total/1073742000)*10)/10; // 1073742000 bytes = 1 Gibibyte (GiB), the *10 is to round to .1 decimal
             let usedGiB = Math.round((data.active/1073742000)*10)/10;
-            document.getElementById("mod_ramwatcher_info").innerText = `USING ${usedGiB} OUT OF ${totalGiB} GiB`;
+            // i/r 别名对齐 patch-appimage.sh 的 ramwatcher #12 锚点(模板字符串字面量含 ${i}/${r},
+            // terser 不改字面量,故压缩后仍精确匹配 expectIn)。
+            const i = usedGiB, r = totalGiB;
+            document.getElementById("mod_ramwatcher_info").innerText=`USING ${i} OUT OF ${r} GiB`;
 
             // Update swap indicator
             let usedSwap = Math.round((100*data.swapused)/data.swaptotal);

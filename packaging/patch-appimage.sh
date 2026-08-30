@@ -1404,12 +1404,13 @@ const targets = [
   {
     name: 'ramwatcher.class.js (#12 MEMORY USING 超负荷红光闪烁)',
     path: ['classes', 'ramwatcher.class.js'],
-    expectIn: 'document.getElementById("mod_ramwatcher_info").innerText = `USING ${usedGiB} OUT OF ${totalGiB} GiB`',
+    expectIn: 'document.getElementById("mod_ramwatcher_info").innerText=`USING ${i} OUT OF ${r} GiB`',
     expectOut: '_m.classList.add("edex_overload")',
-    // #12:内存占用 ≥90%(used/total)时 MEMORY 行文字红光闪烁(每 1.5s 刷新)。锚点对齐实际源码变量名 usedGiB/totalGiB。
+    // #12:内存占用 ≥90%(used/total)时 MEMORY 行文字红光闪烁(每 1.5s 刷新)。源码已用 const i=usedGiB,r=totalGiB
+    // 别名并输出 `USING ${i} OUT OF ${r} GiB`(template literal 为字面量,minify 不改),故此处锚点精确匹配。
     transform: c => c
-      .split('document.getElementById("mod_ramwatcher_info").innerText = `USING ${usedGiB} OUT OF ${totalGiB} GiB`')
-      .join('document.getElementById("mod_ramwatcher_info").innerText = `USING ${usedGiB} OUT OF ${totalGiB} GiB`,(()=>{try{var _m=document.getElementById("mod_ramwatcher_info");_m&&(totalGiB>0&&usedGiB/totalGiB>=.9?_m.classList.add("edex_overload"):_m.classList.remove("edex_overload"))}catch(_){}})()'),
+      .split('document.getElementById("mod_ramwatcher_info").innerText=`USING ${i} OUT OF ${r} GiB`')
+      .join('document.getElementById("mod_ramwatcher_info").innerText=`USING ${i} OUT OF ${r} GiB`,(()=>{try{var _m=document.getElementById("mod_ramwatcher_info");_m&&(r>0&&i/r>=.9?_m.classList.add("edex_overload"):_m.classList.remove("edex_overload"))}catch(_){}})()'),
   },
   {
     name: 'conninfo.class.js (#12 NETWORK UP/DOWN 高流量红光闪烁)',
