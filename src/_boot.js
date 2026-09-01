@@ -179,6 +179,30 @@ const DEFAULT_SETTINGS = {
 if (!fs.existsSync(settingsFile)) {
     fs.writeFileSync(settingsFile, JSON.stringify(DEFAULT_SETTINGS, "", 4));
     signale.info(`Default settings written to ${settingsFile}`);
+} else {
+    // Backfill keys added since this install's settings.json was written (e.g.
+    // eventAudio from 9713910). The renderer loads the file directly — raw
+    // require in _renderer.js, no merge — so a key missing here reads as
+    // undefined there, and the FIRST settings save persists a wrong value
+    // (openSettings renders <option>undefined</option> → save writes false).
+    // Merge DEFAULT_SETTINGS into the file so the renderer sees real defaults.
+    // lockCode is deliberately excluded: its absence is what arms the in-app
+    // first-run setup, and writing the placeholder "0000" would suppress it.
+    try {
+        const onDisk = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
+        const missing = {};
+        for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
+            if (k === "lockCode") continue;
+            if (!(k in onDisk)) missing[k] = v;
+        }
+        const keys = Object.keys(missing);
+        if (keys.length) {
+            fs.writeFileSync(settingsFile, JSON.stringify(Object.assign(missing, onDisk), "", 4));
+            signale.info(`Backfilled ${keys.length} settings key(s): ${keys.join(", ")}`);
+        }
+    } catch (e) {
+        signale.warn(`Settings backfill skipped: ${e.message}`);
+    }
 }
 // Create default shortcuts file
 if (!fs.existsSync(shortcutsFile)) {

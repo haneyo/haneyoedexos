@@ -135,6 +135,7 @@ cat > "/home/$U/.config/eDEX-UI/settings.json" <<'SETTINGS'
     "audio": true,
     "audioVolume": 1.0,
     "disableFeedbackAudio": false,
+    "eventAudio": true,
     "clockHours": 24,
     "pingAddr": "223.5.5.5",
     "port": 3000,

@@ -4064,8 +4064,8 @@ window.openSettings = async () => {
                 <option>${!window.settings.disableFeedbackAudio}</option>
             </select>`, "settings.disableFeedbackAudio.help"),
             settingsRow("settings.eventAudio", `<select id="settingsEditor-eventAudio">
-                <option>${window.settings.eventAudio}</option>
-                <option>${!window.settings.eventAudio}</option>
+                <option>${window.settings.eventAudio !== false}</option>
+                <option>${window.settings.eventAudio === false}</option>
             </select>`, "settings.eventAudio.help"),
             settingsRow("settings.power.volume", `<select id="settingsPowerVolume">${numOptions(0, 100, 5, v => v + "%", 70)}</select>`, "settings.power.volume.help"),
             section("settings.cat.display"),
