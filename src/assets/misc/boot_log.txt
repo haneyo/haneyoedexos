@@ -1,6 +1,10 @@
-eDEX-UI — TERMINAL CONTROL 7.20
-initializing tactical information grid ...
-mounting survey metatable: sector 07 / topographic 1:50 000
+Welcome to eDEX-UI!
+vm_page_bootstrap: 987323 free pages and 53061 wired pages
+kext submap [0xffffff7f8072e000 - 0xffffff8000000000], kernel text [0xffffff8000200000 - 0xffffff800072e000]
+zone leak detection enabled
+standard timeslicing quantum is 10000 us
+mig_table_max_displ = 72
+TSC Deadline Timer supported and enabled
 eDEXACPICPU: ProcessorId=1 LocalApicId=0 Enabled
 eDEXACPICPU: ProcessorId=2 LocalApicId=2 Enabled
 eDEXACPICPU: ProcessorId=3 LocalApicId=1 Enabled
@@ -9,140 +13,139 @@ eDEXACPICPU: ProcessorId=5 LocalApicId=255 Disabled
 eDEXACPICPU: ProcessorId=6 LocalApicId=255 Disabled
 eDEXACPICPU: ProcessorId=7 LocalApicId=255 Disabled
 eDEXACPICPU: ProcessorId=8 LocalApicId=255 Disabled
-zone leak detection enabled
-standard timeslicing quantum is 10000 us
-mig_table_max_displ = 72
-TSC Deadline Timer supported and enabled
 calling mpo_policy_init for TMSafetyNet
 Security policy loaded: Safety net for Rollback (TMSafetyNet)
+calling mpo_policy_init for Sandbox
 Security policy loaded: Seatbelt sandbox policy (Sandbox)
+calling mpo_policy_init for Quarantine
 Security policy loaded: Quarantine policy (Quarantine)
-com.eDEX.eDEXFSCompressionTypeZlib kmod start
-com.eDEX.eDEXTrololoBootScreen kmod start
-com.eDEX.eDEXFSCompressionTypeZlib load succeeded
-com.eDEX.eDEXFSCompressionTypeDataless load succeeded
+Copyright (c) 1982, 1986, 1989, 1991, 1993, 2015
+The Regents of the University of Adelaide. All rights reserved.
+Darwin Kernel Version 20.6.0: Mon Aug 30 06:12:21 PDT 2021; root:xnu-7195.141.6~3/RELEASE_X86_64
+cpumemory: Intel(R) Xeon(R) CPU E3-1231 v3 @ 3.40GHz
+Kernel slide: 0x0000000008000000
+Memory Page Size = 4096 bytes
+max memory = 17179869184 bytes
+vm_shared_region_available: 1
+timebase = 100000000
+machine model = eDEX-MK7,1
+Hibernation has been enabled
+
 HN_ Framework successfully initialized
 using 16384 buffer headers and 10240 cluster IO buffer headers
 IOAPIC: Version 0x20 Vectors 64:87
 ACPI: System State [S0 S3 S4 S5] (S3)
 PFM64 0xf10000000, 0xf0000000
 [ PCI configuration begin ]
+eDEXIntelCPUPowerManagement: Turbo Ratios 0046
+eDEXIntelCPUPowerManagement: (built 13:08:12 Jun 18 2011) initialization complete
+console relocated to 0xf10000000
 PCI configuration changed (bridge=16 device=4 cardbus=0)
 [ PCI configuration end, bridges 12 devices 16 ]
 mbinit: done [64 MB total pool size, (42/21) split]
 Pthread support ABORTS when sync kernel primitives misused
-eDEXIntelCPUPowerManagement: Turbo Ratios 0046
-eDEXIntelCPUPowerManagement: initialization complete
-console relocated to 0xf10000000
-WAVELENGTH SYNC / DRIFT: 0.0003 — carrier locked, uplink nominal
-handshake: MAINFRAME ⟷ field relay 0x3F2A ... AUTH OK
-coordinate bundle "coordinates.bin" validated — 6/6 keys matched
-priority table: [schedule.dat] decrypt-in ... cipher suite IV/XTEA
-task queue: 0 items pending — no external requests on this sector
-cold-start sensor array ... 12 channels online, 3 in standby
-infrared grid ... 64 cells scanned, 0 returns
-LIDAR sweep @ 847 nm ... canopy density 62%, reflectance 91%
-sonar line scan ... 16 pings, no saturation
-seismic array ... 8 geophones calibrated, drift 0.02%
-atmospheric probe ... pressure 1013 mb, humidity 71%
-water gauge ... 3 stations reporting, flow nominal
-soil moisture mesh ... 24 cells, within tolerances
-wind vector ... heading 214, speed 6.2 m/s
-visibility ... 41 km, no obstruction
-air quality ... AQI 22, particulate low
-radiation survey ... 0.09 uSv/h, background normal
-biosignal panel ... nominal, all clear
-terrain normalisation ... elevation model + drainage deltas applied
-render warmup — relief rasterising 2 048 segments
-channel mesh: 96 control points, width profile lerp = on
-bank profile fitted — 6 riverbanks, roughness 0.034
-contour isolines regenerated at 10 m interval — 741 closed loops
-spillway table... 9 gates armed, no overflow
-sediment load ... 0.41 kg/s, bed load stable
-tidal datum ... mean sea level locked, offset 0.000
-river stage ... 2.31 m, within band
-culvert check ... 4 drains clear, no clog
-pump station ... 2 duty, 1 standby, pressure good
-riverside structures: reflow to drainage ... 6 units re-anchored
-levee integrity ... 7 sections, no seepage
-cable manholes ... 9 vaults inspected, 0 degraded
-cabling pull-down ... 7 clusters settled, tension stable
-power rail A ... 3 feeders healthy, phase 0 lag
-power rail B ... 2 feeders healthy, phase 0 lag
-generator bank ... 2 online, 1 standby, fuel 96%
-battery string ... 8 cells balanced, 12.4 V nominal
-solar array ... 5 strings, 62% max, no shading
-load profile ... 3.2 kW, below cap
-grid sync ... frequency 50.0 Hz, no drift
-uplink 26.4 — latency 18 ms, jitter 0.8 ms
-redundant link 27.1 — latency 21 ms, jitter 1.1 ms
-backhaul route ... primary + fallback, no flap
-packet loss ... 0.0% over last hour
-survey datum ... WGS-84, epoch 2025.4, sound
-grid convergence ... -1.6 deg, applied
-vertical datum ... ellipsoid, geoid sep 34 m
-photogrammetry ... 18 tie points, residual 0.4 px
-CORS base ... station 0x2A1, lock acquired
-telemetry backplane ... 3 frames, checksum ok
-field bus ... 2 branches, terminated
-datalogger ... 64 K buckets, free 91%
-repeater chain ... 5 hops, green
-lightning rod ... grounded, continuity ok
-surge clamp ... 3 units, nominal
-wireless mesh ... 6 nodes, rssi -63 dBm
-sat downlink ... 4 kbps steady
-geo net ... 142 epochs, RMS 0.9 cm
-tide predictor ... harmonic 7, set loaded
-weir flow ... 0.3 m3/s, within rating
-pressure line ... 8 taps, no leak
-thermo string ... 5 depths, gradient normal
-compass ... declination 4.2 W, corrected
-gyro ... drift 0.02 deg/h, aligned
-inclinometer ... 0.4 deg, stable
-anemometer ... 3 cups, RPM ok
-rain gauge ... 4 collector, empty
-stream gauge ... 2 sensors, concordant
-CLOCK sync — control grid + field telemetry + time ... GREEN
-com.eDEX.eDEXIntelCPUPowerManagementClient: ready
+com.eDEX.eDEXFSCompressionTypeZlib kmod start
+com.eDEX.eDEXTrololoBootScreen kmod start
+com.eDEX.eDEXFSCompressionTypeZlib load succeeded
+com.eDEX.eDEXFSCompressionTypeDataless load succeeded
+com.eDEX.eDEXFusionReactor kmod start
+com.eDEX.eDEXFusionReactor load succeeded
+com.eDEX.eDEXGravitySystem kmod start
+com.eDEX.eDEXGravitySystem load succeeded
+com.eDEX.eDEXThrusterArray kmod start
+com.eDEX.eDEXThrusterArray load succeeded
+reactor core: preheat 3200 K, flux 1.2e14, stable
+ReactorCore::ignition - phase 1 complete
+ReactorCore::ignition - phase 2 complete, auto-shim on
+eDEXPlasmaControl::start - field uniform, mode I
+plasma containment: inner coil 12.4 kA, outer 11.8 kA
+plasma vent: no instability detected
+coolant loop: primary 5.2 bar, secondary 4.9 bar, no cavitation
+eDEXGravityComp::zero - offset 98.2%, load 3.4 kN
+antigrav field: 4 emitters aligned, hover test pass
+ThrusterArray::home - 4 gimbals, 0 faults
+rail capacitors: 84% charged, interlocks 4/4
+point defense: 4 turrets armed, safe arcs set
+EWAR suite: passive scan, jammer offline, 0 hits
+drone bay: 2 drones charged, launch ready
+ammo feed: 240/240, belt tension nominal
+life support: o2 21.0%, cabin 1.013 bar, scrubbers online
+cryo pods: 1-6 sealed, coolant 4.2 K
+hull integrity: 99.8%, 0 microfractures
+atmosphere: recirc 12%/min, co2 420 ppm
+structure scan: strain 41%, 0 fatigue
+hydraulics: accumulator 92%, pressure 210 bar
+turbine: spools 0 RPM, pre-oil complete
+fuel cell: stack 62 V, reformer on
+battery bank: 8 cells, 28.4 V, soc 92%
+power bus: 24V 412A nominal, 0 faults
+fuel reserve: 62% primary, 71% reserve
+nav system: INS aligned, GPS 8 sats, hdop 0.8
+inertial reference: ring laser gyro, bias 0.003 deg/h
+terrain mesh: 2048 segments, 0 gaps
+geo net: 142 epochs, RMS 0.9 cm, fixed
+quantum link: entanglement verified, bell test 1.000
+command net: uplink established, aes-256-gcm
+sat downlink: 4 kbps steady, margin 4.2 dB
+antenna array: 4 elements phased, gain 6.2 dBi
+optical array: EO/IR fused, 8 sensors, boresighted
+acoustic array: 16 hydrophones, 0 contacts
+radiation survey: 0.09 uSv/h, background normal
+
+eDEXIntelCPUPowerManagementClient: ready
+BTCOEXIST off
+wl0: Broadcom BCM4331 802.11 Wireless Controller
+5.100.98.75
+
+FireWire (OHCI) Lucent ID 5901 built-in now active, GUID c82a14fffee4a086; max speed s800.
 rooting via boot-uuid from /chosen: F5670083-AC74-33D3-8361-AC1977EE4AA2
+Waiting on &lt;dict ID=&quot;0&quot;&gt;&lt;key&gt;IOProviderClass&lt;/key&gt;&lt;string ID=&quot;1&quot;&gt;
+IOResources&lt;/string&gt;&lt;key&gt;IOResourceMatch&lt;/key&gt;&lt;string ID=&quot;2&quot;&gt;boot-uuid-media&lt;/string&gt;&lt;/dict&gt;
 Got boot device = IOService:/eDEXACPIPlatformExpert/PCI0@0/eDEXACPIPCI/SATA@1F,2/
+eDEXIntelPchSeriesAHCI/PRT0@0/IOAHCIDevice@0/eDEXAHCIDiskDriver/SarahI@sTheBestDriverIOAHCIBlockStorageDevice/IOBlockStorageDriver/
 eDEX SSD TS128C Media/IOGUIDPartitionScheme/Customer@2
 BSD root: disk0s2, major 14, minor 2
-kernel mc config load ... 0x0238, sane
 Kernel is LP64
-MottIsAScrub::checkstatus - true, Mott::Scrub
-DSMOS has arrived
 IOThunderboltSwitch::i2cWriteDWord - status = 0xe00002ed
 IOThunderboltSwitch::i2cWriteDWord - status = 0x00000000
 IOThunderboltSwitch::i2cWriteDWord - status = 0xe00002ed
-eDEXUSBMultitouchDriver::checkStatus — device reinitialized
+IOThunderboltSwitch::i2cWriteDWord - status = 0xe00002ed
+eDEXUSBMultitouchDriver::checkStatus - received Status Packet, Payload 2: device was reinitialized
+MottIsAScrub::checkstatus - true, Mott::Scrub
+[IOBluetoothHCIController::setConfigState] calling registerService
+AirPort_Brcm4331: Ethernet address e4:ce:8f:46:18:d2
+IO80211Controller::dataLinkLayerAttachComplete():  adding eDEXEFINVRAM notification
+IO80211Interface::efiNVRAMPublished():
 Created virtif 0xffffff800c32ee00 p2p0
-firmware page table ... 64 Kb mapped, checksum good
-nvram replay ... 12 keys loaded, 0 corrupt
-boot loader handshake ... GPT verified, fallback empty
-root volume journal ... replay complete, clean
-swap device ... attached, no errors
-page cache ... warmed, reclaim pressure low
-memory map ... 64 Gb addressed, no holes
-integrity_scan.cfg ... 0 anomalies on readback
-failover.ctl armed; failover.ctl latent — failover chain CLEAR
-mesh_topology.json converged in 3 rounds — 22 nodes, 0 flaps
-power_distribution.map ... bus 2A nominal, cells balanced
-coolant_pressure.dat ... 1.20 bar, within envelope
-antenna_array.cfg ... 4 elements phased, gain 6.2 dBi
-self_test.suite ... sensors 14/14, actuators 9/9, no faults
-redundancy_matrix.json ... single point of failure: NONE
-kernel module whitelist ... pass
-watchdog ... armed at 60 s, no bite
-clock discipline ... stratum 2, offset 0.0003 s
-time sync ... NTP jitter 0.9 ms, locked
-audit trail ... 0 shadow entries, clean
-keyring ... loaded, 2 keys present
-secrets vault ... sealed, no tamper
-deployment: current_deployment.cfg — sector 07 sheet, rigged
-roster ... 2 operators on-station, clearance DELTA
-duty_rotation.sched ... watch 1 standing, relief in 04:20:00
-access_control.json ... launch device passcode armed
-incident_reports.log ... tail clean, last entry +00:00
-WELCOME — TERMINAL CONTROL
+BCM5701Enet: Ethernet address c8:2a:14:57:a4:7a
+Previous Shutdown Cause: 3
+NTFS driver 3.8 [Flags: R/W].
+NTFS volume name BOOTCAMP, version 3.1.
+DSMOS has arrived
+en1: 802.11d country code set to &#039;US&#039;.
+en1: Supported channels 1 2 3 4 5 6 7 8 9 10 11 36 40 44 48 52 56 60 64 100 104 108 112 116 120 124 128 132 136 140 149 153 157 161 165
+m_thebest
+MacAuthEvent en1   Auth result for: 00:60:64:1e:e9:e4  MAC AUTH succeeded
+MacAuthEvent en1   Auth result for: 00:60:64:1e:e9:e4 Unsolicited  Auth
+wlEvent: en1 en1 Link UP
+AirPort: Link Up on en1
+en1: BSSID changed to 00:60:64:1e:e9:e4
+virtual bool IOHIDEventSystemUserClient::initWithTask(task*, void*, UInt32):
+Client task not privileged to open IOHIDSystem for mapping memory (e00002c1)
+sensor fusion: 32 sources, 0 stale tracks
+self-test: sensors 14/14, actuators 9/9, 0 faults
+ReactorWatchdog::arm - 60 s, no bite
+frame servos: 24/24 homed, brakes armed
+pilot link: neural interface linked, vitals stable
+integrity scan: 4.2 GB readback, 0 anomalies
+failover chain: CLEAR, peer 10.0.0.2 rtt 0.9 ms
+mesh topology: 22 nodes converged, 0 flaps
+clock discipline: stratum 2, offset 0.0003 s
+time sync: NTP locked, jitter 0.9 ms
+audit trail: 0 shadow entries, clean
+SecretsVault::seal - no tamper
+deployment: sector 07 sheet, rigged
+roster: 2 operators on-station, clearance DELTA
+
+
 Boot Complete
