@@ -5,8 +5,33 @@ const {app, BrowserWindow, dialog, shell} = require("electron");
 // file browser autoplays (and the play/pause button state stays in sync).
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 
+// Track Node-internal assertion recoveries so a genuine repeated corruption
+// (20x in 30s) still escalates to the fatal path below.
+const _assertRecoveries = [];
 process.on("uncaughtException", e => {
     signale.fatal(e);
+    // Recoverable: an ERR_ASSERTION here is thrown by Node internals — most
+    // often the llhttp HTTP parser asserting on a paused-then-reused socket
+    // when an outbound request (appmonitor / Clash controller on 127.0.0.1)
+    // gets an interrupted/orphaned response after a lightdm restart left an
+    // appmonitor process squatting the port. The affected request already
+    // failed and its caller resolves null, so killing the whole UI with a
+    // scary box is worse than continuing. eDEX's own main-process code never
+    // calls assert(), so any ERR_ASSERTION reaching here is from a dependency
+    // or Node core and is recoverable by definition. Rate-limited to a window:
+    // a short burst during the messy multi-instance startup survives, while a
+    // persistent failure (20+ in 30s) still takes the fatal path.
+    const now = Date.now();
+    if (e && e.code === "ERR_ASSERTION") {
+        for (let i = _assertRecoveries.length - 1; i >= 0; i--) {
+            if (now - _assertRecoveries[i] > 30000) _assertRecoveries.splice(i, 1);
+        }
+        _assertRecoveries.push(now);
+        if (_assertRecoveries.length <= 20) {
+            signale.warn(`[recoverable] ignoring assertion error (${_assertRecoveries.length} in 30s): ${e.message}`);
+            return;
+        }
+    }
     dialog.showErrorBox("eDEX-UI crashed", e.message || "Cannot retrieve error message.");
     if (tty) {
         tty.close();
@@ -31,6 +56,29 @@ if (!gotLock) {
     signale.fatal("Error: Another instance of eDEX is already running. Cannot proceed.");
     app.exit(1);
 }
+
+// Sweep orphaned processes from a PREVIOUS eDEX session. lightdm restarting
+// kills the AppImage wrapper, but the FUSE-mounted tree can survive with PPID 1
+// and squat the appmonitor ports (6080/6081…), answering HTTP with stale or
+// partial responses — which tripped Node's llhttp parser assert and, before the
+// recoverable-assertion handling above, killed the whole UI at boot. Only
+// processes from a DIFFERENT AppImage mount are touched; the current session's
+// own tree (same mount) and a live second instance (already excluded by the
+// single-instance lock) are left alone.
+try {
+    const cp = require("child_process");
+    const ownMount = String(process.execPath).match(/(\/tmp\/\.mount_eDEX-[^/]+)\//);
+    const procs = cp.execSync("ps -eo pid,args 2>/dev/null || true").toString().split("\n");
+    const orphans = [];
+    for (const line of procs) {
+        const m = line.match(/^\s*(\d+)\s+(\S+\.mount_eDEX-[^/\s]+)\//);
+        if (m && String(m[2]) !== (ownMount && ownMount[1])) orphans.push(m[1]);
+    }
+    if (orphans.length) {
+        signale.warn(`[cleanup] killing ${orphans.length} orphaned process(es) from a previous eDEX session`);
+        cp.execSync(`kill -9 ${orphans.join(" ")} 2>/dev/null || true`);
+    }
+} catch (e) {}
 
 // Kill every child of this process tree (renderer, appmonitor server, tty
 // helpers, …) on quit/crash so repeated restarts/relaunches do NOT leave orphan
