@@ -1425,7 +1425,15 @@ div.voice_mode_opt.selected::after {
     display: flex; align-items: center; justify-content: center;
 }
 #setup_screen #setup_box {
-    font-family: var(--font_mono), var(--font_main_light), "DejaVu Sans Mono", monospace;
+    /* Deliberately NOT var(--font_mono): that stack ends in the Noto CJK fonts,
+       and in Noto Sans Mono CJK SC the box-drawing glyphs (╔ ═ ╗ ║ ─) are
+       full-width (2 cells) while ASCII is 1 cell. The setup box paints before
+       the Fira Mono webfont is guaranteed ready (and an already-painted <pre>
+       is NOT re-rendered when the font loads later), so it fell back to Noto
+       Sans Mono CJK SC and the frame went crooked. Use a stack whose every
+       member draws box-drawing at exactly 1 cell: Fira Mono once loaded,
+       DejaVu Sans Mono (always present on Ubuntu) as the safe fallback. */
+    font-family: "Fira Mono", "DejaVu Sans Mono", monospace;
     font-size: 15px;
     line-height: 1.55;
     color: rgb(var(--color_r), var(--color_g), var(--color_b));
