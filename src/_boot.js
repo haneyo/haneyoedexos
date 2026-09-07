@@ -1468,16 +1468,26 @@ app.on('ready', async () => {
     let transferSrv = null;
     let transferPort = 0;
     let transferToken = "";
+    // The IP the phone/laptop should dial. Skip the classic virtual/vpn/bridge
+    // interfaces (docker, vbox, vmnet, tun/tap/wg, bridges) — they can claim the
+    // real NIC's public IP and produce a URL no other device can reach. Prefer a
+    // private RFC1918 address on a physical-ish NIC, then any non-internal one.
     const lanIPv4 = () => {
         try {
             const ifs = require("os").networkInterfaces();
+            const virtual = /^lo$|^(docker|veth|br-|virbr|vmnet|vboxnet|tun|tap|utun|wg|ppp|cni|kube|zt|tailscale)/i;
+            const rfc1918 = /^(10\.|192\.168\.|172\.(1[6789]|2[0-9]|3[01])\.)/;
+            let fallback = null;
             for (const name of Object.keys(ifs)) {
+                if (virtual.test(name)) continue;
                 for (const a of ifs[name] || []) {
-                    if (a.family === "IPv4" && !a.internal) return a.address;
+                    if (a.family !== "IPv4" || a.internal) continue;
+                    if (rfc1918.test(a.address)) return a.address;
+                    if (!fallback) fallback = a.address;
                 }
             }
-        } catch (e) {}
-        return "127.0.0.1";
+            return fallback || "127.0.0.1";
+        } catch (e) { return "127.0.0.1"; }
     };
     const transferPage = () => `<!DOCTYPE html>
 <html lang="zh">
@@ -1491,35 +1501,49 @@ body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:c
 h1{font-size:20px;margin:0 0 6px}
 h2{font-size:13px;color:#8b949e;font-weight:normal;margin:0 0 14px}
 p{color:#8b949e;font-size:13px;margin:6px 0}
-#drop{border:2px dashed #30363d;border-radius:14px;padding:52px 24px;margin:22px 0;cursor:pointer;transition:border-color .2s,background .2s}
-#drop.hover{border-color:#58a6ff;background:#161b22}
+#drop{border:2px dashed #30363d;border-radius:14px;padding:52px 24px;margin:22px 0;cursor:pointer;display:block;transition:border-color .2s,background .2s,transform .2s}
+body.dropping #drop{border-color:#58a6ff;background:#161b22;transform:scale(1.01)}
 #drop .plus{font-size:36px;color:#58a6ff;display:block;margin-bottom:10px}
 #status{font-size:14px;min-height:22px;margin-top:14px;word-break:break-all}
 .ok{color:#3fb950}
 .err{color:#f85149}
+/* Keep the file input attached but offscreen: a display:none input makes some
+   mobile browsers ignore .click()/label taps, so the "browse" tap would do
+   nothing. Offscreen-but-rendered taps work everywhere. */
+#file{position:fixed;left:-10000px;top:-10000px;width:1px;height:1px;opacity:0}
 </style>
 </head>
 <body>
 <div class="box">
 <h1>导入 Clash 配置</h1>
 <h2>Import Clash Config</h2>
-<p>把配置文件拖到下方,或点击选择文件</p>
-<p>Drop a config file here, or click to browse</p>
-<div id="drop"><span class="plus">＋</span>拖拽文件到此处<br>Drag &amp; drop config.yaml</div>
-<input type="file" id="file" accept=".yaml,.yml,.conf,.txt" style="display:none">
+<p>把配置文件拖到页面任意位置,或点击下方区域选择文件</p>
+<p>Drop a config file anywhere on this page, or click below to browse</p>
+<label id="drop" for="file"><span class="plus">＋</span>拖拽文件到此处<br>Drag &amp; drop config.yaml</label>
+<input type="file" id="file" accept=".yaml,.yml,.conf,.txt">
 <div id="status"></div>
 </div>
 <script>
-var drop=document.getElementById('drop'),file=document.getElementById('file'),status=document.getElementById('status');
-drop.onclick=function(){file.click()};
-['dragover','dragenter'].forEach(function(ev){drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.add('hover')})});
-['dragleave','drop'].forEach(function(ev){drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.remove('hover')})});
-drop.addEventListener('drop',function(e){if(e.dataTransfer&&e.dataTransfer.files.length)upload(e.dataTransfer.files[0])});
+var file=document.getElementById('file'),status=document.getElementById('status');
 file.onchange=function(){if(file.files.length)upload(file.files[0])};
+// Catch drops on the WHOLE document so the browser never navigates away to the
+// dropped file (which looks like "nothing happened"). The dashed box is only the
+// visual cue. The enter/leave counter keeps the highlight from flickering.
+var depth=0;
+document.addEventListener('dragenter',function(e){e.preventDefault();depth++;document.body.className='dropping'});
+document.addEventListener('dragover',function(e){e.preventDefault();if(e.dataTransfer)e.dataTransfer.dropEffect='copy'});
+document.addEventListener('dragleave',function(){if(--depth<=0){depth=0;document.body.className=''}});
+document.addEventListener('drop',function(e){
+  e.preventDefault();depth=0;document.body.className='';
+  var f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
+  if(f)upload(f);
+});
 function upload(f){
   if(f.size>8*1024*1024){show('err','文件过大(最大 8 MB) / File too large (max 8 MB)');return}
   show('','上传中… / Uploading…');
-  fetch(location.pathname+'/upload',{method:'POST',body:f}).then(function(r){return r.json()}).then(function(j){
+  // Strip a trailing slash (a hand-typed URL may include one) so the upload path
+  // always matches the server route.
+  fetch(location.pathname.replace(/\\/+$/,'')+'/upload',{method:'POST',body:f}).then(function(r){return r.json()}).then(function(j){
     show(j.ok?'ok':'err',j.ok?'✓ 配置已接收并生效 / Config installed and applied':'✗ '+j.error);
   }).catch(function(){show('err','✗ 上传失败 / Upload failed')});
 }
@@ -1528,11 +1552,23 @@ function show(cls,msg){status.className=cls;status.textContent=msg}
 </body>
 </html>`;
     const transferUrl = () => transferSrv ? "http://" + lanIPv4() + ":" + transferPort + "/" + transferToken : "";
+    // QR of the transfer URL, as a data URI the settings menu can show in an
+    // <img>. The phone scans it to open the drop page without typing the URL.
+    const transferQr = text => {
+        try {
+            const qrcode = require("./qrcode.js");
+            const qr = qrcode(0, "M");
+            qr.addData(String(text || ""));
+            qr.make();
+            const svg = qr.createSvgTag(4, 4);
+            return "data:image/svg+xml;base64," + Buffer.from(svg, "utf8").toString("base64");
+        } catch (e) { return ""; }
+    };
     const clashTransferStart = () => new Promise(resolve => {
         if (transferSrv) return resolve({ ok: true, url: transferUrl() });
         const http = require("http");
         const crypto = require("crypto");
-        transferToken = crypto.randomBytes(6).toString("hex");
+        transferToken = crypto.randomBytes(3).toString("hex"); // short but unpredictable enough for a temporary LAN server
         const srv = http.createServer((req, res) => {
             const p = (req.url || "").split("?")[0];
             if (req.method === "GET" && p === "/" + transferToken) {
@@ -1574,14 +1610,23 @@ function show(cls,msg){status.className=cls;status.textContent=msg}
             res.writeHead(404, { "Content-Type": "text/plain" });
             res.end("Not found");
         });
-        srv.on("error", e => resolve({ ok: false, error: e.message }));
-        srv.listen(0, "0.0.0.0", () => {
-            transferPort = srv.address().port;
+        // Prefer a short, stable port (8712) so the URL is easy to read and
+        // type; fall back to an ephemeral one when it is already taken. clash
+        // mixed-port (7890), the controller (9090), the LLM (8080) and
+        // appmonitor (608x) all use different ports.
+        const finish = port => {
+            transferPort = port;
             transferSrv = srv;
             global.transferSrv = srv;
+            srv.on("error", () => {}); // swallow runtime errors on this throwaway server
             clashLogLine("[transfer server: " + transferUrl() + "]");
             resolve({ ok: true, url: transferUrl() });
+        };
+        srv.once("error", e => {
+            if (e.code !== "EADDRINUSE") return resolve({ ok: false, error: e.message });
+            srv.listen(0, "0.0.0.0", () => finish(srv.address().port));
         });
+        srv.listen(8712, "0.0.0.0", () => finish(srv.address().port));
     });
     const clashTransferStop = () => new Promise(resolve => {
         if (transferSrv) { try { transferSrv.close(); } catch (e) {} transferSrv = null; }
@@ -1590,7 +1635,260 @@ function show(cls,msg){status.className=cls;status.textContent=msg}
     });
     ipc.handle("clash:transfer-start", () => clashTransferStart());
     ipc.handle("clash:transfer-stop", () => clashTransferStop());
-    ipc.handle("clash:transfer-status", () => ({ ok: true, running: !!transferSrv, url: transferUrl() }));
+    ipc.handle("clash:transfer-status", () => {
+        const url = transferUrl();
+        return { ok: true, running: !!transferSrv, url, qr: transferSrv ? transferQr(url) : "" };
+    });
+
+    // ---- File browser "Wi-Fi transfer" (ftrans, served on port 8720) ----
+    // Unlike the clash drop-page above (one-way import), this serves a whole
+    // mini file browser: browse/download the user's home and upload into whatever
+    // folder is open on the phone/other machine. Scope is strictly the user's home
+    // — every route resolves the requested path and rejects anything escaping it.
+    let ftransSrv = null;
+    let ftransPort = 0;
+    let ftransToken = "";
+    const home = require("os").homedir();
+    // Mirror the file browser's quick links (its _defaultQuickLinks on the
+    // renderer side) as relative-to-home paths the page can jump to.
+    const ftransQuickLinks = [
+        { label: "HOME", rel: "" },
+        { label: "DOWNLOADS", rel: "Downloads" },
+        { label: "DOCUMENTS", rel: "Documents" },
+        { label: "DESKTOP", rel: "Desktop" },
+        { label: "MUSIC", rel: "Music" },
+        { label: "PICTURES", rel: "Pictures" },
+        { label: "VIDEOS", rel: "Videos" }
+    ];
+    // Resolve a (client-supplied, decoded) path against home and require the
+    // result to stay inside home. Returns null when it would escape.
+    const ftransResolve = rel => {
+        try {
+            const base = path.resolve(home, String(rel || ""));
+            if (base === home || base.startsWith(home + path.sep)) return base;
+        } catch (e) {}
+        return null;
+    };
+    const ftransUrl = () => ftransSrv ? "http://" + lanIPv4() + ":" + ftransPort + "/" + ftransToken : "";
+    const ftransPage = () => {
+        const quickJson = JSON.stringify(ftransQuickLinks);
+        return `<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wireless Transfer / 无线传输</title>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--border:#30363d;--fg:#c9d1d9;--dim:#8b949e;--acc:#58a6ff;--ok:#3fb950;--err:#f85149}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI","Noto Sans CJK SC",sans-serif;padding:14px 16px 90px}
+h1{font-size:17px;margin:0 0 2px}
+.sub{color:var(--dim);font-size:12px;margin:0 0 14px}
+#quickbar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.qbtn{background:var(--panel);border:1px solid var(--border);color:var(--fg);padding:6px 12px;border-radius:8px;cursor:pointer;font-size:13px}
+.qbtn:hover{border-color:var(--acc)}
+.qbtn.on{background:var(--acc);color:#04070d;border-color:var(--acc);font-weight:600}
+#pathbar{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-bottom:12px}
+#pathbar button{background:transparent;border:1px solid var(--border);color:var(--fg);width:30px;height:30px;border-radius:7px;cursor:pointer;font-size:15px;flex:0 0 auto}
+#pathbar button:hover{border-color:var(--acc)}
+#path{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:var(--acc);word-break:break-all}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.item{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:6px;cursor:default;min-height:96px}
+.item.dir{cursor:pointer}
+.item.dir:hover,.item.file:hover{border-color:var(--acc)}
+.item .name{font-size:13px;line-height:1.3;word-break:break-all;flex:1}
+.item .sz{color:var(--dim);font-size:11px}
+.item .dl{background:var(--acc);color:#04070d;border:0;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;align-self:flex-start;font-weight:600}
+.item.icondir:hover{transform:translateY(-1px)}
+.empty{color:var(--dim);text-align:center;padding:40px 0;font-size:14px;grid-column:1/-1}
+.drop{border:2px dashed var(--border);border-radius:12px;padding:22px 16px;margin-top:14px;cursor:pointer;text-align:center;color:var(--dim);display:block;transition:border-color .2s,transform .2s}
+.drop b{color:var(--fg)}
+body.drag .drop{border-color:var(--acc);transform:scale(1.01);color:var(--acc)}
+.drop .label{color:var(--dim);font-size:12px;margin-top:4px}
+#file{position:fixed;left:-10000px;top:-10000px;width:1px;height:1px;opacity:0}
+#toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 18px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;word-break:break-all}
+#toast.show{opacity:1}
+#toast.ok{border-color:var(--ok);color:var(--ok)}
+#toast.err{border-color:var(--err);color:var(--err)}
+</style>
+</head>
+<body>
+<h1>Wireless Transfer / 无线传输</h1>
+<p class="sub">浏览并下载本机文件,或把文件拖上来传进当前打开的文件夹 — Browse, download or upload to the folder you're viewing.</p>
+<div id="quickbar"></div>
+<div id="pathbar"><button id="up" title="Up" onclick="goUp()">↑</button><span id="path">~/</span></div>
+<div id="grid"></div>
+<input type="file" id="file" multiple>
+<label id="drop" class="drop" for="file">Drop files here to upload into the current folder<br><span class="label">或点击选择文件 / or click to browse</span></label>
+<div id="toast"></div>
+<script>
+var QUICK=${quickJson};
+var state={path:'',depth:0};
+function el(id){return document.getElementById(id)}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;')}
+function fmt(n){if(n==null)return '';var c=1024,e=['B','KiB','MiB','GiB','TiB','PiB'],i=0;while(n>=c&&i<e.length-1){n/=c;i++}return (n>=10||i===0?Math.round(n):n.toFixed(1))+' '+e[i]}
+function show(msg,cls){var t=el('toast');t.textContent=msg;t.className='toast '+(cls||'');clearTimeout(t._t);t._t=setTimeout(function(){t.className='toast'},2400)}
+var DIR='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+var FIL='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8b949e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
+function renderQuick(){
+  var h='';for(var i=0;i<QUICK.length;i++){var q=QUICK[i];
+    h+='<button class="qbtn'+(state.path===q.rel?' on':'')+'" data-nav="'+encodeURIComponent(q.rel)+'">'+esc(q.label)+'</button>';}
+  el('quickbar').innerHTML=h;
+}
+function rel(a,b){return a?(a+'/'+b):b}
+function setPath(p){state.path=p||'';el('path').textContent='~/';load()}
+function goUp(){if(!state.path)return;var seg=state.path.split('/');seg.pop();setPath(seg.join('/'))}
+function load(){
+  el('grid').innerHTML='<div class="empty">Loading…</div>';
+  fetch('api/list?path='+encodeURIComponent(state.path)).then(function(r){return r.json()}).then(function(j){
+    if(!j.ok){el('grid').innerHTML='<div class="empty">'+(esc(j.error||'Failed'))+'</div>';return}
+    state.path=j.path||'';el('path').textContent='~/'+(state.path);renderQuick();
+    var items=j.items||[];var i,h='';
+    for(i=0;i<items.length;i++){h+=itemHTML(items[i])}
+    if(!items.length)h='<div class="empty">空文件夹 / Empty folder</div>';
+    el('grid').innerHTML=h;
+  }).catch(function(){el('grid').innerHTML='<div class="empty">Network error</div>'});
+}
+function itemHTML(it){
+  var cls='item '+(it.isDir?'dir':'file');
+  if(it.isDir){return '<div class="'+cls+'" data-nav="'+encodeURIComponent(rel(state.path,it.name))+'">'+DIR+'<span class="name">'+esc(it.name)+'</span></div>'}
+  return '<div class="'+cls+'">'+FIL+'<span class="name">'+esc(it.name)+'</span><span class="sz">'+fmt(it.size)+'</span><button class="dl" data-dl="'+encodeURIComponent(rel(state.path,it.name))+'">下载 ↓</button></div>'
+}
+function dl(p){var a=document.createElement('a');a.href='dl?path='+encodeURIComponent(p);a.download='';document.body.appendChild(a);a.click();a.remove()}
+// --- delegated clicks (nav + download) ---
+document.addEventListener('click',function(e){
+  var n=e.target.closest('[data-nav]');if(n){setPath(decodeURIComponent(n.getAttribute('data-nav')));return}
+  var d=e.target.closest('[data-dl]');if(d){e.preventDefault();dl(d.getAttribute('data-dl'));return}
+});
+// --- whole-document drag/drop for upload (browser never navigates away) ---
+var file=el('file');
+file.onchange=function(){if(file.files.length)uploadMany(file.files)}
+document.addEventListener('dragenter',function(e){e.preventDefault();state.depth++;document.body.className='drag'});
+document.addEventListener('dragover',function(e){e.preventDefault();if(e.dataTransfer)e.dataTransfer.dropEffect='copy'});
+document.addEventListener('dragleave',function(){if(--state.depth<=0){state.depth=0;document.body.className=''}});
+document.addEventListener('drop',function(e){e.preventDefault();state.depth=0;document.body.className='';
+  if(e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files.length)uploadMany(e.dataTransfer.files)});
+function uploadMany(files){
+  for(var i=0;i<files.length;i++){uploadOne(files[i])}
+}
+function uploadOne(f){
+  var target=encodeURIComponent(rel(state.path,f.name));
+  show('上传中… / Uploading '+f.name+'…');
+  fetch('api/upload?path='+encodeURIComponent(rel(state.path,''))+'&name='+encodeURIComponent(f.name),{method:'POST',body:f}).then(function(r){return r.json()}).then(function(j){
+    if(j.ok){show('✓ '+f.name+' 已上传 / uploaded','ok');load()}
+    else{show('✗ '+f.name+': '+j.error,'err')}
+  }).catch(function(){show('✗ '+f.name+' 上传失败 / failed','err')});
+}
+setPath('');
+</script>
+</body>
+</html>`;
+    };
+    const ftransStart = () => new Promise(resolve => {
+        if (ftransSrv) return resolve({ ok: true, url: ftransUrl() });
+        const http = require("http");
+        ftransToken = require("crypto").randomBytes(3).toString("hex");
+        const json = (res, code, obj) => {
+            res.writeHead(code, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(obj));
+        };
+        const srv = http.createServer((req, res) => {
+            const raw = (req.url || "");
+            const q = raw.indexOf("?");
+            const p = q === -1 ? raw : raw.slice(0, q);
+            const query = {};
+            if (q !== -1) {
+                raw.slice(q + 1).split("&").forEach(kv => {
+                    const i = kv.indexOf("=");
+                    if (i === -1) query[kv] = "";
+                    else query[kv.slice(0, i)] = kv.slice(i + 1);
+                });
+            }
+            const relOf = k => { try { return decodeURIComponent(query[k] || ""); } catch (e) { return ""; } };
+            // page
+            if (req.method === "GET" && p === "/" + ftransToken) {
+                res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+                res.end(ftransPage());
+                return;
+            }
+            // list a directory
+            if (req.method === "GET" && p === "/" + ftransToken + "/api/list") {
+                const abs = ftransResolve(relOf("path"));
+                if (!abs) return json(res, 403, { ok: false, error: "Forbidden" });
+                require("fs").readdir(abs, { withFileTypes: true }, (err, ents) => {
+                    if (err) return json(res, 404, { ok: false, error: "Cannot read: " + err.code });
+                    const items = ents.map(d => {
+                        let isDir = d.isDirectory(), size = 0;
+                        try {
+                            const st = require("fs").statSync(path.join(abs, d.name));
+                            size = st.size;
+                            if (st.isDirectory()) isDir = true;
+                        } catch (e) {}
+                        return { name: d.name, isDir, size };
+                    }).sort((a, b) => (b.isDir ? 1 : 0) - (a.isDir ? 1 : 0) || a.name.localeCompare(b.name));
+                    json(res, 200, { ok: true, path: path.relative(home, abs) || "", items });
+                });
+                return;
+            }
+            // download a file
+            if (req.method === "GET" && p === "/" + ftransToken + "/dl") {
+                const abs = ftransResolve(relOf("path"));
+                const fs = require("fs");
+                if (!abs) return json(res, 403, { ok: false, error: "Forbidden" });
+                fs.stat(abs, (err, st) => {
+                    if (err || !st.isFile()) return json(res, 404, { ok: false, error: "Not found" });
+                    res.writeHead(200, {
+                        "Content-Type": "application/octet-stream",
+                        "Content-Length": st.size,
+                        "Content-Disposition": 'attachment; filename="' + encodeURIComponent(path.basename(abs)) + '"'
+                    });
+                    fs.createReadStream(abs).pipe(res);
+                });
+                return;
+            }
+            // upload one file into the current folder
+            if (req.method === "POST" && p === "/" + ftransToken + "/api/upload") {
+                const dir = ftransResolve(relOf("path"));
+                const name = relOf("name");
+                if (!dir) return json(res, 403, { ok: false, error: "Forbidden" });
+                if (!name || name === "." || name === ".." || name.includes("/") || name.includes("\\") || name.includes("\0"))
+                    return json(res, 400, { ok: false, error: "Bad filename" });
+                const target = path.join(dir, name);
+                const fs = require("fs");
+                const ws = fs.createWriteStream(target);
+                req.pipe(ws);
+                ws.on("finish", () => json(res, 200, { ok: true, size: ws.bytesWritten || 0 }));
+                ws.on("error", e => { if (!res.headersSent) json(res, 500, { ok: false, error: e.message }); });
+                req.on("error", () => { try { ws.destroy(); } catch (e) {} });
+                return;
+            }
+            res.writeHead(404, { "Content-Type": "text/plain" });
+            res.end("Not found");
+        });
+        const finish = port => {
+            ftransPort = port;
+            ftransSrv = srv;
+            global.ftransSrv = srv;
+            srv.on("error", () => {});
+            resolve({ ok: true, url: ftransUrl() });
+        };
+        srv.once("error", e => {
+            if (e.code !== "EADDRINUSE") return resolve({ ok: false, error: e.message });
+            srv.listen(0, "0.0.0.0", () => finish(srv.address().port));
+        });
+        srv.listen(8720, "0.0.0.0", () => finish(srv.address().port));
+    });
+    const ftransStop = () => new Promise(resolve => {
+        if (ftransSrv) { try { ftransSrv.close(); } catch (e) {} ftransSrv = null; }
+        global.ftransSrv = null;
+        resolve({ ok: true });
+    });
+    ipc.handle("ftrans:start", () => ftransStart());
+    ipc.handle("ftrans:stop", () => ftransStop());
+    ipc.handle("ftrans:status", () => {
+        const url = ftransUrl();
+        return { ok: true, running: !!ftransSrv, url, qr: ftransSrv ? transferQr(url) : "" };
+    });
 
     // ---- Bundled local LLM daemon (llama-server, #144) ----
     // Mirrors the clash daemon: plain spawn of the baked binary with a log ring
@@ -2719,13 +3017,14 @@ function show(cls,msg){status.className=cls;status.textContent=msg}
     });
     ipc.handle("bundled:status", () => new Promise(async resolve => {
         const claude = await bundledClaudeVersion();
-        const [btop, aerc, w3m, firefox] = await Promise.all([
-            bundledCmdVersion("btop"), bundledCmdVersion("aerc"), w3mVersion(), firefoxVersion()
+        const [btop, aerc, w3m, firefox, musicfox] = await Promise.all([
+            bundledCmdVersion("btop"), bundledCmdVersion("aerc"), w3mVersion(), firefoxVersion(), musicfoxVersion()
         ]);
         resolve({
             ok: true,
             claude: { update: "auto", ...claude },
             clash: { update: "auto", installed: !!CLASH_BIN, version: await clashVersion() },
+            musicfox: { update: "github", ...musicfox },
             btop: { update: "apt", ...btop },
             aerc: { update: "apt", ...aerc },
             w3m: { update: "apt", ...w3m },
@@ -2787,6 +3086,78 @@ function show(cls,msg){status.className=cls;status.textContent=msg}
                 cleanup();
                 log("[mihomo updated — restarting…]");
                 if (clashRunning) clashRestart();
+                resolve({ ok: true });
+            });
+        });
+    }));
+
+    // musicfox (NetEase Cloud Music TUI) update — same GitHub pattern as clash,
+    // but go-musicfox publishes a `.deb` we extract and install to
+    // /usr/local/bin/musicfox, then re-apply the two system fixes (the
+    // libFLAC.so.8→.12 dlopen symlink and dropping the orphan libsoup2) that
+    // the bake in build-iso.sh applies — idempotent, so re-running is safe.
+    const MUSICFOX_BIN = "/usr/local/bin/musicfox";
+    const musicfoxVersion = () => new Promise(resolve => {
+        if (!fs.existsSync(MUSICFOX_BIN)) return resolve({ installed: false, version: "" });
+        const { execFile } = require("child_process");
+        let done = false;
+        const finish = v => { if (!done) { done = true; resolve({ installed: !!v, version: v }); } };
+        const run = (args, cb) => execFile(MUSICFOX_BIN, args, { timeout: 5000 }, (err, stdout) => {
+            if (err) return cb("");
+            const m = String(stdout || "").match(/(\d+\.\d+(?:\.\d+)?)/);
+            cb(m ? m[1] : "");
+        });
+        run(["--version"], v => { if (v) return finish(v); run(["-v"], v2 => finish(v2)); });
+    });
+    ipc.handle("musicfox:check-update", () => new Promise(resolve => {
+        if (!fs.existsSync(MUSICFOX_BIN)) return resolve({ ok: true, available: false });
+        musicfoxVersion().then(v => {
+            const current = v.version;
+            const https = require("https");
+            https.get({
+                protocol: "https:",
+                host: "api.github.com",
+                path: "/repos/go-musicfox/go-musicfox/releases/latest",
+                headers: { "User-Agent": "eDEX-OS update" }
+            }, res => {
+                if (res.statusCode !== 200) { res.resume(); return resolve({ ok: false, available: true, current, error: "FETCH_FAILED" }); }
+                let raw = "";
+                res.on("data", d => { raw += d; });
+                res.on("end", () => {
+                    try {
+                        const rel = JSON.parse(raw);
+                        const latest = (rel.tag_name || "").replace(/^v/, "");
+                        const dl = (rel.assets || []).find(a => /go-musicfox_[\d.]+_linux_amd64\.deb$/i.test(a.name));
+                        resolve({ ok: true, available: true, current, latest, downloadUrl: dl ? dl.browser_download_url : "" });
+                    } catch (e) { resolve({ ok: false, available: true, current, error: "FETCH_FAILED" }); }
+                });
+            }).on("error", () => resolve({ ok: false, available: true, current, error: "FETCH_FAILED" }))
+              .setTimeout(8000, () => resolve({ ok: false, available: true, current, error: "FETCH_FAILED" }));
+        });
+    }));
+    ipc.handle("musicfox:update", (e, args) => new Promise(resolve => {
+        const url = (args && args.url) || "";
+        if (!fs.existsSync(MUSICFOX_BIN)) return resolve({ ok: false, error: "NO_BINARY" });
+        if (!url) return resolve({ ok: false, error: "NO_URL" });
+        const { spawn } = require("child_process");
+        const tmp = path.join(electron.app.getPath("temp"), "musicfox-" + Date.now());
+        const deb = tmp + ".deb";
+        const cleanup = () => { try { fs.unlinkSync(deb); } catch (e) {} try { fs.rmSync(tmp + "-root", { recursive: true, force: true }); } catch (e) {} };
+        const fail = error => { cleanup(); resolve({ ok: false, error }); };
+        const dl = spawn("curl", ["-fL", "--connect-timeout", "15", "--retry", "2", "-o", deb, url]);
+        dl.on("error", e => fail(e.message));
+        dl.on("close", code => {
+            if (code !== 0) return fail("download failed (curl exit " + code + ")");
+            const p = spawn("bash", ["-c",
+                `rm -rf '${tmp}-root' && dpkg-deb -x '${deb}' '${tmp}-root' && ` +
+                `BIN=$(find '${tmp}-root' -type f -name musicfox -path '*/bin/*' | head -1) && ` +
+                `[ -n "$BIN" ] && sudo -n install -m 755 -o root -g root "$BIN" '${MUSICFOX_BIN}' && ` +
+                `ln -sf libFLAC.so.12 '/usr/lib/x86_64-linux-gnu/libFLAC.so.8' && ` +
+                `rm -f '/usr/lib/x86_64-linux-gnu/libsoup-2.4.so.1' '/usr/lib/x86_64-linux-gnu/libsoup-2.4.so.1.11.2'`]);
+            p.on("error", e => fail(e.message));
+            p.on("close", code2 => {
+                if (code2 !== 0) return fail("install failed (exit " + code2 + ")");
+                cleanup();
                 resolve({ ok: true });
             });
         });

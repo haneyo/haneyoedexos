@@ -2674,6 +2674,11 @@ async function initUI() {
                 if (wrap) wrap.style.display = (st && st.running && st.url) ? "" : "none";
                 const url = document.getElementById("settingsClashTransferUrl");
                 if (url) url.textContent = (st && st.url) ? st.url : "";
+                const qr = document.getElementById("settingsClashTransferQr");
+                if (qr) {
+                    if (st && st.running && st.qr) { qr.src = st.qr; qr.hidden = false; }
+                    else { qr.hidden = true; }
+                }
             }).catch(() => {});
         },
         // #9 Controller REST passthrough (clash:ctrl in main): mode switch,
@@ -2906,15 +2911,19 @@ async function initUI() {
     window.updates = {
         app: null,
         clash: null,
+        musicfox: null,
         _clashUpdating: false,
         _appUpdatable: false,
         _clashUpdatable: false,
+        _musicfoxUpdatable: false,
+        _musicfoxUpdating: false,
         _appUpdatePlayed: false,
         refresh() {
             this.checkApp();
             this.refreshBundled();
             this.refreshLastUpdate();
             this.checkClashUpdate();
+            this.checkMusicfoxUpdate();
         },
         checkApp(manual) {
             // manual=true (the "Check" button): dialog with the outcome. refresh()
@@ -3005,6 +3014,7 @@ async function initUI() {
                 if (!st) return;
                 const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
                 set("settingsUpClashVer", (st.clash && st.clash.installed) ? (st.clash.version ? "v" + st.clash.version : "installed") : "–");
+                set("settingsUpMusicfoxVer", (st.musicfox && st.musicfox.installed) ? (st.musicfox.version ? "v" + st.musicfox.version : "installed") : "–");
                 set("settingsUpClaudeVer", (st.claude && st.claude.version) ? "v" + st.claude.version : "–");
                 set("settingsUpW3mVer", (st.w3m && st.w3m.installed) ? (st.w3m.version ? "v" + st.w3m.version : "installed") : "–");
                 set("settingsUpFirefoxVer", (st.firefox && st.firefox.installed) ? (st.firefox.version ? "v" + st.firefox.version : "installed") : "–");
@@ -3146,6 +3156,72 @@ async function initUI() {
                     btn.disabled = false;
                     btn.textContent = t("settings.updates.updateBtn");
                 }
+                this.toast(t("settings.updates.updateFailed"));
+            });
+        },
+        // musicfox update — mirrors the clash flow. go-musicfox publishes a
+        // .deb, so `updateMusicfox` extracts the binary and swaps it into
+        // /usr/local/bin (the main-process handler re-applies the two build
+        // fixes — libFLAC .8 symlink + libsoup2 removal).
+        checkMusicfoxUpdate(manual) {
+            ipc.invoke("musicfox:check-update").then(r => {
+                this.musicfox = r;
+                const el = document.getElementById("settingsUpMusicfoxVer");
+                const btn = document.getElementById("settingsUpMusicfoxCheck");
+                let updatable = false;
+                if (el) {
+                    if (r && r.available) {
+                        const c = r.ok && r.latest && r.current && cmpVer(r.latest, r.current) > 0;
+                        updatable = !!(c && r.downloadUrl);
+                        el.textContent = (r.current ? "v" + r.current : "–") + (c ? " → v" + r.latest : "");
+                    } else {
+                        el.textContent = t("settings.updates.auto");
+                    }
+                }
+                this._musicfoxUpdatable = updatable;
+                if (btn) btn.textContent = updatable ? t("settings.updates.updateBtn") : t("settings.updates.check");
+                if (manual) this._musicfoxManualResult(r);
+            }).catch(() => { if (manual) this.toast(t("settings.updates.updateFailed")); });
+        },
+        _musicfoxManualResult(r) {
+            if (!r || !r.available) { this.toast(t("settings.updates.auto")); return; }
+            if (!r.ok) { this.toast(t("settings.updates.updateFailed") + (r.error ? " " + r.error : "")); return; }
+            const c = r.latest && r.current && cmpVer(r.latest, r.current) > 0;
+            if (c && r.downloadUrl) {
+                this._confirmModal(
+                    t("settings.updates.newVersion"),
+                    `${t("settings.updates.app")} v${r.current}<br>${t("settings.updates.latest")} v${r.latest}`,
+                    () => this.updateMusicfox(),
+                    t("settings.updates.updateBtn")
+                );
+            } else {
+                this._confirmModal(
+                    t("settings.updates.upToDate"),
+                    `${t("settings.updates.app")} v${r.current || "–"}`,
+                    null, null
+                );
+            }
+        },
+        updateMusicfox() {
+            if (this._musicfoxUpdating) return;
+            const r = this.musicfox;
+            const btn = document.getElementById("settingsUpMusicfoxCheck");
+            if (!r || !r.downloadUrl) { this.toast(t("settings.updates.noUpdate")); return; }
+            this._musicfoxUpdating = true;
+            if (btn) { btn.disabled = true; btn.textContent = t("settings.updates.updating"); }
+            ipc.invoke("musicfox:update", { url: r.downloadUrl }).then(res => {
+                this._musicfoxUpdating = false;
+                if (btn) { btn.disabled = false; btn.textContent = t("settings.updates.updateBtn"); }
+                if (res && res.ok) {
+                    this.toast(t("settings.updates.updatedMusicfox") + (r.latest ? " v" + r.latest : ""));
+                    window.eventPlay("cliapp_update");
+                    this.checkMusicfoxUpdate();
+                } else {
+                    this.toast(t("settings.updates.updateFailed") + (res && res.error ? " " + res.error : ""));
+                }
+            }).catch(() => {
+                this._musicfoxUpdating = false;
+                if (btn) { btn.disabled = false; btn.textContent = t("settings.updates.updateBtn"); }
                 this.toast(t("settings.updates.updateFailed"));
             });
         },
@@ -4279,8 +4355,12 @@ window.openSettings = async () => {
                         <option value="true">${t("settings.network.on")}</option>
                         <option value="false" selected>${t("settings.network.off")}</option>
                     </select>
-                    <div id="settingsClashTransferUrlWrap" style="display:none;margin-top:1vh;width:100%">
+                    <div id="settingsClashTransferUrlWrap" style="display:none;margin-top:1vh;width:100%;text-align:center">
+                        <img id="settingsClashTransferQr" alt="QR" style="display:block;margin:12px auto 6px;width:132px;height:132px;border-radius:8px;background:#fff;padding:6px;box-sizing:content-box" hidden>
                         <span id="settingsClashTransferUrl" class="settings_net_info">–</span>
+                        <div class="settings_net_actions">
+                            <button type="button" id="settingsClashTransferCopy" class="settings_net_btn">${t("settings.clash.transferCopy")}</button>
+                        </div>
                     </div>`, "settings.clash.transfer.help"),
                 settingsRow("settings.clash.log", `<pre id="settingsClashLog" class="settings_net_log">–</pre>`),
             ].join("");
@@ -4351,6 +4431,12 @@ window.openSettings = async () => {
                     <span id="settingsUpClashVer" class="settings_net_info">–</span>
                     <div class="settings_net_actions">
                         <button type="button" id="settingsUpClashCheck" class="settings_net_btn">${t("settings.updates.check")}</button>
+                    </div>
+                </div>`),
+            settingsRow("settings.updates.musicfox", `<div class="settings_ver_row">
+                    <span id="settingsUpMusicfoxVer" class="settings_net_info">–</span>
+                    <div class="settings_net_actions">
+                        <button type="button" id="settingsUpMusicfoxCheck" class="settings_net_btn">${t("settings.updates.check")}</button>
                     </div>
                 </div>`),
             settingsRow("settings.updates.claude", `<span id="settingsUpClaudeVer" class="settings_net_info">–</span> <span class="settings_net_info">· ${t("settings.updates.auto")}</span>`),
@@ -4513,6 +4599,13 @@ window.openSettings = async () => {
         bindClash("settingsClashImportFile", () => window.clash.importFile());
         const clashTransfer = document.getElementById("settingsClashTransfer");
         if (clashTransfer) clashTransfer.addEventListener("change", () => window.clash.transferToggle());
+        const clashTransferCopy = document.getElementById("settingsClashTransferCopy");
+        if (clashTransferCopy) clashTransferCopy.addEventListener("click", () => {
+            const urlEl = document.getElementById("settingsClashTransferUrl");
+            if (urlEl && urlEl.textContent && urlEl.textContent !== "–") {
+                try { remote.clipboard.writeText(urlEl.textContent); } catch (e) {}
+            }
+        });
         bindClash("settingsClashGroupsRefresh", () => { window.clash.refreshGroups(); window.clash.refreshRules(); });
         const clashMode = document.getElementById("settingsClashMode");
         if (clashMode) clashMode.addEventListener("change", () => window.clash.setMode());
@@ -4570,6 +4663,10 @@ window.openSettings = async () => {
         bindUpd("settingsUpClashCheck", () => {
             if (window.updates._clashUpdatable) window.updates.updateClash();
             else window.updates.checkClashUpdate(true);
+        });
+        bindUpd("settingsUpMusicfoxCheck", () => {
+            if (window.updates._musicfoxUpdatable) window.updates.updateMusicfox();
+            else window.updates.checkMusicfoxUpdate(true);
         });
         if (window.updates) window.updates.refresh();
         const active = document.querySelector("#settingsSide .settings_cat_btn.active");

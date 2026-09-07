@@ -73,9 +73,13 @@ class FilesystemDisplay {
         const gearIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
         const trashIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6"/></svg>`;
         const netIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>`;
+        // Wireless transfer (upload/download over LAN via a browser page). Reuses
+        // eDEX's rounded-corner stroke style; arrows up (upload) + down (download)
+        // inside a rounded square, with a small Wi-Fi arc to match the theme.
+        const wifiIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><path d="M9 3.5h6a2.5 2.5 0 0 1 2.5 2.5v8l-2 2.2-2-2.2h-4.5L7 16.2v-2.2A2.5 2.5 0 0 1 9.5 11.5H21"/></svg>`;
 
         container.innerHTML = `
-            <h3 class="title"><p>FILESYSTEM<button class="fs_header_btn" title="Trash" onclick="window.fsDisp.showTrash()">${trashIcon}</button><button class="fs_header_btn" title="Network" onclick="window.fsDisp.showNetwork()">${netIcon}</button><button class="fs_gear" title="eDEX Settings" onclick="window.openSettings()">${gearIcon}</button></p><p id="fs_disp_title_dir"></p></h3>
+            <h3 class="title"><p>FILESYSTEM<button class="fs_header_btn" title="Trash" onclick="window.fsDisp.showTrash()">${trashIcon}</button><button class="fs_header_btn" title="Wireless Transfer" onclick="window.fsDisp.showFileTransfer()">${wifiIcon}</button><button class="fs_header_btn" title="Network" onclick="window.fsDisp.showNetwork()">${netIcon}</button><button class="fs_gear" title="eDEX Settings" onclick="window.openSettings()">${gearIcon}</button></p><p id="fs_disp_title_dir"></p></h3>
             <div id="fs_quickbar">${this._quickbarHTML()}</div>
             <div id="fs_disp_container">
             </div>
@@ -1072,18 +1076,30 @@ class FilesystemDisplay {
             const os = require("os");
             return `/run/user/${os.userInfo().uid}/gvfs`;
         };
-        // Mount an SMB share via gio (gvfs). Credentials are inlined so it can
-        // work non-interactively; guest/anon when no user is given.
-        this._mountSMB = (host, share, user, pass) => {
+        // Mount a network share via gio (gvfs). Credentials are inlined so it
+        // works non-interactively; guest/anon when no user is given. gvfs
+        // backends natively handle smb / ftp / dav (WebDAV), so one function
+        // drives all protocols by building the right URI. Requires a D-Bus
+        // session bus + gvfsd (see edex-session.sh).
+        this._mount = (proto, host, share, user, pass, port) => {
             const exec = require("child_process").exec;
             const enc = s => encodeURIComponent(s || "");
-            let uri = "smb://";
-            if (user) uri += enc(user) + (pass ? ":" + enc(pass) : "") + "@";
-            uri += host;
-            if (share) uri += "/" + share.split("/").map(enc).join("/");
+            const auth = user ? enc(user) + (pass ? ":" + enc(pass) : "") + "@" : "";
+            let uri;
+            switch (proto) {
+                case "ftp":  uri = "ftp://" + auth + host + (share ? "/" + share : ""); break;
+                case "dav":  uri = "dav://"  + auth + host + (port ? ":" + port : "") + (share ? "/" + share : ""); break;
+                case "davs": uri = "davs://" + auth + host + (port ? ":" + port : "") + (share ? "/" + share : ""); break;
+                default:     uri = "smb://" + auth + host + (share ? "/" + share.split("/").map(enc).join("/") : "");
+            }
             return new Promise(resolve => {
                 exec(`gio mount "${uri}"`, { timeout: 25000 }, (err, stdout, stderr) => {
-                    resolve({ ok: !err, err: err ? (stderr || err.message).trim() : "" });
+                    let msg = (stderr || (err && err.message) || "").trim();
+                    if (err && !msg) msg = "mount failed";
+                    // Surf the common D-Bus/gvfs failure plainly if it ever slips
+                    // through, so the user knows it isn't a credential issue.
+                    if (msg && /dbus|gvfs|dav|mount\b/i.test(msg) && msg.length > 220) msg = msg.slice(0, 220) + "…";
+                    resolve({ ok: !err, err: msg });
                 });
             });
         };
@@ -1152,7 +1168,7 @@ class FilesystemDisplay {
                     <button class="fs_virtual_btn" onclick="window.fsDisp.readFS(window.fsDisp._trashHome())">Back</button>
                 </div>
                 <div class="fs_trash_list">`;
-            if (!mounts.length) html += `<p class="fs_trash_none">No network mounts yet — connect to an SMB share</p>`;
+            if (!mounts.length) html += `<p class="fs_trash_none">No network mounts yet — connect to a server</p>`;
             mounts.forEach(m => {
                 const p = path.join(gvfsRoot, m);
                 html += `
@@ -1168,31 +1184,125 @@ class FilesystemDisplay {
         this.showMountDialog = () => {
             new Modal({
                 type: "custom",
-                title: "Connect to Server (SMB)",
+                title: "Connect to Server",
                 html: `
                     <div class="fs_mount_form">
+                        <label>Type</label>
+                        <select id="fs_mount_proto">
+                            <option value="smb">SMB</option>
+                            <option value="ftp">FTP</option>
+                            <option value="dav">WebDAV</option>
+                            <option value="davs">WebDAV (HTTPS)</option>
+                        </select>
                         <label>Server</label><input id="fs_mount_server" placeholder="192.168.1.10">
-                        <label>Share (optional)</label><input id="fs_mount_share" placeholder="public">
+                        <label>Path / Share (optional)</label><input id="fs_mount_share" placeholder="public">
+                        <label>Port (optional, WebDAV)</label><input id="fs_mount_port" placeholder="80 / 443">
                         <label>Username (optional)</label><input id="fs_mount_user">
                         <label>Password (optional)</label><input id="fs_mount_pass" type="password">
                     </div>`,
-                buttons: [{ label: "Mount", action: `window.fsDisp.doMount(); window.modals[Object.keys(window.modals).pop()].close();` }]
+                buttons: [{ label: "Mount", action: `window.fsDisp.doMount(document.getElementById('fs_mount_server').closest('div[id^="modal_"]').id)` }]
             });
         };
 
-        this.doMount = async () => {
+        this.doMount = async (modalId) => {
             const g = id => document.getElementById(id);
+            const proto = g("fs_mount_proto") ? g("fs_mount_proto").value : "smb";
             const host = g("fs_mount_server") ? g("fs_mount_server").value.trim() : "";
             const share = g("fs_mount_share") ? g("fs_mount_share").value.trim() : "";
             const user = g("fs_mount_user") ? g("fs_mount_user").value.trim() : "";
             const pass = g("fs_mount_pass") ? g("fs_mount_pass").value : "";
+            const port = g("fs_mount_port") ? g("fs_mount_port").value.trim() : "";
             if (!host) return;
-            const r = await this._mountSMB(host, share, user, pass);
+            // Swap the modal body to a live "connecting" state (and report the
+            // failure inline) instead of leaving the user staring at a frozen
+            // form with no feedback for up to 25 s.
+            const mid = modalId ? String(modalId) : "";
+            const id = mid.replace(/^modal_/, "");
+            const modalEl = mid ? document.getElementById(mid) : null;
+            const esc = s => String(s == null ? "" : s).replace(/</g, "&lt;");
+            if (modalEl) {
+                modalEl.innerHTML = `<h1>Connecting…</h1>
+                    <div style="text-align:center;padding:20px 0">
+                        <div class="fs_loading_ring"></div>
+                        <p style="margin-top:12px;color:#8b949e">Connecting to ${esc(host)} …</p>
+                    </div>
+                    <div><button onclick="window.modals['${id}'].close()">Cancel</button></div>`;
+            }
+            const r = await this._mount(proto, host, share, user, pass, port);
             if (!r.ok) {
-                new Modal({ type: "custom", title: "Mount failed", html: `<p>${(r.err || "Could not mount the share").replace(/</g, "&lt;")}</p>` });
+                const err = esc(r.err || "Could not mount the server");
+                if (modalEl) {
+                    modalEl.innerHTML = `<h1>Mount failed</h1>
+                        <pre style="white-space:pre-wrap;word-break:break-all;color:#f85149">${err}</pre>
+                        <div><button onclick="window.modals['${id}'].close()">Close</button></div>`;
+                } else {
+                    new Modal({ type: "custom", title: "Mount failed", html: `<p>${err}</p>` });
+                }
                 return;
             }
+            if (id && window.modals[id]) window.modals[id].close();
             this.readFS(this._gvfsRoot());
+        };
+
+        /* ---- Wireless transfer (browse / upload / download over LAN) ---- */
+        // Opens a browser page served by the ftrans server in _boot.js (port 8720,
+        // token-gated). The page mirrors this file browser: navigate dirs, download
+        // any file, and upload into the currently-open directory. The stop/start +
+        // QR/URL live inside this modal; state is mirrored to this._ftransRunning
+        // so the toggle button knows which direction to send.
+        this._ftransRunning = false;
+        this.showFileTransfer = () => {
+            const esc = s => String(s == null ? "" : s).replace(/</g, "&lt;");
+            new Modal({
+                type: "custom",
+                title: "Wireless Transfer / 无线传输",
+                html: `
+                    <div style="padding:2px 4px">
+                        <p style="margin:0 0 12px;color:#8b949e;font-size:13px;line-height:1.5">Open the URL on a phone or another computer to browse, download files from, or upload files to this machine. Uploads land in whatever folder is open on that page.</p>
+                        <div style="display:flex;gap:14px;align-items:center">
+                            <img id="ftransQr" alt="QR code" style="width:124px;height:124px;border-radius:8px;background:#fff;padding:7px;display:none;flex:0 0 auto">
+                            <div style="flex:1;min-width:0">
+                                <div id="ftransUrl" style="font-family:monospace;font-size:13px;word-break:break-all;color:#58a6ff;min-height:20px;margin-bottom:10px"></div>
+                                <div style="display:flex;gap:8px">
+                                    <button id="ftransToggle" onclick="window.fsDisp.ftransToggle()">Start</button>
+                                    <button id="ftransCopy" onclick="window.fsDisp.ftransCopy()" style="display:none">Copy</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="ftransStatus" style="margin-top:12px;color:#8b949e;font-size:13px;min-height:18px"></div>
+                    </div>`,
+                buttons: [{ label: "Close", action: `window.modals[Object.keys(window.modals).pop()].close()` }]
+            });
+            setTimeout(() => this._ftransRefresh(), 0);
+        };
+        this._ftransRefresh = () => {
+            const ipc = require("electron").ipcRenderer;
+            ipc.invoke("ftrans:status").then(st => {
+                const qr = document.getElementById("ftransQr");
+                const url = document.getElementById("ftransUrl");
+                const toggle = document.getElementById("ftransToggle");
+                const copy = document.getElementById("ftransCopy");
+                const status = document.getElementById("ftransStatus");
+                if (!toggle) return; // modal was closed
+                if (st && st.running && st.qr) { qr.style.display = "block"; qr.src = st.qr; }
+                else qr.style.display = "none";
+                if (st && st.running && st.url) { url.textContent = st.url; copy.style.display = ""; }
+                else { url.textContent = ""; copy.style.display = "none"; }
+                this._ftransRunning = !!(st && st.running);
+                toggle.textContent = this._ftransRunning ? "Stop" : "Start";
+                if (status) status.textContent = this._ftransRunning
+                    ? "Running — scan the QR or open the URL. Stops when this modal closes."
+                    : (st && st.error) ? st.error : "Not running.";
+            }).catch(() => {});
+        };
+        this.ftransToggle = () => {
+            const ipc = require("electron").ipcRenderer;
+            ipc.invoke(this._ftransRunning ? "ftrans:stop" : "ftrans:start").then(() => this._ftransRefresh());
+        };
+        this.ftransCopy = () => {
+            const url = document.getElementById("ftransUrl");
+            if (!url || !url.textContent) return;
+            try { require("@electron/remote").clipboard.writeText(url.textContent); } catch (e) {}
         };
 
         this._newFolder = () => {

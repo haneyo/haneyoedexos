@@ -337,6 +337,10 @@ class MediaPlayer {
                         if (actx.state === "suspended") actx.resume();
                     });
                     const BARS = 64;
+                    // Winamp-style falling-peak spectrum driver (see winamp-vis.js).
+                    const WinampVis = require("./assets/misc/winamp-vis.js").WinampVis;
+                    const vis = new WinampVis();
+                    const targets = new Float32Array(BARS);
                     const draw = () => {
                         requestAnimationFrame(draw);
                         const w = spectrum.width, h = spectrum.height;
@@ -356,17 +360,18 @@ class MediaPlayer {
                             }
                             g.globalAlpha = 1;
                         } else {
+                            // Winamp-style: feed each band's level into the
+                            // fast-attack/slow-decay + falling-peak-cap driver,
+                            // then draw the bars and their sinking caps.
                             analyser.getByteFrequencyData(data);
-                            const bw = w / BARS;
                             for (let i = 0; i < BARS; i++) {
                                 // Quadratic mapping concentrates bars on the musical
                                 // low/mid range, like a classic equalizer.
                                 const bin = Math.floor(Math.pow(i / BARS, 2) * (data.length - 1));
-                                const v = data[bin] / 255;
-                                const bh = Math.max(2, v * h);
-                                g.fillStyle = `rgba(${cr}, ${cg}, ${cb}, ${0.3 + 0.65 * v})`;
-                                g.fillRect(i * bw + bw * 0.2, h - bh, bw * 0.6, bh);
+                                targets[i] = data[bin] / 255;
                             }
+                            vis.tick(targets, performance.now());
+                            vis.draw(g, w, h, cr, cg, cb);
                         }
                     };
                     draw();
