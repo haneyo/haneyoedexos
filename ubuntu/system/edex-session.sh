@@ -56,5 +56,17 @@ xset -dpms 2>/dev/null || true
 xset s off 2>/dev/null || true
 xset s noblank 2>/dev/null || true
 fcitx5 -d >/dev/null 2>&1 &
+# gio mount (the file-browser's SMB / FTP / WebDAV "Connect to Server") needs a
+# D-Bus session bus and the gvfs daemon beside it. This custom lightdm session
+# script starts neither by default, so mounts silently fail until both exist.
+# Start them if the tools are present; a real session already providing the bus
+# keeps it untouched (the `-z` guard below). Some gvfsd live under
+# /usr/lib/gvfs/ rather than /usr/libexec/.
+if [ -z "$DBUS_SESSION_BUS_ADDRESS" ]; then
+    command -v dbus-launch >/dev/null 2>&1 && eval "$(dbus-launch --sh-syntax 2>/dev/null)" || true
+fi
+for G in /usr/libexec/gvfsd /usr/lib/gvfs/gvfsd /usr/bin/gvfsd; do
+    [ -x "$G" ] && { "$G" >/dev/null 2>&1 & break; }
+done
 sleep 1
 exec /opt/edex/eDEX-UI.AppImage --no-sandbox

@@ -64,6 +64,11 @@ $status = $session.GetPlaybackInfo().PlaybackStatus.ToString()
 Write-Output ("{0}|{1}|{2}|{3}" -f $status, $session.SourceAppUserModelId, $props.Title, $props.Artist)
 `;
 
+// Winamp-style falling-peak spectrum driver (shared with the MediaPlayer's
+// visualizer, see winamp-vis.js). The widget has no FFT access, so it feeds the
+// driver a generated pseudo-spectrum each frame.
+const WinampVis = require("./assets/misc/winamp-vis.js").WinampVis;
+
 class MiniAudio {
     constructor(opts) {
         this.container = typeof opts.container === "string" ? document.getElementById(opts.container) : opts.container;
@@ -80,6 +85,8 @@ class MiniAudio {
         // equalizer (per-bar phase + a slower secondary wobble per bar).
         this._phases = new Float32Array(64);
         for (let i = 0; i < this._phases.length; i++) this._phases[i] = Math.random() * Math.PI * 2;
+        this._target = new Float32Array(64);
+        this._vis = new WinampVis();
 
         // Hidden by default - only the peek arrow stays on the screen edge.
         // (Added before _build so the widget never flashes in briefly.)
@@ -388,21 +395,20 @@ class MiniAudio {
             const cr = window.theme.r, cg = window.theme.g, cb = window.theme.b;
             const speed = 0.22;
             if (this.mode === "bars") {
-                // SPECTRUM - same look as the MediaPlayer equalizer: 64 thin
-                // bars, low-end-heavy emphasis, alpha gradient. Pseudo data
-                // (no FFT is available for the system player) shaped like a
-                // real spectrum: tall swells on the left, quiet twinkles right.
-                const BARS = 64, bw = w / BARS;
+                // SPECTRUM - Winamp-style (same driver as the MediaPlayer): the
+                // pseudo data (no FFT for the system player) is shaped like a
+                // real spectrum — tall swells on the left, quiet twinkles right —
+                // then smoothed + peak-capped by the shared falling-peak driver.
+                const BARS = 64;
                 for (let i = 0; i < BARS; i++) {
                     this._phases[i] += speed;
                     const env = Math.pow(1 - i / BARS, 0.75);
-                    const v = env * Math.abs(
+                    this._target[i] = env * Math.abs(
                         Math.sin(this._phases[i] * (1 + i * 0.04))
                         * (0.5 + 0.5 * Math.sin(this._phases[i] * 0.37 + i * 1.7)));
-                    const bh = Math.max(2, v * h);
-                    this.ctx.fillStyle = `rgba(${cr}, ${cg}, ${cb}, ${0.3 + 0.65 * v})`;
-                    this.ctx.fillRect(i * bw + bw * 0.2, h - bh, bw * 0.6, bh);
                 }
+                this._vis.tick(this._target, performance.now());
+                this._vis.draw(this.ctx, w, h, cr, cg, cb);
             } else {
                 // WAVEFORM - mirrored oscilloscope, same dot style as the audio
                 // player: one sample per column mirrored around the center line.
