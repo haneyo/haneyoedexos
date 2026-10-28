@@ -743,12 +743,23 @@ app.on('ready', async () => {
         } catch (e) {}
     };
     ipc.on("dbg-log", (e, msg) => { if (typeof msg === "string") dbgLog("[renderer] " + msg); });
+    // v2.4.54 swaps the 2023-12-12 multi-zh-hans model for the 2026-06-05 x-asr
+    // zh-en one (mixed Chinese+English, 1/3 the size, loads in ~1.5s instead of
+    // ~10s). The old dir name stays in the list so an updated AppImage running
+    // on a pre-2.4.54 ISO still finds a recognizer instead of greying the mic.
+    // EDEX_ASR_MODEL overrides the name for on-machine experiments.
+    const ASR_MODEL = process.env.EDEX_ASR_MODEL ||
+        "sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-int8-2026-06-05";
+    const ASR_MODEL_LEGACY = "sherpa-onnx-streaming-zipformer-multi-zh-hans-2023-12-12";
     const voiceModelDirs = () => {
-        const candidates = [
-            path.join(__dirname, "..", "..", "models", "sherpa-onnx-streaming-zipformer-multi-zh-hans-2023-12-12"),
-            "/opt/edex/models/sherpa-onnx-streaming-zipformer-multi-zh-hans-2023-12-12",
-            path.join(electron.app.getPath("userData"), "models", "sherpa-onnx-streaming-zipformer-multi-zh-hans-2023-12-12")
+        const bases = [
+            path.join(__dirname, "..", "..", "models"),
+            "/opt/edex/models",
+            path.join(electron.app.getPath("userData"), "models")
         ];
+        const candidates = [];
+        for (const name of [ASR_MODEL, ASR_MODEL_LEGACY])
+            for (const base of bases) candidates.push(path.join(base, name));
         return candidates.find(p => fs.existsSync(path.join(p, "tokens.txt"))) || null;
     };
     // #158: recognizer construction is synchronous (~10s) — extracted so a

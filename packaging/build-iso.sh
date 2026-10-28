@@ -334,12 +334,20 @@ else
     echo "[edex] WARN: could not resolve metacubexd release asset (best-effort)"
 fi
 
-# Bake in the offline speech-recognition model (sherpa-onnx, streaming Chinese
-# zipformer, int8) so voice input works with zero network at run time. This is a
+# Bake in the offline speech-recognition model (sherpa-onnx, streaming zipformer
+# transducer, int8) so voice input works with zero network at run time. This is a
 # HARD dependency of the terminal's voice button — a silent skip here ships an
 # ISO whose mic button is permanently greyed out ("voice model not found"), so a
 # download/extract failure aborts the build instead of best-effort WARN.
-echo "[edex] baking in offline ASR model (sherpa-onnx, Chinese streaming)"
+# 2026-06-05 x-asr zh-en replaces the 2023-12-12 multi-zh-hans model: 128MB vs
+# 296MB compressed (the ISO shrinks), it transcribes mixed Chinese+English, and
+# it loads in ~1.5s instead of the ~10s the old model needed. Deliberately the
+# NON-punct variant: voice input in "input" mode types straight into the
+# terminal, where trailing 中文标点 would land inside a shell command.
+ASR_VER="x-asr-480ms-streaming-zipformer-transducer-zh-en-int8-2026-06-05"
+ASR_DIR="sherpa-onnx-$ASR_VER"
+ASR_SHA="14919f03b74d9001fc8f2689c2ab1ea42c436db269e8c809144492f41612bfff"
+echo "[edex] baking in offline ASR model (sherpa-onnx $ASR_VER)"
 # rootfs is root-owned (unsquashfs ran via sudo) — a plain mkdir trips set -e.
 sudo mkdir -p "$WORK/rootfs/opt/edex/models"
 # NB: the tar below MUST be sudo too — the target dir is root-owned, and a
@@ -347,9 +355,13 @@ sudo mkdir -p "$WORK/rootfs/opt/edex/models"
 # (silently, pre-set -e's visibility, because of the || below). v2.4.9–v2.4.11
 # ISOs shipped without the model for exactly this reason.
 curl -fSL --retry 3 --retry-delay 3 -o "$WORK/zh-asr.tar.bz2" \
-    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-multi-zh-hans-2023-12-12.tar.bz2"
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$ASR_DIR.tar.bz2"
 if [ -s "$WORK/zh-asr.tar.bz2" ]; then
+    echo "$ASR_SHA  $WORK/zh-asr.tar.bz2" | sha256sum -c - >/dev/null \
+        || { echo "[edex] ERROR: ASR model sha256 mismatch" >&2; exit 1; }
     sudo tar -xjf "$WORK/zh-asr.tar.bz2" -C "$WORK/rootfs/opt/edex/models"
+    [ -f "$WORK/rootfs/opt/edex/models/$ASR_DIR/tokens.txt" ] \
+        || { echo "[edex] ERROR: ASR model missing after extract" >&2; exit 1; }
 else
     echo "[edex] ERROR: ASR model download produced an empty file" >&2
     exit 1
