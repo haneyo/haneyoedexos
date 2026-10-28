@@ -1,5 +1,8 @@
 /* Support for other screen ratios than 16:9 */
-@media (aspect-ratio: 16/10) {
+/* Taller than 16:9: 16:10 and 3:2 (2160x1440). Matched as a range — 3:2 used
+   to fall through to the 16:9 base layout, where the vh-sized module text
+   overflows the narrower side columns and the right column stacks overlap. */
+@media (min-aspect-ratio: 3/2) and (max-aspect-ratio: 16/10) {
     section#filesystem > h3.title {
         width: 43.5vw;
     }
@@ -34,6 +37,20 @@
     div#mod_toplist i {
         font-size: 1.10vh;
     }
+    /* The side columns are narrower here than in the 16:9 design while the
+       labels stay vh-sized, so a module title and the value right-aligned on
+       the same line collide at 3:2 (NETWORK TRAFFIC + UP/DOWN, TOP PROCESSES
+       + PID|NAME|CPU|MEM). Trim just those two headers; 16:10 is unchanged
+       to the eye. */
+    div#mod_conninfo h1 {
+        font-size: 1.32vh;
+    }
+    div#mod_conninfo h1 > i {
+        font-size: 1.08vh;
+    }
+    div#mod_toplist h1 {
+        font-size: 1.32vh;
+    }
     table#mod_toplist_table {
         padding-left: 0.2vh;
     }
@@ -50,7 +67,12 @@
     }
 }
 
-@media (aspect-ratio: 64/27) { /* Commercial name of 64/27 ratio is 21:9 */
+/* Ultrawide. Matched as a ratio RANGE, not an exact 64/27 (2.370): the common
+   3440x1440 panel is 2.389 and 3840x1600 is 2.4, and an exact query silently
+   left both on the 16:9 base layout (right column overlapping / clipped).
+   2:1..5:2 covers 2560x1080, 3440x1440, 3840x1600 and 5120x2160 without
+   catching 32:9 (3.556), which still needs its own layout. */
+@media (min-aspect-ratio: 2/1) and (max-aspect-ratio: 5/2) {
     div.keyboard_row#row_1 > div.keyboard_enter {
         height: 2.1vw;
         margin-top: 0.2vh;

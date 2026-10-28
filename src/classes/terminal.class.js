@@ -121,6 +121,15 @@ class Terminal {
             // and the translucent tint lives on `.xterm-viewport` in CSS instead.
             let termBg = "rgba(0, 0, 0, 0)";
 
+            // The terminal is the only part of the UI sized in px; every panel
+            // around it is laid out in vh. Without scaling the text looks
+            // oversized on a 720p screen and tiny next to the chrome on
+            // 1440p/4K (the UI grows, the terminal does not). Scale from the
+            // 1080p design height, but never below the size the user picked,
+            // so small screens stay readable.
+            const termBaseFont = Number(window.theme.terminal.fontSize || window.settings.termFontSize) || 11;
+            const termFontSize = Math.max(termBaseFont, Math.round(termBaseFont * window.innerHeight / 1080));
+
             this.term = new this.xTerm({
                 cols: 80,
                 rows: 24,
@@ -135,7 +144,7 @@ class Terminal {
                 // of blank cells.
                 fontFamily: (window.theme.terminal.fontFamily || "Fira Mono") +
                     ', "Noto Sans Mono CJK SC", "Noto Sans CJK SC", "Noto Sans CJK TC", "Noto Sans CJK JP", "Noto Sans CJK KR", "WenQuanYi Zen Hei Mono", monospace',
-                fontSize: window.theme.terminal.fontSize || window.settings.termFontSize || 11,
+                fontSize: termFontSize,
                 fontWeight: window.theme.terminal.fontWeight || "normal",
                 fontWeightBold: window.theme.terminal.fontWeightBold || "bold",
                 letterSpacing: window.theme.terminal.letterSpacing || 0,

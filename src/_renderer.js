@@ -625,6 +625,19 @@ window._loadTheme = theme => {
     document.fonts.add(termFont);
     document.fonts.load("12px "+theme.terminal.fontFamily);
 
+    // The wallpaper lives in theme.injectCSS as a huge body{background-image}
+    // data-URI rule. The previous "defer wallpaper until after the boot lock"
+    // hack split this body rule out and re-applied it only after _uiReady; on
+    // a large data-URI theme that left the wallpaper AND dependent UI styles
+    // unresolved, so the boot lock and the first desktop rendered blank.
+    // Colour-vars above are enough for the desktop chrome, but the wallpaper and
+    // UI must never be dropped — always inject the full theme CSS. The boot lock
+    // itself draws over this anyway, so keeping it present costs nothing visible.
+    // This is JS and MUST stay outside the template literal below: a bare
+    // `inject` inside ${...} throws ReferenceError before the style is inserted.
+    const inject = theme.injectCSS || "";
+    window._deferredWallpaper = null;
+
     document.querySelector("head").innerHTML += `<style class="theming">
     :root {
         --font_main: "${window._purifyCSS(theme.cssvars.font_main)}";
@@ -650,17 +663,6 @@ window._loadTheme = theme => {
     * {
    	   ${(window.settings.nocursorOverride || window.settings.nocursor) ? "cursor: none !important;" : ""}
 	}
-
-    // The wallpaper lives in theme.injectCSS as a huge body{background-image}
-    // data-URI rule. The previous "defer wallpaper until after the boot lock"
-    // hack split this body rule out and re-applied it only after _uiReady; on
-    // a large data-URI theme that left the wallpaper AND dependent UI styles
-    // unresolved, so the boot lock and the first desktop rendered blank.
-    // Colour-vars above are enough for the desktop chrome, but the wallpaper and
-    // UI must never be dropped — always inject the full theme CSS. The boot lock
-    // itself draws over this anyway, so keeping it present costs nothing visible.
-    const inject = theme.injectCSS || "";
-    window._deferredWallpaper = null;
 
     /* auto-hide the cursor after a quiet period — see cursorTrap below */
     .cursor_hidden, .cursor_hidden * { cursor: none !important; }
