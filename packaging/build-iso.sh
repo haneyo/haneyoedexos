@@ -116,7 +116,7 @@ APTOPTS="xorg lightdm lightdm-autologin-greeter openbox \
 # Node is a HARD requirement (claude and any npm tooling are unusable without
 # it) — a failed download/extract FAILS the build.
 echo "[edex] baking in Node.js LTS (official tarball)"
-NODE_VER="v24.19.0"
+NODE_VER="v24.22.1"
 if ! curl -fsSL --retry 2 -o "$WORK/node.tar.xz" \
         "https://nodejs.org/dist/$NODE_VER/node-$NODE_VER-linux-x64.tar.xz"; then
     echo "[edex] ERROR: Node download failed — cannot build an ISO without Node"; exit 1
@@ -151,8 +151,11 @@ INSTALL_CLAUDE='(set -o pipefail; npm install -g --prefix=/usr/local @anthropic-
 
 # fastfetch:Ubuntu noble 官方源无此包,从 GitHub release 装静态二进制进 /usr/local/bin。
 # 装机即得 fastfetch 命令(不进 APP 列表)。失败则终止构建(用户要求内置)。
-FASTFETCH_VER="2.67.0"
-INSTALL_FASTFETCH='curl -fsSL https://github.com/fastfetch-cli/fastfetch/releases/download/2.67.0/fastfetch-linux-amd64.tar.gz -o /tmp/ff.tar.gz && mkdir -p /tmp/ff && tar -xzf /tmp/ff.tar.gz -C /tmp/ff && install -m 755 /tmp/ff/fastfetch-linux-amd64/usr/bin/fastfetch /usr/local/bin/fastfetch && fastfetch --version >/dev/null || { echo "[edex] ERROR: fastfetch install failed"; exit 1; }'
+FASTFETCH_VER="2.70.0"
+FASTFETCH_SHA="945b941b2a85e8de88b4c89714ad18ee6a7a129bb3c544bb448e9e0e027c226a"
+# 版本号只出现在变量里:旧的 URL 硬编码 2.67.0,改 FASTFETCH_VER 无效还会悄悄装旧版。
+# sha256 与音乐狐/LLM 一样钉死,release 资产不可变,校验失败即中止构建。
+INSTALL_FASTFETCH='curl -fsSL https://github.com/fastfetch-cli/fastfetch/releases/download/'"$FASTFETCH_VER"'/fastfetch-linux-amd64.tar.gz -o /tmp/ff.tar.gz && echo '"$FASTFETCH_SHA"'  /tmp/ff.tar.gz | sha256sum -c - >/dev/null && mkdir -p /tmp/ff && tar -xzf /tmp/ff.tar.gz -C /tmp/ff && install -m 755 /tmp/ff/fastfetch-linux-amd64/usr/bin/fastfetch /usr/local/bin/fastfetch && fastfetch --version >/dev/null || { echo "[edex] ERROR: fastfetch install failed"; exit 1; }'
 
 if [ "$MOUNTS_OK" = "1" ]; then
     echo "[edex] chroot apt preinstall (mounted)"
@@ -358,23 +361,29 @@ fi
 # mismatch aborts the build — a silently-missing model ships an ISO where the
 # local provider shows "未安装" and claude can't start.
 # Layout must match LLM_DIR="/opt/edex/llm" in src/_boot.js: llama-server + its
-# *.so next to the GGUF, flat (the tarball's "llama-b10488/" prefix is stripped).
-echo "[edex] baking in bundled offline LLM (Qwen2.5-0.5B q4_k_m + llama-server b10488)"
+# *.so next to the GGUF, flat (the tarball's "llama-<build>/" prefix is stripped).
+# Builds are daily master snapshots; b11889 is ~3 days old, which leaves a
+# regression window behind while still picking up months of CPU-speed work over
+# b10488. The flags src/_boot.js passes (--threads/--parallel/--ctx-size/
+# --cache-type-* /--alias) all still exist in this build — verified by extracting
+# the tarball and checking llama-server is at the root.
+LLM_VER="b11889"
+echo "[edex] baking in bundled offline LLM (Qwen2.5-0.5B q4_k_m + llama-server $LLM_VER)"
 sudo mkdir -p "$WORK/rootfs/opt/edex/llm"
 LLM_GGUF_URL="https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
 LLM_GGUF_SHA="74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db"
-LLM_RUN_URL="https://github.com/ggml-org/llama.cpp/releases/download/b10488/llama-b10488-bin-ubuntu-x64.tar.gz"
-LLM_RUN_SHA="5a7073371d5a9b8e39978b35f49b2ff244f7a064edb92f0326d94e12b52261dd"
+LLM_RUN_URL="https://github.com/ggml-org/llama.cpp/releases/download/$LLM_VER/llama-$LLM_VER-bin-ubuntu-x64.tar.gz"
+LLM_RUN_SHA="2076290f3b80b7642e2dc165c01fbf1be386a56b4612ba45576d20527834d350"
 curl -fSL --retry 3 --retry-delay 5 -o "$WORK/llm-qwen05.gguf" "$LLM_GGUF_URL"
-curl -fSL --retry 3 --retry-delay 5 -o "$WORK/llama-b10488-ubuntu.tar.gz" "$LLM_RUN_URL"
-if [ ! -s "$WORK/llm-qwen05.gguf" ] || [ ! -s "$WORK/llama-b10488-ubuntu.tar.gz" ]; then
+curl -fSL --retry 3 --retry-delay 5 -o "$WORK/llama-${LLM_VER}-ubuntu.tar.gz" "$LLM_RUN_URL"
+if [ ! -s "$WORK/llm-qwen05.gguf" ] || [ ! -s "$WORK/llama-${LLM_VER}-ubuntu.tar.gz" ]; then
     echo "[edex] ERROR: LLM download produced an empty file" >&2
     exit 1
 fi
 echo "$LLM_GGUF_SHA  $WORK/llm-qwen05.gguf" | sha256sum -c - >/dev/null || { echo "[edex] ERROR: LLM GGUF sha256 mismatch" >&2; exit 1; }
-echo "$LLM_RUN_SHA  $WORK/llama-b10488-ubuntu.tar.gz" | sha256sum -c - >/dev/null || { echo "[edex] ERROR: llama.cpp sha256 mismatch" >&2; exit 1; }
+echo "$LLM_RUN_SHA  $WORK/llama-${LLM_VER}-ubuntu.tar.gz" | sha256sum -c - >/dev/null || { echo "[edex] ERROR: llama.cpp sha256 mismatch" >&2; exit 1; }
 sudo cp "$WORK/llm-qwen05.gguf" "$WORK/rootfs/opt/edex/llm/qwen2.5-0.5b-instruct-q4_k_m.gguf"
-sudo tar -xzf "$WORK/llama-b10488-ubuntu.tar.gz" -C "$WORK/rootfs/opt/edex/llm" --strip-components=1
+sudo tar -xzf "$WORK/llama-${LLM_VER}-ubuntu.tar.gz" -C "$WORK/rootfs/opt/edex/llm" --strip-components=1
 [ -x "$WORK/rootfs/opt/edex/llm/llama-server" ] || { echo "[edex] ERROR: llama-server missing after extract" >&2; exit 1; }
 
 # Bake in the offline Chinese TTS model so AI-chat voice replies work with zero

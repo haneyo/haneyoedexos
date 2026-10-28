@@ -110,7 +110,7 @@ jobs:
 
       - name: Download stock Ubuntu Server ISO
         run: |
-          curl -fL -o /tmp/ubuntu-stock.iso "https://releases.ubuntu.com/24.04/ubuntu-24.04.3-live-server-amd64.iso"
+          curl -fL -o /tmp/ubuntu-stock.iso "https://releases.ubuntu.com/24.04/ubuntu-24.04.5-live-server-amd64.iso"
           ls -lh /tmp/ubuntu-stock.iso
 
       - name: Build eDEX-OS ISO

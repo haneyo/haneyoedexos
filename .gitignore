@@ -51,6 +51,10 @@ src/node_modules
 
 # Secrets / API keys (never commit)
 sk-*/
+# Local notes dir (contains a proxy config with credentials)
+信息/
+# Minified renderer produced for diagnostics; rebuilt on demand
+renderer.diag.min.js
 
 # Build artifacts
 *.AppImage
