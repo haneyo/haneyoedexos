@@ -711,6 +711,30 @@ app.on('ready', async () => {
     signale.info(`Shell found at ${settings.shell}`);
     signale.success(`Settings loaded!`);
 
+    // GPU diagnostics: on the LAN test laptop the GPU process burned ~0.8 core
+    // while the iGPU idled at its minimum clock, which usually means Chromium
+    // quietly fell back to software compositing. One line per boot makes that
+    // visible in the log instead of only in chrome://gpu.
+    const logGpuStatus = tag => {
+        try {
+            const feature = app.getGPUFeatureStatus() || {};
+            const picked = {};
+            for (const key of ["gpu_compositing", "gpu_rasterization", "canvas_oop_rasterization", "webgl", "webgl2", "video_decode"]) {
+                if (feature[key]) picked[key] = feature[key];
+            }
+            signale.info(`[gpu] ${tag} ${JSON.stringify(picked)}`);
+        } catch (err) {
+            signale.debug(`[gpu] feature status unavailable: ${err.message}`);
+        }
+    };
+    logGpuStatus("boot");
+    const gpuTimer = setTimeout(() => logGpuStatus("steady"), 8000);
+    if (gpuTimer.unref) gpuTimer.unref();
+    app.getGPUInfo("basic").then(info => {
+        const dev = info && info.gpuDevice && info.gpuDevice[0] ? info.gpuDevice[0] : null;
+        signale.info(`[gpu] device ${dev ? JSON.stringify({ vendor: dev.vendorString, device: dev.deviceString, vendorId: dev.vendorId, deviceId: dev.deviceId, driver: dev.driverVendor }) : "none"}`);
+    }).catch(err => signale.debug(`[gpu] device info unavailable: ${err.message}`));
+
     if (!require("fs").existsSync(settings.cwd)) throw new Error("Configured cwd path does not exist.");
 
     // See #366

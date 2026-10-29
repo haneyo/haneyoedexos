@@ -623,6 +623,37 @@ class Terminal {
                     let pid = tty.pid;
                     switch(require("os").type()) {
                         case "Linux":
+                            // Same answer as the `ps ... -g <pid> | tail -1` below (the
+                            // newest process in the shell's process group), but read
+                            // straight from /proc - no sh + ps fork on every tick.
+                            try {
+                                const ttyFs = require("fs");
+                                let bestPid = -1;
+                                let bestName = "";
+                                for (const entry of ttyFs.readdirSync("/proc")) {
+                                    if (entry.charCodeAt(0) < 48 || entry.charCodeAt(0) > 57) continue;
+                                    let stat;
+                                    try {
+                                        stat = ttyFs.readFileSync("/proc/" + entry + "/stat", "utf8");
+                                    } catch (e) {
+                                        continue; // exited while we were scanning
+                                    }
+                                    const rp = stat.lastIndexOf(")");
+                                    const lp = stat.indexOf("(");
+                                    if (rp < 0 || lp < 0) continue;
+                                    const fields = stat.slice(rp + 2).split(" ");
+                                    if (parseInt(fields[2], 10) !== pid) continue; // f[2] = pgrp
+                                    const entryPid = parseInt(entry, 10);
+                                    if (entryPid > bestPid) {
+                                        bestPid = entryPid;
+                                        bestName = stat.slice(lp + 1, rp);
+                                    }
+                                }
+                                resolve(bestName);
+                            } catch (e) {
+                                reject(e);
+                            }
+                            break;
                         case "Darwin":
                             require("child_process").exec(`ps -o comm --no-headers --sort=+pid -g ${pid} | tail -1`, (e, proc) => {
                                 if (e !== null) {
