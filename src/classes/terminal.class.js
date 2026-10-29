@@ -303,6 +303,17 @@ class Terminal {
                 } catch (e) {}
             };
             this._wsConn = () => {
+                // Drop the previous socket before opening a new one. A resume /
+                // visibility flip can call reconnectNow() while the old socket
+                // is still healthy; leaving it attached makes the server kick
+                // it ("a reconnect replaced me"), and its onclose schedules yet
+                // another reconnect — an endless connect/kick ping-pong that
+                // also flickers the terminal. Detach its handlers so this
+                // deliberate replacement never looks like a lost connection.
+                if (this.socket) {
+                    try { this.socket.onclose = null; this.socket.onerror = null; } catch (e) {}
+                    try { this.socket.close(); } catch (e) {}
+                }
                 this.socket = new WebSocket("ws://"+sockHost+":"+sockPort);
                 this.socket.onopen = () => {
                     try { if (this._attachAddon) this._attachAddon.dispose(); } catch (e) {}
@@ -628,6 +639,9 @@ class Terminal {
             };
             this._nextTickUpdateTtyCWD = false;
             this._nextTickUpdateProcess = false;
+            // Set when a (re)connecting renderer needs the current process name
+            // even though it has not changed since the last push.
+            this._procPendingSend = false;
             this._tick = setInterval(() => {
                 if (this._nextTickUpdateTtyCWD && this._disableCWDtracking === false) {
                     this._nextTickUpdateTtyCWD = false;
@@ -650,10 +664,12 @@ class Terminal {
                     });
                 }
 
-                if (this.renderer && this._nextTickUpdateProcess) {
+                if (this.renderer && (this._nextTickUpdateProcess || this._procPendingSend)) {
+                    const forced = this._procPendingSend;
                     this._nextTickUpdateProcess = false;
+                    this._procPendingSend = false;
                     this._getTtyProcess(this.tty).then(process => {
-                        if (this.tty._process === process) return;
+                        if (!forced && this.tty._process === process) return;
                         this.tty._process = process;
                         if (this.renderer) {
                             this.renderer.send("terminal_channel-"+this.port, "New process", process);
@@ -702,6 +718,15 @@ class Terminal {
                         if (this._disableCWDtracking) {
                             this.renderer.send("terminal_channel-"+this.port, "Fallback cwd", opts.cwd || process.env.PWD);
                         }
+                        // Ask the 1 Hz tracker to push the foreground process
+                        // name even though it has not changed. Without this a
+                        // client that attaches after the first push (every extra
+                        // tab, and any display added by hot-plug) sits on the
+                        // "EMPTY" tab label until the shell changes process.
+                        // Deliberately NOT sent inline: the renderer assigns
+                        // onprocesschange only after this Terminal constructor
+                        // returns, so an immediate reply would be dropped.
+                        this._procPendingSend = true;
                         break;
                     case "Resize":
                         let cols = args[1];

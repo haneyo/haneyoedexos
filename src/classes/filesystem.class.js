@@ -199,6 +199,11 @@ class FilesystemDisplay {
 
             let num = window.currentTerm;
 
+            // Tab 0 on a secondary display asks the main process for a pty and
+            // stays null until the reply lands. Skip following for that slot —
+            // the shell's ttyspawn callback calls followTab() once it exists.
+            if (!window.term[num]) return false;
+
             window.term[num].oncwdchange = cwd => {
                 // See #501
                 if (this._noTracking) return false;
@@ -1871,7 +1876,10 @@ class FilesystemDisplay {
         // ...except if we're hot-reloading, in which case this can mess up the rendering
         // See #392
         if (!window._isHotReload()) {
-            this.readFS(window.term[window.currentTerm].cwd || window.settings.cwd);
+            // The followed terminal is null until a secondary display's tab 0
+            // gets its pty; start from settings.cwd in that case.
+            const t0 = window.term[window.currentTerm];
+            this.readFS((t0 && t0.cwd) || window.settings.cwd);
         }
 
         // Best-effort: the macOS default app name for a file (via Finder).

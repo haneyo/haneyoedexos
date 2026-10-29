@@ -111,7 +111,11 @@ ipc.on("log", (e, type, content) => {
     signale[type](content);
 });
 
+// `win` is the MASTER window (display index 0). The app now runs one window per
+// physical display, kept in `edexWins`; anything the user must see on every
+// display goes through broadcast() instead of targeting `win`.
 var win, tty, extraTtys;
+const edexWins = [];
 const settingsFile = path.join(electron.app.getPath("userData"), "settings.json");
 const shortcutsFile = path.join(electron.app.getPath("userData"), "shortcuts.json");
 const lastWindowStateFile = path.join(electron.app.getPath("userData"), "lastWindowState.json");
@@ -168,6 +172,11 @@ const DEFAULT_SETTINGS = {
     nocursor: false,
     forceFullscreen: true,
     allowWindowed: false,
+    // One eDEX window per physical display, each with its own shell tabs and
+    // CLI panels (the X session lays the outputs out side by side). `false`
+    // restores the old single-screen behaviour: one window wherever `monitor`
+    // points, the rest of the desktop left empty.
+    multiScreen: true,
     excludeThreadsFromToplist: true,
     hideDotfiles: false,
     fsListView: false,
@@ -347,18 +356,77 @@ const applyGovernor = governor => {
     });
 };
 
-function createWindow(settings) {
-    signale.info("Creating window...");
+// ---- Multi-display window registry -----------------------------------------
+// One BrowserWindow per physical display. Each window loads the same ui.html
+// with a `?screen=<i>` query the renderer uses to pick its shell shard: its own
+// pty port for tab 0 (spawned lazily through the shared ttyspawn pool) and its
+// own pair of app-monitor panels (a/b, c/d, e/f). `win` (index 0) stays the
+// master window for call sites that only make sense once (dialogs, boot lock).
+const MONITOR_PAIRS = [["a", "b"], ["c", "d"], ["e", "f"]];
 
-    let display;
-    if (!isNaN(settings.monitor)) {
-        display = electron.screen.getAllDisplays()[settings.monitor] || electron.screen.getPrimaryDisplay();
-    } else {
-        display = electron.screen.getPrimaryDisplay();
+function displayList(settings) {
+    // Faked multi-screen for local testing without a second monitor:
+    // EDEX_FAKE_SCREENS=2 splits the primary display into two side-by-side
+    // panes, exercising the whole per-display path on one screen.
+    const fake = Number(process.env.EDEX_FAKE_SCREENS || 0);
+    if (fake > 1) {
+        const p = electron.screen.getPrimaryDisplay().workArea;
+        const w = Math.floor(p.width / fake);
+        return Array.from({length: fake}, (_, i) => ({
+            id: "fake-" + i,
+            bounds: {x: p.x + i * w, y: p.y, width: w, height: p.height}
+        }));
     }
+    if (settings.multiScreen === false) {
+        // Legacy single-screen mode: honour the hand-edited `monitor` index.
+        const all = electron.screen.getAllDisplays();
+        return [(!isNaN(settings.monitor) && all[settings.monitor]) || electron.screen.getPrimaryDisplay()];
+    }
+    // Deterministic order regardless of driver enumeration order: left to
+    // right, then top to bottom, so screen 0 / screen 1 stay stable across
+    // boots and across hot-plug of the same outputs.
+    return electron.screen.getAllDisplays().slice().sort((a, b) =>
+        (a.bounds.x - b.bounds.x) || (a.bounds.y - b.bounds.y));
+}
+
+function broadcast(channel, ...args) {
+    for (const e of edexWins) {
+        try {
+            if (e.win && !e.win.isDestroyed()) e.win.webContents.send(channel, ...args);
+        } catch (err) {}
+    }
+}
+
+function winEntry(w) {
+    return edexWins.find(e => e.win === w) || null;
+}
+
+// Kill every pty spawned by a given window (its screen was unplugged, or the
+// window died). Without this the shells keep running headless after the display
+// that hosted them is gone.
+function killPtysOwnedBy(webContentsId) {
+    if (!extraTtys || webContentsId === undefined) return;
+    for (const key of Object.keys(extraTtys)) {
+        const t = extraTtys[key];
+        if (!t || t.__owner !== webContentsId) continue;
+        try { process.kill(-t.tty.pid, "SIGKILL"); } catch (e) { try { t.close(); } catch (e2) {} }
+        try { t.wss.close(); } catch (e) {}
+        extraTtys[key] = null;
+    }
+}
+
+function createWindows(settings) {
+    const displays = displayList(settings);
+    signale.info(`Creating ${displays.length} window(s) for ${displays.length} display(s)...`);
+    displays.forEach((display, i) => createWindowFor(settings, display, i, displays.length));
+}
+
+function createWindowFor(settings, display, index, screenCount) {
+    signale.info(`Creating window ${index + 1}/${screenCount}...`);
+    const pair = MONITOR_PAIRS[index] || MONITOR_PAIRS[0];
     let {x, y, width, height} = display.bounds;
     width++; height++;
-    win = new BrowserWindow({
+    const w = new BrowserWindow({
         title: "eDEX-UI",
         x,
         y,
@@ -395,36 +463,50 @@ function createWindow(settings) {
     });
 
     // Enable @electron/remote for this window (modern replacement for the removed remote module)
-    require("@electron/remote/main").enable(win.webContents);
+    require("@electron/remote/main").enable(w.webContents);
 
     // Forward renderer console errors & process failures to the terminal log
-    win.webContents.on("console-message", (event) => {
+    w.webContents.on("console-message", (event) => {
         // Modern Electron passes a WebContentsConsoleMessageEventParams object
         if (event.level >= 2) {
             signale.debug(`[renderer:${event.level}] ${event.message} (${event.sourceId}:${event.lineNumber})`);
         }
     });
-    win.webContents.on("render-process-gone", (event, details) => {
+    w.webContents.on("render-process-gone", (event, details) => {
         signale.fatal(`Renderer process gone: reason=${details.reason} exitCode=${details.exitCode}`);
     });
-    win.webContents.on("unresponsive", () => {
+    w.webContents.on("unresponsive", () => {
         signale.warn("Renderer unresponsive");
     });
 
     // Open external links in the default browser instead of new Electron windows
-    win.webContents.setWindowOpenHandler(({url}) => {
+    w.webContents.setWindowOpenHandler(({url}) => {
         shell.openExternal(url);
         return {action: "deny"};
     });
 
-    win.loadURL(url.format({
+    // The renderer reads these to know which slice of the shell it owns:
+    //  * screen/screens — its index (0 = master) and the total;
+    //  * tabBase        — label offset so tabs keep counting across displays
+    //                     (screen 2 shows #4 #5 #6 instead of restarting at #1);
+    //  * monA/monB      — the app-monitor displays backing this window's two
+    //                     CLI panels (a/b on screen 1, c/d on screen 2, …);
+    //  * noBoot         — secondary screens skip the boot animation/first-run.
+    w.loadURL(url.format({
         pathname: path.join(__dirname, 'ui.html'),
         protocol: 'file:',
-        slashes: true
+        slashes: true,
+        query: {
+            screen: String(index),
+            screens: String(screenCount),
+            tabBase: String(index * 3),
+            monA: pair[0],
+            monB: pair[1]
+        }
     }));
 
     signale.complete("Frontend window created!");
-    // Show only once the first frame is painted. win.show() right after loadURL
+    // Show only once the first frame is painted. w.show() right after loadURL
     // exposes a blank canvas before the renderer installs its themed cursor and
     // dark background — the white-flash + native-arrow moment seen on real
     // hardware between lightdm and the eDEX lock screen. backgroundColor is
@@ -432,25 +514,41 @@ function createWindow(settings) {
     // render) appears already dark. A safety timer force-shows if the renderer
     // stalls before first paint, so a slow first boot never sits on black forever.
     const showWindow = () => {
-        if (win && !win.isDestroyed()) {
-            win.show();
-            // Take keyboard focus the instant the window appears. win.show()
+        if (w && !w.isDestroyed()) {
+            w.show();
+            // Take keyboard focus the instant the window appears. w.show()
             // alone can leave the freshly-shown (fullscreen) window unfocused on
             // Linux/openbox, so the boot lock's PIN field reads as "dead" until
             // the WM hands focus over — the cause of the delayed first keystrokes.
-            win.focus();
-            win.moveTop();
+            w.focus();
+            w.moveTop();
         }
     };
-    win.once("ready-to-show", showWindow);
+    w.once("ready-to-show", showWindow);
     setTimeout(showWindow, 4000);
     if (!settings.allowWindowed) {
-        win.setResizable(false);
+        w.setResizable(false);
     } else if (!require(lastWindowStateFile)["useFullscreen"]) {
-        win.setFullScreen(false);
+        w.setFullScreen(false);
     }
 
+    const entry = {win: w, displayId: String(display.id), index, screenCount, pair};
+    edexWins.push(entry);
+    if (index === 0) win = w;
+    // Captured now: by the time "closed" fires the WebContents is gone.
+    const wcId = w.webContents.id;
+
+    // Track closure so hot-plug bookkeeping and "quit when the last real window
+    // is gone" don't get stuck on an fsExitWin staying alive.
+    w.on("closed", () => {
+        const i = edexWins.indexOf(entry);
+        if (i !== -1) edexWins.splice(i, 1);
+        killPtysOwnedBy(wcId);
+        if (!edexWins.length) closeFsExitButtons();
+    });
+
     signale.watch("Waiting for frontend connection...");
+    return entry;
 }
 
 // ---- App monitors (terminal tabs 4 & 5): backend process + IPC bridge ----
@@ -547,15 +645,26 @@ async function startAppMonitor(settings, cleanEnv) {
 //  * a global hotkey (Ctrl+Shift+Q) — registered once eDEX is up;
 //  * a tiny always-on-top corner window with an unobtrusive "◀ EDEX" button,
 //    shown while a native app covers the shell (openbox keeps it above).
-let fsExitWin = null;
+// With several displays the native app covers ALL of them (it is fullscreened
+// on the X screen, which spans every output), so one button per eDEX window:
+// wherever the user is looking, the way out is in the same corner.
+let fsExitWins = [];
 
 function hideFsExitButton() {
-    if (fsExitWin && !fsExitWin.isDestroyed()) { try { fsExitWin.hide(); } catch (e) {} }
+    for (const b of fsExitWins) {
+        try { if (b && !b.isDestroyed()) b.hide(); } catch (e) {}
+    }
+}
+
+function closeFsExitButtons() {
+    for (const b of fsExitWins) { try { if (b && !b.isDestroyed()) b.close(); } catch (e) {} }
+    fsExitWins = [];
 }
 
 function showFsExitButton() {
     try {
-        if (fsExitWin && !fsExitWin.isDestroyed()) { fsExitWin.show(); fsExitWin.moveTop(); return; }
+        const live = fsExitWins.filter(b => b && !b.isDestroyed());
+        if (live.length) { live.forEach(b => { b.show(); b.moveTop(); }); return; }
         const accent = "170,207,209";
         const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
             html,body{margin:0;height:100vh;overflow:hidden;background:transparent}
@@ -565,24 +674,33 @@ function showFsExitButton() {
                cursor:pointer;user-select:none;box-sizing:border-box}
             #b:hover{background:rgba(20,40,52,0.9)}
         </style></head><body><div id="b" onclick="require('electron').ipcRenderer.send('edex-exit-fullscreen')">&#9664; EDEX</div></body></html>`;
-        const display = electron.screen.getPrimaryDisplay();
-        const { width: sw, height: sh } = display.workAreaSize;
-        fsExitWin = new electron.BrowserWindow({
-            width: 104, height: 34, frame: false, transparent: true, resizable: false,
-            alwaysOnTop: true, skipTaskbar: true, hasShadow: false, focusable: true,
-            x: sw - 128, y: 14,   /* top-right corner of the screen */
-            webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false }
+        // Position from each window's own bounds: getPrimaryDisplay().workAreaSize
+        // puts the button at the primary screen's top-right even when eDEX (and
+        // the app underneath) lives on another output.
+        const spots = edexWins.length
+            ? edexWins.map(e => e.win.getBounds())
+            : [{x: 0, y: 0, width: electron.screen.getPrimaryDisplay().workAreaSize.width, height: 0}];
+        fsExitWins = spots.map(bounds => {
+            const b = new electron.BrowserWindow({
+                width: 104, height: 34, frame: false, transparent: true, resizable: false,
+                alwaysOnTop: true, skipTaskbar: true, hasShadow: false, focusable: true,
+                x: bounds.x + bounds.width - 128, y: bounds.y + 14,
+                webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false }
+            });
+            b.setAlwaysOnTop(true, "screen-saver");
+            b.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));
+            b.on("closed", () => { fsExitWins = fsExitWins.filter(x => x !== b); });
+            return b;
         });
-        fsExitWin.setAlwaysOnTop(true, "screen-saver");
-        fsExitWin.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));
-        fsExitWin.on("closed", () => { fsExitWin = null; });
     } catch (e) { signale.warn("Could not show exit-fullscreen button: " + (e && e.message)); }
 }
 
 function exitFullscreenViaMain() {
     hideFsExitButton();
     if (global.appMonitor) { try { apiPost(global.appMonitor.httpPort, "/api/fullscreen/exit"); } catch (e) {} }
-    if (win && !win.isDestroyed()) { win.show(); win.focus(); }
+    for (const e of edexWins) {
+        try { if (e.win && !e.win.isDestroyed()) { e.win.show(); e.win.focus(); } } catch (err) {}
+    }
 }
 
 app.on('ready', async () => {
@@ -724,7 +842,9 @@ app.on('ready', async () => {
         const am = global.appMonitor;
         const r = am ? await apiPost(am.httpPort, "/api/fullscreen/exit") : { ok: true };
         hideFsExitButton();
-        if (win && !win.isDestroyed()) { win.show(); win.focus(); }
+        for (const e of edexWins) {
+            try { if (e.win && !e.win.isDestroyed()) { e.win.show(); e.win.focus(); } } catch (err) {}
+        }
         return r;
     });
 
@@ -816,7 +936,10 @@ app.on('ready', async () => {
             while (voiceRecognizer.isReady(voiceStream)) voiceRecognizer.decode(voiceStream);
             const r = voiceRecognizer.getResult(voiceStream);
             if (r && r.text) {
-                try { win.webContents.send("voice:partial", r.text); } catch (e2) {}
+                // Back to the window that is actually recording: with one window
+                // per display, sending to `win` typed screen 1's dictation into
+                // screen 2's focused terminal.
+                try { e.sender.send("voice:partial", r.text); } catch (e2) {}
             }
         } catch (e) {}
     });
@@ -1077,7 +1200,7 @@ app.on('ready', async () => {
     });
 
     // Let the renderer open the WiFi panel (floating button / hotkey).
-    ipc.on("open-wifi-panel", () => { if (win && !win.isDestroyed()) win.webContents.send("open-wifi-panel"); });
+    ipc.on("open-wifi-panel", () => broadcast("open-wifi-panel"));
 
     // ---- Bluetooth (bluez via bluetoothctl). Preview on macOS returns mock data
     // ---- so the settings UI can be exercised without a Bluetooth adapter.
@@ -1209,7 +1332,7 @@ app.on('ready', async () => {
     const clashLogLine = line => {
         clashLog.push(line);
         if (clashLog.length > 400) clashLog.splice(0, clashLog.length - 400);
-        if (win && !win.isDestroyed()) win.webContents.send("clash-log", line);
+        broadcast("clash-log", line);
     };
     const clashValid = () => {
         try {
@@ -1912,7 +2035,7 @@ setPath('');
     const llmLogLine = line => {
         llmLog.push(line);
         if (llmLog.length > 400) llmLog.splice(0, llmLog.length - 400);
-        if (win && !win.isDestroyed()) win.webContents.send("llm-log", line);
+        broadcast("llm-log", line);
     };
     // llama-server /health returns {"status":"ok"} once the model is loaded and
     // serving. Poll it to report readiness without a fixed startup sleep.
@@ -2324,7 +2447,9 @@ setPath('');
             dbgLog("ai:chat watchdog 45s abort");
             try { aiChatAbort.abort(); } catch (e5) {}
         }, 45000);
-        const sendToken = t => { try { if (win && !win.isDestroyed()) win.webContents.send("ai-token", t); } catch (e2) {} };
+        // Tokens go back to the window that asked (each display can run its own
+        // chat); `win` would have painted screen 2's answer on screen 1.
+        const sendToken = t => { try { e.sender.send("ai-token", t); } catch (e2) {} };
         try {
             // Re-read settings.json every call so a provider change in the settings
             // pane applies immediately, without restarting the app.
@@ -2426,7 +2551,7 @@ setPath('');
         const cmd = "sudo apt-get update -y && sudo apt-get full-upgrade -y " +
                     "-o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef";
         const proc = spawn("bash", ["-c", cmd], { env: Object.assign({}, process.env, { DEBIAN_FRONTEND: "noninteractive" }) });
-        const send = line => { if (win && !win.isDestroyed()) win.webContents.send("system-update-output", line); };
+        const send = line => broadcast("system-update-output", line);
         proc.stdout.on("data", d => String(d).split("\n").forEach(l => l.trim() && send(l.trim())));
         proc.stderr.on("data", d => String(d).split("\n").forEach(l => l.trim() && send(l.trim())));
         proc.on("close", code => {
@@ -2576,27 +2701,30 @@ setPath('');
             // freezes, so the frame buffer that survives the sleep is the lock,
             // not the live desktop — otherwise the lid-open frame shows a flash
             // of the real UI before the renderer catches up and re-locks.
-            if (win && !win.isDestroyed()) win.webContents.send("pm:suspend");
+            broadcast("pm:suspend");
         });
         pm.on("resume", () => {
-            if (win && !win.isDestroyed()) {
-                win.webContents.send("pm:resume");
-                // After lid-open the window can come back without keyboard focus,
-                // which reads as a dead keyboard while the touchpad still moves.
-                // Re-assert focus + visibility so key events reach the lock.
-                win.show();
-                win.focus();
-                if (win.webContents) win.webContents.focus();
+            broadcast("pm:resume");
+            // After lid-open the window can come back without keyboard focus,
+            // which reads as a dead keyboard while the touchpad still moves.
+            // Re-assert focus + visibility so key events reach the lock.
+            for (const e of edexWins) {
+                try {
+                    if (!e.win || e.win.isDestroyed()) continue;
+                    e.win.show();
+                    e.win.focus();
+                    if (e.win.webContents) e.win.webContents.focus();
+                } catch (err) {}
             }
         });
         // AC plug/unplug: powerMonitor fires these immediately, unlike the
         // renderer's 30s battery poll — forward them so the plug-in/out voice
         // and toast play at once instead of up to half a minute later.
         pm.on("on-ac", () => {
-            if (win && !win.isDestroyed()) win.webContents.send("pm:ac", "on");
+            broadcast("pm:ac", "on");
         });
         pm.on("on-battery", () => {
-            if (win && !win.isDestroyed()) win.webContents.send("pm:ac", "off");
+            broadcast("pm:ac", "off");
         });
     } catch (e) {}
 
@@ -2814,7 +2942,7 @@ setPath('');
     ipc.handle("system:edex-update", (e, payload) => new Promise(resolve => {
         const { url, sha256Url } = payload || {};
         const APPIMAGE = process.env.APPIMAGE;
-        const send = line => { if (win && !win.isDestroyed()) win.webContents.send("edex-update-output", line); };
+        const send = line => broadcast("edex-update-output", line);
         if (!APPIMAGE) return resolve({ ok: false, error: "NOT_APPIMAGE" });
         if (!url) return resolve({ ok: false, error: "NO_URL" });
         const { spawn } = require("child_process");
@@ -2846,8 +2974,8 @@ setPath('');
             const dl = spawn("curl", ["-fL", "--progress-bar", "--connect-timeout", "15", "--retry", "2", "--no-buffer", "-o", tmp, url]);
             dl.stderr.on("data", d => {
                 const m = /(\d+(?:\.\d+)?)%/.exec(String(d));
-                if (m && win && !win.isDestroyed()) {
-                    win.webContents.send("edex-update-progress", parseFloat(m[1]));
+                if (m) {
+                    broadcast("edex-update-progress", parseFloat(m[1]));
                 }
             });
             dl.on("error", e => fail(e.message));
@@ -3077,7 +3205,7 @@ setPath('');
         if (!CLASH_BIN) return resolve({ ok: false, error: "NO_BINARY" });
         if (!url) return resolve({ ok: false, error: "NO_URL" });
         const { spawn } = require("child_process");
-        const log = line => { if (win && !win.isDestroyed()) win.webContents.send("clash-log", line); };
+        const log = line => broadcast("clash-log", line);
         const tmp = path.join(electron.app.getPath("temp"), `mihomo-${Date.now()}`);
         const gz = tmp + ".gz";
         const cleanup = () => { try { fs.unlinkSync(gz); } catch (_) {} try { fs.unlinkSync(tmp); } catch (_) {} };
@@ -3195,7 +3323,9 @@ setPath('');
         try { applyGovernor(String(settings.performanceMode)); } catch (e) {}
     }
 
-    createWindow(settings);
+    // Windows are created further down, right after the ttyspawn pool is ready:
+    // secondary displays spawn their tab 0 through that pool the moment the
+    // renderer loads, so the handler must already be registered.
 
     // Power button → POWER menu. On the eDEX-OS device logind ignores the ACPI
     // power key (HandlePowerKey=ignore), so openbox receives it as an
@@ -3207,9 +3337,10 @@ setPath('');
         const powerServer = http.createServer((req, res) => {
             res.setHeader("Content-Type", "text/plain");
             res.end("ok");
-            if (win && !win.isDestroyed()) {
-                try { win.webContents.send("show-power-menu"); } catch (e) {}
-            }
+            // Master only: the lock/suspend actions it offers must stay in
+            // sync with the single lock state (a menu opened on screen 2 would
+            // otherwise lock that screen alone).
+            if (win && !win.isDestroyed()) { try { win.webContents.send("show-power-menu"); } catch (e) {} }
         });
         powerServer.listen(17322, "127.0.0.1");
     } catch (e) {
@@ -3230,9 +3361,7 @@ setPath('');
                 res.end("ok");
                 let p = null;
                 try { p = JSON.parse(body); } catch (e) {}
-                if (p && p.type && win && !win.isDestroyed()) {
-                    try { win.webContents.send("osd-show", p); } catch (e) {}
-                }
+                if (p && p.type) broadcast("osd-show", p);
             });
         });
         osdServer.listen(17323, "127.0.0.1");
@@ -3257,7 +3386,7 @@ setPath('');
     try {
         electron.globalShortcut.register("CommandOrControl+Shift+W", () => {
             if (global.__edexLocked) return;
-            if (win && !win.isDestroyed()) win.webContents.send("open-wifi-panel");
+            broadcast("open-wifi-panel");
         });
     } catch (e) { signale.warn("Could not register wifi-panel hotkey: " + (e && e.message)); }
 
@@ -3265,19 +3394,33 @@ setPath('');
     try {
         electron.globalShortcut.register("CommandOrControl+Shift+O", () => {
             if (global.__edexLocked) return;
+            // Master only — its lock state is mirrored to the other displays.
             if (win && !win.isDestroyed()) win.webContents.send("lock-screen");
         });
     } catch (e) { signale.warn("Could not register lock hotkey: " + (e && e.message)); }
 
     // Support for more terminals, used for creating tabs (8-slot fast pool;
     // the MONITOR A/B CLI panels can each hold a session on top of the tabs).
+    // Port pool: 3 terminal tabs + 2 CLI panels per display, with the legacy
+    // 8-slot floor so a single-screen install behaves exactly as before.
     extraTtys = {};
-    let basePort = settings.port || 3000;
-    basePort = Number(basePort) + 2;
+    let basePort = Number(settings.port || 3000) + 2;
+    const ttySlots = Math.max(8, displayList(settings).length * 6);
 
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < ttySlots; i++) {
         extraTtys[basePort+i] = null;
     }
+
+    // Hot-plugging a display adds a whole new shell's worth of ptys, which the
+    // pool above was sized for at startup only. Extend it (appending above the
+    // highest port in use) instead of letting the newcomer's tabs fail with
+    // "exceeded max TTYs".
+    const growTtyPool = want => {
+        if (!extraTtys) return;
+        const keys = Object.keys(extraTtys).map(Number);
+        let next = keys.length ? Math.max.apply(null, keys) + 1 : basePort;
+        for (let i = keys.length; i < want; i++) extraTtys[next++] = null;
+    };
 
     ipc.on("ttyspawn", (e, arg) => {
         let port = null;
@@ -3338,37 +3481,140 @@ setPath('');
                 noBootCR: !!useClaude
             });
             signale.success(`New terminal back-end initialized at ${port}`);
-            term.onclosed = (code, signal) => {
-                term.ondisconnected = () => {};
-                term.wss.close();
-                signale.complete(`TTY exited at ${port}`, code, signal);
-                extraTtys[term.port] = null;
+            // Both callbacks can fire for the same pty (shell exit *and*
+            // websocket close) — killPtysOwnedBy() tears a display's ptys down
+            // by killing the process group, which triggers both. Whichever
+            // runs second must be a no-op instead of dereferencing the already
+            // nulled `term` (that crashed the whole app: "Cannot set
+            // properties of null (setting 'onclosed')").
+            let killT = null;
+            const teardown = killGroup => {
+                const t = term;
+                if (!t) return;
                 term = null;
+                if (killT) { clearTimeout(killT); killT = null; }
+                t.onclosed = () => {};
+                t.ondisconnected = () => {};
+                if (killGroup) {
+                    // Kill the whole process group (shell + children). Closing
+                    // the websocket alone leaves orphan children running —
+                    // e.g. closing a browser session left the app alive and
+                    // audio kept playing after the panel session was gone
+                    // (#74). Already-dead pids throw ESRCH and fall through.
+                    try {
+                        process.kill(-t.tty.pid, "SIGKILL");
+                    } catch (e) {
+                        try { t.close(); } catch (e2) {}
+                    }
+                }
+                try { t.wss.close(); } catch (e) {}
+                extraTtys[t.port] = null;
+            };
+            term.onclosed = (code, signal) => {
+                signale.complete(`TTY exited at ${port}`, code, signal);
+                teardown(false);
             };
             term.onopened = pid => {
+                // A (re)connect cancels a pending idle teardown: the renderer
+                // reconnects 1.5s after a lost socket (suspend, visibility
+                // flip), and that must not kill the shell underneath it.
+                if (killT) { clearTimeout(killT); killT = null; }
                 signale.success(`TTY ${port} connected to frontend (process PID ${pid})`);
             };
             term.onresized = () => {};
             term.ondisconnected = () => {
-                term.onclosed = () => {};
-                // Kill the whole process group (shell + children). Closing the
-                // websocket alone leaves orphan children running — e.g. closing
-                // a browser session left the app alive and audio kept playing
-                // after the panel session was gone (#74).
-                try {
-                    process.kill(-term.tty.pid, "SIGKILL");
-                } catch (e) {
-                    try { term.close(); } catch (e) {}
-                }
-                term.wss.close();
-                extraTtys[term.port] = null;
-                term = null;
+                // Don't kill on the first close: the client may just be
+                // reconnecting. Give it a grace window, then only tear down if
+                // no live client is attached (a kicked duplicate may report its
+                // close *after* the replacement already connected).
+                if (killT) return;
+                killT = setTimeout(() => {
+                    killT = null;
+                    if (!term) return;
+                    let live = 0;
+                    try { term.wss.clients.forEach(c => { if (c.readyState === 1) live++; }); } catch (e) {}
+                    if (live === 0) teardown(true);
+                }, 3000);
             };
 
+            // Remember which window asked for this pty: when that display is
+            // unplugged (or its window dies) only these children get killed.
+            term.__owner = e.sender.id;
             extraTtys[port] = term;
             e.sender.send("ttyspawn-reply", "SUCCESS: "+port);
         }
     });
+
+    // ---- Now that every IPC handler exists, build the windows ----------------
+    createWindows(settings);
+
+    // ---- Multi-display coordination -----------------------------------------
+    // Every window resets its own idle/screensaver countdown, so input on
+    // screen 2 must reach screen 1 as well — otherwise typing on the external
+    // display still blanks the laptop panel after screenOffIdle.
+    ipc.on("multi:activity", () => broadcast("multi:activity"));
+    // Lock / screensaver / screen-off state is decided once (master window) and
+    // mirrored on every screen, so all displays lock and unlock together.
+    ipc.on("multi:lock-state", (e, state) => broadcast("multi:lock-state", state));
+    // A settings save in one window is mirrored to the others: their in-memory
+    // copy (and theme injection) would otherwise stay stale until reload.
+    ipc.on("settings:notify", (e, s) => {
+        for (const w of edexWins) {
+            try {
+                if (w.win.webContents.id !== e.sender.id && !w.win.isDestroyed()) {
+                    w.win.webContents.send("settings:changed", s);
+                }
+            } catch (err) {}
+        }
+    });
+
+    // ---- Display hot-plug ----------------------------------------------------
+    // Electron fires these once X has actually re-laid the outputs out; the
+    // session script runs `xrandr --auto` on the same udev events so the two
+    // sides converge within a couple of seconds.
+    const syncDisplays = () => {
+        if (settings.multiScreen === false) return;
+        if (Number(process.env.EDEX_FAKE_SCREENS || 0) > 1) return;
+        try {
+            const displays = displayList(settings);
+            growTtyPool(Math.max(8, displays.length * 6));
+            const wanted = new Map(displays.map(d => [String(d.id), d]));
+            // Unplugged display → close its window (its ptys die with it).
+            for (const entry of edexWins.slice()) {
+                if (!wanted.has(entry.displayId)) {
+                    signale.info(`Display ${entry.displayId} removed — closing its window`);
+                    try { entry.win.close(); } catch (e) {}
+                }
+            }
+            // New / resized displays.
+            const known = new Set(edexWins.map(e => e.displayId));
+            displays.forEach((d, i) => {
+                if (known.has(String(d.id))) {
+                    const entry = edexWins.find(e => e.displayId === String(d.id));
+                    try {
+                        if (entry && entry.win && !entry.win.isDestroyed()) {
+                            const b = d.bounds;
+                            entry.win.setBounds({x: b.x, y: b.y, width: b.width + 1, height: b.height + 1});
+                        }
+                    } catch (e) {}
+                } else {
+                    signale.info(`Display ${d.id} added — creating its window`);
+                    // Lowest unused index, not edexWins.length: a window that is
+                    // still closing keeps its array entry, and a stale gap after
+                    // an unplug would otherwise hand the newcomer an index that
+                    // is already taken (same tab numbers and monitor pair).
+                    let free = 0;
+                    while (edexWins.some(x => x.index === free)) free++;
+                    createWindowFor(settings, d, free, displays.length);
+                }
+            });
+        } catch (e) { signale.warn("Display sync failed: " + (e && e.message)); }
+    };
+    try {
+        electron.screen.on("display-added", syncDisplays);
+        electron.screen.on("display-removed", syncDisplays);
+        electron.screen.on("display-metrics-changed", syncDisplays);
+    } catch (e) { signale.warn("Could not watch display changes: " + (e && e.message)); }
 
     // Backend support for theme and keyboard hotswitch
     let themeOverride = null;
@@ -3390,9 +3636,11 @@ setPath('');
     // image picker and returns the chosen absolute path (or null on cancel).
     // The renderer applies it as a body background-image overriding the active
     // theme's background; the path is persisted in settings.backgroundImage.
-    ipc.handle("settings:pickImage", async () => {
+    ipc.handle("settings:pickImage", async (e) => {
         try {
-            const r = await dialog.showOpenDialog(win, {
+            // Parent the picker on the window that asked, not the master
+            // screen's window.
+            const r = await dialog.showOpenDialog(require("electron").BrowserWindow.fromWebContents(e.sender) || win, {
                 title: "Select background image",
                 properties: ["openFile"],
                 filters: [
@@ -3484,7 +3732,7 @@ setPath('');
         const t = Date.now();
         if (t - axelBroadcast._last < 500) return;
         axelBroadcast._last = t;
-        if (win && !win.isDestroyed()) win.webContents.send("axel-tick", axelSnapshot());
+        broadcast("axel-tick", axelSnapshot());
     };
     const AXEL_PROG_RE = /\[\s*(\d{1,3})%\][^\[]*\[\s*([0-9.,]+)\s*([KMGT]?B)\/s\][^\[]*\[\s*(\d{1,2}):(\d{2})(?::(\d{2}))?\s*\]/;
     const axelSpeedUnit = { B: 1, KB: 1024, MB: 1048576, GB: 1073741824 };
@@ -3724,6 +3972,10 @@ app.on('web-contents-created', (e, contents) => {
 });
 
 app.on('window-all-closed', () => {
+    // The corner "◀ EDEX" buttons are BrowserWindows too; they are closed as a
+    // consequence of the last eDEX window closing, so ignore any event that
+    // fires while an eDEX window is still alive.
+    if (edexWins.some(e => e.win && !e.win.isDestroyed())) return;
     signale.info("All windows closed");
     app.quit();
 });
@@ -3744,7 +3996,7 @@ app.on('before-quit', () => {
     if (global.transferSrv) {
         try { global.transferSrv.close(); } catch (e) {}
     }
-    if (fsExitWin && !fsExitWin.isDestroyed()) { try { fsExitWin.close(); } catch (e) {} }
+    closeFsExitButtons();
     try { electron.globalShortcut.unregisterAll(); } catch (e) {}
     signale.complete("Shutting down...");
 });

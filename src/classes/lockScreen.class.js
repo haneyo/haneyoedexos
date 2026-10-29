@@ -110,6 +110,11 @@ class LockScreen {
     }
 
     show() {
+        // Secondary displays never own a lock: the master's state is mirrored
+        // onto them as a plain black sheet (multi:lock-state → __applyMultiCover).
+        // Without this, a broadcast pm:suspend / resumeFromSuspend made every
+        // screen build its own PIN pad — and only the master's is fed input.
+        if (window.__screen && !window.__screen.master) return;
         if (this.active) {
             // Already locked but the cover identity was lost (e.g. a screensaver
             // was dismissed while the lock was up) — re-assert it.
@@ -167,6 +172,7 @@ class LockScreen {
     // password lock. Used by the lock IPC and by resume-from-suspend; the boot
     // lock and the power menu's Lock Screen keep their own flows.
     engage() {
+        if (window.__screen && !window.__screen.master) return;  // see show()
         if (this.active) return;         // password UI already up
         if (!window._uiReady) return;    // boot phase: the boot lock owns the screen
         if (window.screensaver) {

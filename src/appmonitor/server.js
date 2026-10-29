@@ -31,9 +31,16 @@ const THEME = [
 const ROOT = __dirname;
 const VENDOR = path.join(__dirname, "..", "assets", "vendor", "novnc");
 
+// One pair per display: screen 1 owns a/b, screen 2 c/d, screen 3 e/f. Xvfb is
+// started lazily on first launch (see backend.startMonitor), so the extra
+// monitors cost nothing until a panel actually opens an app.
 const MONITORS = [
     { id: "a", display: ":101", rfbPort: 5901, wsPath: "/websockify" },
-    { id: "b", display: ":102", rfbPort: 5902, wsPath: "/websockify" }
+    { id: "b", display: ":102", rfbPort: 5902, wsPath: "/websockify" },
+    { id: "c", display: ":103", rfbPort: 5903, wsPath: "/websockify" },
+    { id: "d", display: ":104", rfbPort: 5904, wsPath: "/websockify" },
+    { id: "e", display: ":105", rfbPort: 5905, wsPath: "/websockify" },
+    { id: "f", display: ":106", rfbPort: 5906, wsPath: "/websockify" }
 ];
 
 const MIME = {
@@ -89,7 +96,17 @@ function readBody(req) {
 
 /* ---- HTTP server ---------------------------------------------------------- */
 const DEBUG_HTTP = process.env.EDEX_APPMONITOR_DEBUG === "1";
+// One bad request must never take the whole backend down: without this a sync
+// throw (or a rejected promise on Node 24) kills the process and every panel
+// loses its monitor until the app restarts.
 const server = http.createServer((req, res) => {
+    try { handleRequest(req, res); }
+    catch (err) {
+        console.error("[appmonitor] request failed: " + (err && err.stack || err));
+        try { res.writeHead(500); res.end("error"); } catch (e) {}
+    }
+});
+function handleRequest(req, res) {
     const url = req.url.split("?")[0];
     if (DEBUG_HTTP) console.log("[http] " + req.method + " " + url);
     const isGet = req.method === "GET";
@@ -112,7 +129,8 @@ const server = http.createServer((req, res) => {
         return backend.status().then(r => sendJson(res, 200, r));
     }
 
-    const monMatch = url.match(/^\/api\/monitors\/([ab])\/(launch|kill|fullscreen)$/);
+    // Any monitor of the a–f set (one pair per display, see MONITORS above).
+    const monMatch = url.match(/^\/api\/monitors\/([a-f])\/(launch|kill|fullscreen)$/);
     if (monMatch && (isPost || isGet)) {
         const mid = monMatch[1], action = monMatch[2];
         if (action === "launch" || action === "fullscreen") {
@@ -154,7 +172,7 @@ const server = http.createServer((req, res) => {
 
     res.writeHead(404);
     res.end("Not found");
-});
+}
 
 /* ---- mock RFB WebSocket endpoint ------------------------------------------ */
 // A SINGLE WebSocket.Server on the http server. Multiple ws servers on one http
@@ -165,7 +183,9 @@ if (MODE !== "real") {
     const wss = new WebSocket.Server({ server, perMessageDeflate: false });
     wss.on("connection", (ws, req) => {
         const url = (req && req.url) || "";
-        const id = url.indexOf("/a") !== -1 ? "a" : (url.indexOf("/b") !== -1 ? "b" : null);
+        // Mock (non-Linux) mode: the ws path carries the monitor id (/a, /b, …).
+        const m = /\/([a-f])(?:\?|$)/.exec(url);
+        const id = m ? m[1] : null;
         if (!id || !scenes[id]) { try { ws.close(); } catch (e) {} return; }
         mockRfb.attachRfb(ws, scenes[id]);
     });
@@ -173,6 +193,10 @@ if (MODE !== "real") {
 
 server.listen(HTTP_PORT, "127.0.0.1", () => {
     console.log("[appmonitor] listening on http://127.0.0.1:" + HTTP_PORT + " mode=" + MODE);
+});
+
+process.on("unhandledRejection", err => {
+    console.error("[appmonitor] unhandled rejection: " + (err && err.stack || err));
 });
 
 process.on("SIGTERM", () => {

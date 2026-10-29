@@ -449,7 +449,9 @@ class AppMonitorPanel {
             // Web apps run in their own persistent webview (not via the backend),
             // so every web app currently open on EITHER monitor counts as running
             // for the green dot.
-            const sibling = (this.monitorId === "a") ? window.appmonitorB : window.appmonitorA;
+            // The sibling is the other panel of THIS window (a/b, c/d, e/f).
+            const sibling = (window.__screen && this.monitorId === window.__screen.monA)
+                ? window.appmonitorB : window.appmonitorA;
             [this, sibling].forEach(p => {
                 if (!p) return;
                 Object.keys(p._webviews || {}).forEach(id => {
@@ -505,6 +507,8 @@ class AppMonitorPanel {
     }
 
     _openAddModal() {
+        // A/B is the panel's position in this window (screen 2's panels are c/d).
+        const _pn = (window.__screen && this.monitorId === window.__screen.monA) ? "A" : "B";
         new Modal({
             type: "custom",
             title: "ADD APP",
@@ -519,7 +523,7 @@ class AppMonitorPanel {
                     <button type="button" id="appmonitor_add_icon_btn" class="settings_net_btn" onclick="window.iconLibrary&&window.iconLibrary.pickerModal(window._ampPickIcon)">Choose icon…</button>
                     <input type="hidden" id="appmonitor_add_icon" value="">
                 </div>`,
-            buttons: [{ label: "Add", action: `window.appmonitor${this.monitorId === "a" ? "A" : "B"}.submitAdd()` }]
+            buttons: [{ label: "Add", action: `window.appmonitor${_pn}.submitAdd()` }]
         });
     }
 

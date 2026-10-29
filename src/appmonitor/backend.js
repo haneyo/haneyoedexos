@@ -52,7 +52,7 @@ function mockBackend(deps) {
         },
         status() {
             const monitorState = {};
-            for (const id of ["a", "b"]) {
+            for (const id of Object.keys(scenes)) {
                 monitorState[id] = running[id] ? { id: running[id], state: "running" } : null;
             }
             return Promise.resolve({ ok: true, monitors: monitorState });

@@ -3,6 +3,14 @@ class AudioManager {
         const path = require("path");
         const {Howl, Howler} = require("howler");
 
+        // Secondary displays are silent. Every window has its own renderer and
+        // therefore its own Howler instance: without this, one keypress on the
+        // second screen plays the clack once per screen, and alarms/TTS chime
+        // from both outputs. Only the master (screen 0) makes sound.
+        if (window.__screen && !window.__screen.master) {
+            try { Howler.mute(true); } catch (e) {}
+        }
+
         if (window.settings.audio === true) {
             if(window.settings.disableFeedbackAudio === false) {
                 this.stdout = new Howl({

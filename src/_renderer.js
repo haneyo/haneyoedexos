@@ -173,7 +173,10 @@ window.cover = (() => {
         return coverProcs;
     };
 
-    const fakeMonitorLabel = monitorId => monitorId === "a" ? "WARHEAD A" : "WARHEAD B";
+    // Cover identity: "A"/"B" is the panel's slot on the current display, so
+    // screen 2's c/d panels still wear the decoy names.
+    const fakeMonitorLabel = monitorId =>
+        (window.__screen && monitorId === window.__screen.monA) ? "WARHEAD A" : "WARHEAD B";
 
     // ---- tab labels ----
     const tabEl = num => document.getElementById("shell_tab" + num);
@@ -182,9 +185,17 @@ window.cover = (() => {
     const realMonitor = { 3: null, 4: null };
     const tabLabel = (num, realP) => {
         if (active) return FAKE_TABS[num] != null ? FAKE_TABS[num] : "";
-        if (num === 0) return realP ? "MAIN - " + realP : FALLBACK_TABS[num];
-        if (num === 1) return realP ? "#2 - " + realP : FALLBACK_TABS[num];
-        if (num === 2) return realP ? "#3 - " + realP : FALLBACK_TABS[num];
+        // Tabs are numbered continuously across displays: screen 2 starts at
+        // tabBase+1, so its three terminals are 4/5/6 rather than repeating
+        // 1/2/3 (the 3-in-3 slot layout per window never changes).
+        const tb = (window.__screen && window.__screen.tabBase) || 0;
+        const isMaster = !window.__screen || window.__screen.master;
+        if (num === 0) {
+            if (realP) return isMaster ? "MAIN - " + realP : "#" + (tb + 1) + " - " + realP;
+            return isMaster ? FALLBACK_TABS[num] : "SHELL " + (tb + 1);
+        }
+        if (num === 1) return realP ? "#" + (tb + 2) + " - " + realP : FALLBACK_TABS[num];
+        if (num === 2) return realP ? "#" + (tb + 3) + " - " + realP : FALLBACK_TABS[num];
         if (num === 3 || num === 4) return realMonitor[num] || FALLBACK_TABS[num];
         return FALLBACK_TABS[num] != null ? FALLBACK_TABS[num] : "";
     };
@@ -335,6 +346,13 @@ window._uiReady = false;
 // the shell frame, plays the "Welcome back" greeting, and only then assembles
 // the real desktop. bootShow() queues the continuation via lockScreen._onUnlocked.
 function bootLockThenRun(then) {
+    if (!window.__screen.master) {
+        // Secondary displays own neither the boot lock nor the first-run setup:
+        // the master runs both and mirrors its lock state (multi:lock-state),
+        // which is what covers these screens while the system is locked.
+        then();
+        return;
+    }
     if (String(window.settings.lockCode || "").length > 0) {
         // A lock passcode exists — show the boot lock first; nothing real is
         // exposed until the user unlocks (lockScreen fires _onUnlocked → then).
@@ -381,6 +399,40 @@ window.settings = require(settingsFile);
 window.shortcuts = require(shortcutsFile);
 window.lastWindowState = require(lastWindowStateFile);
 
+// ---- Multi-display shard ----------------------------------------------------
+// The main process opens one window per physical display and tells each which
+// slice it owns. Screen 0 is the master: it alone runs the first-boot setup, the
+// update checker, the idle/screensaver timers and the hardware DPMS calls, and
+// mirrors that state to the other screens.
+const _qs = new URLSearchParams(location.search);
+window.__screen = {
+    index: Number(_qs.get("screen") || 0),
+    count: Number(_qs.get("screens") || 1),
+    // Label offset so tab numbering keeps counting across displays: screen 2's
+    // first terminal reads "#4", not "#1".
+    tabBase: Number(_qs.get("tabBase") || 0),
+    monA: _qs.get("monA") || "a",
+    monB: _qs.get("monB") || "b"
+};
+window.__screen.master = window.__screen.index === 0;
+
+// Secondary displays don't run the lock screen / screensaver / blanking — the
+// master owns all of that and broadcasts its state. This is the cover they draw
+// instead: a plain black sheet, so a locked system never shows a live shell on
+// the second monitor. It carries no PIN pad (only the master accepts input).
+window.__applyMultiCover = st => {
+    const on = !!(st && (st.locked || st.saver || st.blank));
+    let el = document.getElementById("multi_cover");
+    if (!el) {
+        if (!on) return;
+        el = document.createElement("div");
+        el.id = "multi_cover";
+        el.style.cssText = "position:fixed;inset:0;background:#000;z-index:999998;pointer-events:none";
+        document.body.appendChild(el);
+    }
+    el.style.display = on ? "block" : "none";
+};
+
 // Load CLI parameters
 if (remote.process.argv.includes("--nointro")) {
     window.settings.nointroOverride = true;
@@ -412,6 +464,24 @@ ipc.once("getKbOverride", (e, layout) => {
     }
 });
 ipc.send("getKbOverride");
+
+// Settings saved in ANOTHER window (main process fans it out). Apply what can
+// be applied live — theme CSS, language hiding, terminal metrics — and leave
+// anything that needs a restart to the user, same as a local save.
+ipc.on("settings:changed", (e, s) => {
+    if (!s) return;
+    const prevTheme = window.settings && window.settings.theme;
+    window.settings = s;
+    if (window.applyLangHiding) window.applyLangHiding();
+    if (s.theme && s.theme !== prevTheme) {
+        try { _loadTheme(require(path.join(themesDir, s.theme + ".json"))); } catch (err) {}
+    }
+    // Terminal cell size depends on settings; re-fit every live terminal.
+    Object.keys(window.term || {}).forEach(k => {
+        const t = window.term[k];
+        try { if (t && typeof t.fit === "function") t.fit(); } catch (err) {}
+    });
+});
 
 // Sci-fi cursor: a minimal 45° "<" chevron drawn in the theme accent colour
 // with a soft glow, so the pointer echoes the UI. Rebuilt whenever the theme
@@ -836,7 +906,11 @@ window.eventPlay = (name) => {
 remote.app.focus();
 
 let i = 0;
-if (window.settings.nointro || window.settings.nointroOverride) {
+// Secondary displays never play the boot animation: it is a once-per-boot
+// spectacle, and running it N times delays N-1 desktop surfaces (and doubles
+// the animation cost on a laptop + external screen). They jump straight to the
+// same "no intro" path, which also removes the boot overlay.
+if (window.settings.nointro || window.settings.nointroOverride || !window.__screen.master) {
     initGraphicalErrorHandling();
     initSystemInformationProxy();
     document.getElementById("boot_screen").remove();
@@ -1324,7 +1398,7 @@ async function initUI() {
     shellContainer.innerHTML += `
         <div class="shell_outline"></div>
         <ul id="main_shell_tabs">
-            <li id="shell_tab0" onclick="window.focusShellTab(0);" class="active"><p>MAIN SHELL</p></li>
+            <li id="shell_tab0" onclick="window.focusShellTab(0);" class="active"><p>${window.__screen.master ? "MAIN SHELL" : "SHELL " + (window.__screen.tabBase + 1)}</p></li>
             <li id="shell_tab1" onclick="window.focusShellTab(1);"><p>EMPTY</p></li>
             <li id="shell_tab2" onclick="window.focusShellTab(2);"><p>EMPTY</p></li>
             <li id="shell_tab3" onclick="window.focusShellTab(3);"><p><span id="shell_tab3_label">APP</span> <span class="webapp_chevron" title="Switch app" onclick="event.stopPropagation();window.appmonitorA.toggleMenu(event);">${Icons.chevronDown}</span></p></li>
@@ -1337,14 +1411,35 @@ async function initUI() {
             <div id="appmonitor_a_slot" class="shell_slot"></div>
             <div id="appmonitor_b_slot" class="shell_slot"></div>
         </div>`;
-    window.term = {
-        0: new Terminal({
+    window.term = {};
+    window.currentTerm = 0;
+    if (window.__screen.master) {
+        window.term[0] = new Terminal({
             role: "client",
             parentId: "terminal0",
             port: window.settings.port || 3000
-        })
-    };
-    window.currentTerm = 0;
+        });
+    } else {
+        // Secondary displays have no pre-spawned main shell: port `settings.port`
+        // belongs to screen 0, and the ws server drops any older client, so two
+        // windows on it would kick each other off. Ask the shared pool for a pty
+        // exactly like a lazy tab does.
+        window.term[0] = null;
+        document.getElementById("shell_tab0").innerHTML = "<p>LOADING...</p>";
+        ipc.send("ttyspawn", "term");
+        ipc.once("ttyspawn-reply", (e, r) => {
+            if (r && String(r).startsWith("SUCCESS")) {
+                const port = Number(String(r).substr(9));
+                window.term[0] = new Terminal({role: "client", parentId: "terminal0", port});
+                try { window.term[0].term.focus(); } catch (err) {}
+                document.getElementById("shell_tab0").innerHTML =
+                    `<p>${window.__screen.master ? "MAIN SHELL" : "SHELL " + (window.__screen.tabBase + 1)}</p>`;
+                if (window.fsDisp) window.fsDisp.followTab();
+            } else {
+                document.getElementById("shell_tab0").innerHTML = "<p>ERROR</p>";
+            }
+        });
+    }
     // Slot kinds: 0-2 are terminals, 3/4 are the two CLI panels
     // (MONITOR A / MONITOR B). Everything below that reads window.term[] is
     // made safe for slots 3/4 via a terminal-shaped shim.
@@ -1626,7 +1721,10 @@ async function initUI() {
     // keydown reaches the page, and a lone Meta is not sent to the shell as
     // input. A short hold delay (250ms) starts recording so a quick tap or a
     // Win combo (e.g. Win+L lock) never trips it; releasing the key stops.
-    const termFocused = () => (window.shellSlotKinds[window.currentTerm] === "term");
+    // `&& !!window.term[...]`: on a secondary display tab 0's pty arrives
+    // asynchronously, so the slot can be a terminal kind with no instance yet.
+    const termFocused = () => (window.shellSlotKinds[window.currentTerm] === "term"
+        && !!window.term[window.currentTerm]);
     const isWinKey = e => (e.key === "Meta" || e.code === "MetaLeft" || e.code === "MetaRight");
     let winVoiceTimer = null;
     document.addEventListener("keydown", e => {
@@ -2345,9 +2443,11 @@ async function initUI() {
         }
     });
 
-    window.term[0].onprocesschange = p => {
+    // Tab 0 is null on secondary displays until the pool hands its pty over
+    // (ttyspawn is async) — every access below tolerates that gap.
+    if (window.term[0]) window.term[0].onprocesschange = p => {
         if (window.cover) window.cover.rememberProc(0, p);
-        document.getElementById("shell_tab0").innerHTML = `<p>${window.cover ? window.cover.tabLabel(0, p) : "MAIN - " + p}</p>`;
+        document.getElementById("shell_tab0").innerHTML = `<p>${window.cover ? window.cover.tabLabel(0, p) : (window.__screen.master ? "MAIN - " + p : "#" + (window.__screen.tabBase + 1) + " - " + p)}</p>`;
     };
     // Keep hardware keyboard focus on the terminal, but never steal it back
     // from things that need their own keyboard focus: the embedded browser's
@@ -2362,7 +2462,7 @@ async function initUI() {
             if (window.term[window.currentTerm]) window.term[window.currentTerm].term.focus();
         }
     };
-    window.term[0].term.writeln("\033[1m"+`Welcome to eDEX-UI v${remote.app.getVersion()} - Electron v${process.versions.electron}`+"\033[0m");
+    if (window.term[0]) window.term[0].term.writeln("\033[1m"+`Welcome to eDEX-UI v${remote.app.getVersion()} - Electron v${process.versions.electron}`+"\033[0m");
 
     await _delay(100);
 
@@ -2375,7 +2475,7 @@ async function initUI() {
     document.getElementById("filesystem").setAttribute("style", "opacity: 1;");
 
     // Resend terminal CWD to fsDisp if we're hot reloading
-    if (window._isHotReload()) {
+    if (window._isHotReload() && window.term[window.currentTerm]) {
         window.term[window.currentTerm].resendCWD();
     }
 
@@ -2413,10 +2513,13 @@ async function initUI() {
         fullscreen: (monitorId, appId) => ipc.invoke("appmonitor:fullscreen", { monitorId, appId }),
         exitFullscreen: () => ipc.invoke("appmonitor:exit-fullscreen")
     };
-    window.appmonitorA = new CliPanel({ parentId: "appmonitor_a_slot", monitorId: "a", labelId: "shell_tab3_label" });
+    // Each display owns its own pair of app-monitor backends (screen 1 → a/b,
+    // screen 2 → c/d), so the two CLI panels on this screen open apps on THIS
+    // screen's displays instead of fighting the other window for a and b.
+    window.appmonitorA = new CliPanel({ parentId: "appmonitor_a_slot", monitorId: window.__screen.monA, labelId: "shell_tab3_label" });
     window.appmonitorB = (window.settings.appMonitor || {}).showGui
-        ? new AppMonitorPanel({ parentId: "appmonitor_b_slot", monitorId: "b", labelId: "shell_tab4_label" })
-        : new CliPanel({ parentId: "appmonitor_b_slot", monitorId: "b", labelId: "shell_tab4_label" });
+        ? new AppMonitorPanel({ parentId: "appmonitor_b_slot", monitorId: window.__screen.monB, labelId: "shell_tab4_label" })
+        : new CliPanel({ parentId: "appmonitor_b_slot", monitorId: window.__screen.monB, labelId: "shell_tab4_label" });
 
     // WiFi connect panel (Linux + NetworkManager via nmcli).
     window.wifiApi = {
@@ -3786,10 +3889,13 @@ async function initUI() {
         else external();
     });
 
-    window.updateCheck = new UpdateChecker();
+    // Only the master polls GitHub: one check per window would mean four
+    // simultaneous release requests and four identical "update available"
+    // modals, one per display.
+    if (window.__screen.master) window.updateCheck = new UpdateChecker();
 
     // First launch: ask for the UI language once, once the interface is up.
-    if (!window.settings.language) setTimeout(() => window.showLanguagePicker(), 800);
+    if (window.__screen.master && !window.settings.language) setTimeout(() => window.showLanguagePicker(), 800);
     // (The boot-time lock already ran before initUI — see bootLockThenRun.)
 
     // The real desktop is fully built (terminals + tabs + browser registered).
@@ -4063,7 +4169,7 @@ window.focusShellTab = number => {
 
                 window.term[number].onprocesschange = p => {
                     if (window.cover) window.cover.rememberProc(number, p);
-                    document.getElementById("shell_tab"+number).innerHTML = `<p>${window.cover ? window.cover.tabLabel(number, p) : `#${number+1} - ${p}`}</p>`;
+                    document.getElementById("shell_tab"+number).innerHTML = `<p>${window.cover ? window.cover.tabLabel(number, p) : `#${number + 1 + window.__screen.tabBase} - ${p}`}</p>`;
                 };
 
                 document.getElementById("shell_tab"+number).innerHTML = `<p>::${port}</p>`;
@@ -4543,7 +4649,7 @@ window.openSettings = async () => {
             document.removeEventListener("keydown", window._settingsKeyHandler);
             window._settingsKeyHandler = null;
         }
-        window.term[window.currentTerm].term.focus();
+        if (window.term[window.currentTerm]) window.term[window.currentTerm].term.focus();
     });
     window._settingsModal = settingsModal;
 
@@ -5631,6 +5737,10 @@ window.writeSettingsFile = () => {
 
     window.settings = s;
     fs.writeFileSync(settingsFile, JSON.stringify(s, "", 4));
+    // Each window holds its own copy of settings.json; tell the others so the
+    // theme / terminal font / audio switches apply there too instead of waiting
+    // for a reload.
+    try { ipc.send("settings:notify", s); } catch (e) {}
     if (window.applyLangHiding) window.applyLangHiding();
     document.getElementById("settingsEditorStatus").innerText = t("settings.savedStatus")+new Date().toTimeString();
 
@@ -5769,7 +5879,8 @@ window.openShortcutsHelp = () => {
             {label: t("shortcuts.btn.reload"), action: "window.location.reload(true);"},
         ]
     }, () => {
-        window.term[window.currentTerm].term.focus();
+        const _t = window.term && window.term[window.currentTerm];
+        if (_t) _t.term.focus();
     });
 
     let wrap1 = document.getElementById('shortcutsHelpAccordeon1');
@@ -6003,10 +6114,10 @@ electron.webFrame.setVisualZoomLevelLimits(1, 1);
 
 // Resize terminal with window
 window.onresize = () => {
-    if (typeof window.currentTerm !== "undefined") {
-        if (typeof window.term[window.currentTerm] !== "undefined") {
-            window.term[window.currentTerm].fit();
-        }
+    // Secondary displays start with a null tab 0 until its pty is handed over
+    // (typeof null is "object"), so test truthiness, not just undefined.
+    if (typeof window.currentTerm !== "undefined" && window.term && window.term[window.currentTerm]) {
+        window.term[window.currentTerm].fit();
     }
 };
 
@@ -7009,10 +7120,27 @@ const bumpActivity = () => {
         }
     }
 };
+// Secondary displays have no idle machinery of their own (see the interval
+// below) — they only report input so the master's countdown resets.
+const multiBump = (() => {
+    let last = 0;
+    return () => {
+        const n = Date.now();
+        if (n - last < 1000) return;      // 1 Hz is plenty for an idle timer
+        last = n;
+        try { ipc.send("multi:activity"); } catch (e) {}
+    };
+})();
 ["mousemove", "mousedown", "keydown", "wheel", "touchstart", "click"].forEach(ev =>
-    window.addEventListener(ev, bumpActivity, { passive: true })
+    window.addEventListener(ev, window.__screen.master ? bumpActivity : multiBump, { passive: true })
 );
+// Input on any display wakes/locks/unlocks the whole system.
+ipc.on("multi:activity", () => { if (window.__screen.master) bumpActivity(); });
 setInterval(() => {
+    // Locks, screensaver, blanking and hardware DPMS are master-only: N windows
+    // each running their own timers meant N independent screensavers and a race
+    // over `power:screen`.
+    if (!window.__screen.master) return;
     const idleMs = Date.now() - lastActivity;
     const locked = window.lockScreen && window.lockScreen.active;
     const screensaverOn = window.screensaver.isActive();
@@ -7076,6 +7204,26 @@ setInterval(() => {
         showScreenOff();
     }
 }, 1000);
+
+// Mirror the master's lock / screensaver / blank state onto every other
+// display. Polled rather than hooked into each transition (boot lock, idle
+// lock, power menu, lid close, …) so no path can be missed.
+if (window.__screen.master) {
+    let lastMultiState = "";
+    setInterval(() => {
+        const st = {
+            locked: !!(window.lockScreen && window.lockScreen.active),
+            saver: !!(window.screensaver && window.screensaver.isActive()),
+            blank: !!screenOffEl()
+        };
+        const sig = JSON.stringify(st);
+        if (sig === lastMultiState) return;
+        lastMultiState = sig;
+        try { ipc.send("multi:lock-state", st); } catch (e) {}
+    }, 1000);
+} else {
+    ipc.on("multi:lock-state", (e, st) => window.__applyMultiCover(st));
+}
 
 // Suspend/resume (laptop lid close): after the system wakes, a full-screen
 // overlay frozen mid-suspend (screensaver canvas or lock block) would sit on

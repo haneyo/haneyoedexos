@@ -352,7 +352,9 @@ class CliPanel {
         this.closeMenu();
         this._editingApp = app || null;
         try { if (window.cliAddModal && window.cliAddModal.close) window.cliAddModal.close(); } catch (_e) {}
-        const _pn = "a" === this.monitorId ? "A" : "B";
+        // A/B is the panel's position in THIS window, not the backend display
+        // id: screen 2's panels are c/d but still read MONITOR A / MONITOR B.
+        const _pn = (window.__screen && this.monitorId === window.__screen.monA) ? "A" : "B";
         const _editing = !!app;
         window.cliAddModal = new Modal({
             type: "custom",
@@ -410,7 +412,9 @@ class CliPanel {
     _askDelete(_a) {
         this.closeMenu();
         try { if (window.cliAddModal && window.cliAddModal.close) window.cliAddModal.close(); } catch (_e) {}
-        const _pn = "a" === this.monitorId ? "A" : "B";
+        // A/B is the panel's position in THIS window, not the backend display
+        // id: screen 2's panels are c/d but still read MONITOR A / MONITOR B.
+        const _pn = (window.__screen && this.monitorId === window.__screen.monA) ? "A" : "B";
         const _isBuiltin = _CLI_BUILTIN.some(_b => _b.id === _a.id);
         window.cliAddModal = new Modal({
             type: "custom",

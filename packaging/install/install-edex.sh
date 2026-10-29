@@ -383,6 +383,40 @@ numlockx on 2>/dev/null || true
 # paints its own sci-fi image cursor over the whole screen, so the OS cursor
 # only ever shows during this handoff; using the same WP7-style cursor keeps it
 # visually consistent with the eDEX overlay (task #7).
+# EXTENDED DESKTOP: Xorg's default with more than one connected output is to
+# CLONE them (the same picture on every monitor). eDEX wants an extended layout
+# — one window per display, each showing a different slice of the UI — so lay
+# the outputs out side by side before the WM maps. `xrandr --auto` gives every
+# connected output its preferred mode and places them left to right without
+# overlapping. Failure (no xrandr, single output, driver without RandR) is
+# non-fatal: the session then behaves exactly as before.
+xrandr --auto 2>/dev/null || true
+# Hot-plug: X does not re-layout by itself when a monitor is plugged in or out,
+# so watch DRM events and re-run the auto layout. Runs in the background from
+# inside the session (not a systemd unit) so it inherits the session's DISPLAY
+# and XAUTHORITY — a root/udev-triggered xrandr would have neither.
+# DRM emits `change` for far more than hot-plug (DPMS, backlight, modes), and
+# each event arrives twice (KERNEL then UDEV), so only UDEV lines are handled
+# and the actual connected-output set is compared before touching the layout —
+# otherwise every screen power transition would re-run xrandr and flicker.
+(
+    _edex_outs() {
+        xrandr --query 2>/dev/null | grep ' connected' | awk '{print $1}' | sort | tr '\n' ' '
+    }
+    _edex_last="$(_edex_outs)"
+    udevadm monitor --subsystem-match=drm 2>/dev/null | while read -r _line; do
+        case "$_line" in
+            KERNEL*) continue ;;
+            UDEV*add*|UDEV*remove*|UDEV*change*) ;;
+            *) continue ;;
+        esac
+        sleep 2
+        _edex_now="$(_edex_outs)"
+        [ "$_edex_now" = "$_edex_last" ] && continue
+        _edex_last="$_edex_now"
+        xrandr --auto 2>/dev/null || true
+    done
+) >/dev/null 2>&1 &
 xsetroot -solid black 2>/dev/null || true
 export XCURSOR_THEME=edex
 # Set the root window cursor to the theme's dark arrow immediately (openbox does

@@ -523,7 +523,7 @@ class Keyboard {
 
         if (cmd === "\n") {
             if (window.keyboard.linkedToTerm) {
-                window.term[window.currentTerm].writelr("");
+                if (window.term[window.currentTerm]) window.term[window.currentTerm].writelr("");
             } else {
                 document.activeElement.dispatchEvent(new CustomEvent("change", {detail: "enter" }));
             }
@@ -532,7 +532,8 @@ class Keyboard {
 
 
         if (window.keyboard.linkedToTerm) {
-            window.term[window.currentTerm].write(cmd);
+            // Tab 0 on a secondary display may still be waiting for its pty.
+            if (window.term[window.currentTerm]) window.term[window.currentTerm].write(cmd);
         } else {
             let isDelete = false;
             if (typeof document.activeElement.value !== "undefined") {
