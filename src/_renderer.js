@@ -747,6 +747,24 @@ window._loadTheme = theme => {
     if (window.applyBackground) window.applyBackground();
 };
 
+// qrcode.js (main process) draws black modules on a pure-white plate. Recolour a
+// data-URI QR to the active theme so codes embedded in dialogs/settings do not
+// glow #fff in the middle of a dark UI. Every bundled theme keeps better than
+// 12:1 contrast between colors.white and colors.black, so it stays scannable.
+// Anything that is not a base64 SVG data URI is returned untouched.
+window._themeQr = src => {
+    try {
+        const s = String(src || "");
+        const sep = s.indexOf(",");
+        if (sep === -1 || s.indexOf(";base64") === -1) return src;
+        const colors = (window.theme && window.theme.colors) || {};
+        const svg = atob(s.slice(sep + 1))
+            .split('fill="white"').join('fill="' + (colors.white || "#ffffff") + '"')
+            .split('fill="black"').join('fill="' + (colors.black || "#000000") + '"');
+        return s.slice(0, sep + 1) + btoa(svg);
+    } catch (e) { return src; }
+};
+
 function initGraphicalErrorHandling() {
     window.edexErrorsModals = [];
     window.onerror = (msg, path, line, col, error) => {
@@ -2816,7 +2834,7 @@ async function initUI() {
                 if (url) url.textContent = (st && st.url) ? st.url : "";
                 const qr = document.getElementById("settingsClashTransferQr");
                 if (qr) {
-                    if (st && st.running && st.qr) { qr.src = st.qr; qr.hidden = false; }
+                    if (st && st.running && st.qr) { qr.src = window._themeQr ? window._themeQr(st.qr) : st.qr; qr.hidden = false; }
                     else { qr.hidden = true; }
                 }
             }).catch(() => {});
@@ -3027,6 +3045,562 @@ async function initUI() {
         });
     });
 
+    // ---- Local model manager (settings → 本地模型) ----
+    // The main process (llm-manager.js) owns the catalog, the transfers and the
+    // llama-server lifecycle; this side only renders state and sends commands.
+    // Transfers report through llm-models-tick and are patched in place, like
+    // the axel list above, so keyboard focus survives every progress update.
+    const llmFmtBytes = n => {
+        if (!isFinite(n) || n <= 0) return "0 B";
+        const u = n >= 1073741824 ? [n / 1073741824, "GB"] : n >= 1048576 ? [n / 1048576, "MB"] : n >= 1024 ? [n / 1024, "KB"] : [n, "B"];
+        return u[0].toFixed(u[0] >= 100 ? 0 : 1) + " " + u[1];
+    };
+    const llmLang = () => (window.settings && window.settings.language === "zh") ? "zh" : "en";
+    const llmTierKey = tier => tier === "recommended" ? "settings.llm.tier.recommended"
+        : tier === "runnable" ? "settings.llm.tier.runnable" : "settings.llm.tier.insufficient";
+    // Every failure the main process can hand back, so the toast says something
+    // actionable instead of an enum name.
+    const LLM_ERROR_KEYS = {
+        NO_MODEL: "noModel", NO_BINARY: "noBinary", LLM_UNAVAILABLE: "noBinary", BIN_MISSING: "noBinary",
+        PORT_FOREIGN: "portForeign", BUSY: "busy", MODEL_MISSING: "modelMissing", MODEL_ACTIVE: "modelActive",
+        BUNDLED_MODEL: "bundled", DISK_LOW: "diskLow", SHA256_MISMATCH: "sha", NOT_GGUF: "notGguf",
+        NOT_GGUF_NAME: "notGguf", ALREADY_INSTALLED: "installed", BAD_URL: "badUrl", NETWORK: "network",
+        SMOKE_FAILED: "smoke", EXTRACT_FAILED: "extract", HEALTH_TIMEOUT: "timeout", EXITED: "exited",
+        TOOL_MISSING: "tool", READ_FAILED: "read", COPY_FAILED: "copy", NO_PREVIOUS: "noPrevious",
+        LLM_LOADING: "loading", CANCELLED: null
+    };
+
+    window.llmManager = {
+        data: null, tasks: [], serverReleases: null, status: null,
+        _sel: null, _seen: {}, _busy: false, _sync: null, _confirm: null,
+
+        errorText(code) {
+            const k = LLM_ERROR_KEYS[code];
+            return k ? t("settings.llm.err." + k) : (code || t("settings.llm.err.generic"));
+        },
+        modelLabel(m) {
+            const lang = llmLang();
+            return (m.name && (m.name[lang] || m.name.en)) || m.file || m.id;
+        },
+
+        // ---- wiring ----
+        initSettings() {
+            const list = document.getElementById("settingsLlmModels");
+            if (!list) return;
+            const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener("click", fn); };
+            on("settingsLlmStart", () => this.startServer());
+            on("settingsLlmStop", () => this.stopServer());
+            on("settingsLlmUrlAdd", () => this.addFromUrl());
+            on("settingsLlmImport", () => this.importFile());
+            on("settingsLlmServerCheck", () => this.loadServerList(true));
+            on("settingsLlmServerRollback", () => this.askRollback());
+            on("settingsLlmServerBundled", () => this.serverSelect("bundled"));
+            const actions = document.getElementById("settingsLlmModelActions");
+            if (actions) actions.querySelectorAll("button").forEach(b =>
+                b.addEventListener("click", () => this.act(b.dataset.act)));
+            list.addEventListener("keydown", e => this.onListKey(e));
+            const urlInput = document.getElementById("settingsLlmUrl");
+            if (urlInput) {
+                urlInput.addEventListener("keydown", e => {
+                    if (e.key === "Enter") { e.preventDefault(); this.addFromUrl(); }
+                });
+            }
+            this.refreshAll();
+        },
+
+        async refreshAll() {
+            try {
+                const r = await ipc.invoke("llm:tasks");
+                this.tasks = (r && r.tasks) || [];
+                this._seen = this.tasks.reduce((a, x) => (a[x.id] = x.status, a), {});
+            } catch (e) {}
+            try { this.data = await ipc.invoke("llm:catalog"); } catch (e) {}
+            try { this.onStatus(await ipc.invoke("llm:status")); } catch (e) {}
+            this.renderHardware();
+            this.renderModels();
+            if (this.serverReleases) this.renderServerList();
+        },
+
+        // ---- status / hardware ----
+        onStatus(st) {
+            if (!st) return;
+            this.status = st;
+            const el = document.getElementById("settingsLlmModelStatus");
+            if (el) {
+                const state = st.ready ? t("settings.llm.state.running")
+                    : st.running ? t("settings.llm.state.loading")
+                    : t("settings.llm.state.stopped");
+                const bits = [(st.model || t("settings.llm.state.none")), state, st.threads + "T", st.ctxSize + " ctx"];
+                if (st.fallback) bits.push(t("settings.llm.state.fallback"));
+                if (!st.binPath) bits.push(t("settings.llm.state.noBinary"));
+                el.textContent = bits.join(" · ");
+            }
+            const ver = document.getElementById("settingsLlmServerVer");
+            if (ver) {
+                ver.textContent = !st.binPath
+                    ? t("settings.llm.state.noBinary")
+                    : (st.binSource === "bundled" ? t("settings.llm.server.bundled") : t("settings.llm.server.user")) +
+                      (st.binVersion ? " · " + st.binVersion : "");
+            }
+            const log = document.getElementById("settingsLlmLog");
+            if (log && st.log && st.log.length) log.textContent = st.log.slice(-200).join("\n");
+        },
+        renderHardware() {
+            const el = document.getElementById("settingsLlmHw");
+            if (!el || !this.data || !this.data.hardware) return;
+            const hw = this.data.hardware;
+            el.textContent = [
+                t("settings.llm.hw.cores").replace("%s", hw.cores),
+                t("settings.llm.hw.ram").replace("%s", llmFmtBytes(hw.availableMem)).replace("%m", llmFmtBytes(hw.totalMem)),
+                t("settings.llm.hw.disk").replace("%s", llmFmtBytes(hw.diskFree))
+            ].join(" · ");
+        },
+
+        // ---- model list ----
+        taskFor(modelId) {
+            return this.tasks.find(x => x.modelId === modelId &&
+                x.status !== "cancelled" && x.status !== "error" && x.status !== "done") || null;
+        },
+        rowStatus(m, task) {
+            if (task) return this.taskStatusText(task);
+            const rec = m.recommendation || {};
+            const bits = [llmFmtBytes(m.sizeBytes)];
+            if (rec.firstPrefillSec) {
+                bits.push(t("settings.llm.etaFirst").replace("%s",
+                    rec.firstPrefillSec >= 120 ? Math.round(rec.firstPrefillSec / 60) + "m" : rec.firstPrefillSec + "s"));
+            }
+            return bits.join(" · ");
+        },
+        // Short state word for the row badge (no percent — the status column
+        // right next to it already carries the number).
+        taskLabel(tk) {
+            return t("settings.llm.task." + (tk.status === "queued" ? "queued"
+                : tk.status === "paused" ? "paused"
+                : tk.status === "verifying" ? "verifying"
+                : tk.status === "extracting" ? "extracting"
+                : tk.status === "done" ? "done"
+                : tk.status === "error" ? "error"
+                : tk.status === "cancelled" ? "cancelled"
+                : "downloading"));
+        },
+        taskStatusText(tk) {
+            let s = this.taskLabel(tk);
+            if (tk.status === "downloading" || tk.status === "paused") s += " " + Math.round(tk.percent || 0) + "%";
+            if (tk.speed && (tk.status === "downloading" || tk.status === "paused")) s += " · " + llmFmtBytes(tk.speed) + "/s";
+            if (tk.status === "error" && tk.error) s = this.errorText(tk.error);
+            return s;
+        },
+        renderModels() {
+            const box = document.getElementById("settingsLlmModels");
+            if (!box || !this.data) return;
+            const models = this.data.models || [];
+            box.innerHTML = "";
+            if (!models.length) {
+                box.innerHTML = `<div class="settings_net_empty">${window._escapeHtml(t("settings.llm.modelsEmpty"))}</div>`;
+                return;
+            }
+            models.forEach(m => {
+                const row = document.createElement("button");
+                row.type = "button";
+                row.className = "settings_net_row";
+                row.dataset.modelId = m.id;
+                const rec = m.recommendation || {};
+                const task = this.taskFor(m.id);
+                const badge = m.active ? t("settings.llm.state.active")
+                    : m.installed ? t("settings.llm.state.installed")
+                    : task ? this.taskLabel(task)
+                    : t(llmTierKey(rec.tier));
+                row.innerHTML = `<span class="settings_net_badge">${window._escapeHtml(badge)}</span>
+                    <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${window._escapeHtml(this.modelLabel(m))}</span>
+                    <span class="settings_net_info" data-role="status">${window._escapeHtml(this.rowStatus(m, task))}</span>`;
+                row.addEventListener("click", () => this.select(m.id, false));
+                box.appendChild(row);
+            });
+            const keep = models.some(m => m.id === this._sel) ? this._sel
+                : (models.find(m => m.active) || models[0]).id;
+            this.select(keep, false);
+            this.renderJob();
+        },
+        select(id, scroll) {
+            this._sel = id;
+            const box = document.getElementById("settingsLlmModels");
+            if (box) box.querySelectorAll("[data-model-id]").forEach(r => {
+                const on = r.dataset.modelId === id;
+                r.classList.toggle("selected", on);
+                if (on && scroll && r.scrollIntoView) r.scrollIntoView({ block: "nearest" });
+            });
+            this.renderActions();
+        },
+        renderActions() {
+            const box = document.getElementById("settingsLlmModelActions");
+            if (!box) return;
+            const m = this.data && (this.data.models || []).find(x => x.id === this._sel);
+            const task = m ? this.taskFor(m.id) : null;
+            const set = (act, enabled) => {
+                const b = box.querySelector(`[data-act="${act}"]`);
+                if (b) { b.disabled = !enabled; b.classList.toggle("settings_btn_disabled", !enabled); }
+            };
+            set("download", !!(m && !m.installed && !task));
+            set("apply", !!(m && m.installed && !m.active && !this._busy));
+            set("cancel", !!task);
+            set("delete", !!(m && m.installed && !m.bundled && !m.active));
+            // The pause button doubles as resume, so it is matched by either
+            // data-act value and relabelled from the task state.
+            const pauseBtn = box.querySelector('[data-act="pause"], [data-act="resume"]');
+            if (pauseBtn) {
+                const running = !!(task && (task.status === "downloading" || task.status === "paused"));
+                pauseBtn.dataset.act = task && task.paused ? "resume" : "pause";
+                pauseBtn.textContent = t(task && task.paused ? "settings.llm.action.resume" : "settings.llm.action.pause");
+                pauseBtn.disabled = !running;
+                pauseBtn.classList.toggle("settings_btn_disabled", !running);
+            }
+        },
+        renderJob() {
+            const wrap = document.getElementById("settingsLlmJob");
+            if (!wrap) return;
+            const tk = this.tasks.slice().reverse().find(x =>
+                x.status !== "done" && x.status !== "cancelled" && x.status !== "error");
+            if (!tk) { wrap.style.display = "none"; wrap.innerHTML = ""; return; }
+            wrap.style.display = "block";
+            const pct = Math.max(0, Math.min(100, tk.percent || 0));
+            const name = tk.kind === "server" ? (tk.file || "") : (tk.file || tk.modelId || "");
+            wrap.innerHTML = `<div style="display:flex;justify-content:space-between;gap:1vh">
+                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${window._escapeHtml(name)}</span>
+                    <span>${window._escapeHtml(this.taskStatusText(tk))}</span>
+                </div>
+                <div style="height:1.4vh;background:rgba(0,0,0,.4);border-radius:2px;overflow:hidden;margin-top:0.3vh">
+                    <div data-role="bar" style="width:${pct}%;height:100%;background:rgba(var(--color_r),var(--color_g),var(--color_b),.55)"></div>
+                </div>`;
+        },
+        patchTasks() {
+            if (!this.data) return;
+            const box = document.getElementById("settingsLlmModels");
+            if (box) box.querySelectorAll("[data-model-id]").forEach(row => {
+                const m = (this.data.models || []).find(x => x.id === row.dataset.modelId);
+                const span = row.querySelector('[data-role="status"]');
+                if (m && span) span.textContent = this.rowStatus(m, this.taskFor(m.id));
+            });
+            this.renderJob();
+            this.renderActions();
+        },
+
+        // ---- events ----
+        onTick(payload) {
+            const tasks = (payload && payload.tasks) || [];
+            const prev = this._seen || {};
+            let structural = false;
+            for (const tk of tasks) {
+                const old = prev[tk.id];
+                if (!old || (old !== "done" && old !== "error" && old !== "cancelled" &&
+                    (tk.status === "done" || tk.status === "error" || tk.status === "cancelled"))) {
+                    structural = true;
+                }
+            }
+            this._seen = tasks.reduce((a, x) => (a[x.id] = x.status, a), {});
+            this.tasks = tasks;
+            // A finished or failed transfer changes badges/actions, not just a
+            // bar, so re-read the catalog; ordinary progress stays in place.
+            if (structural) { this.refreshAll(); return; }
+            this.patchTasks();
+        },
+        onListKey(e) {
+            const box = document.getElementById("settingsLlmModels");
+            if (!box) return;
+            const rows = Array.from(box.querySelectorAll("[data-model-id]"));
+            if (!rows.length) return;
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault(); e.stopPropagation();
+                const cur = rows.findIndex(r => r.dataset.modelId === this._sel);
+                const next = e.key === "ArrowDown" ? Math.min(rows.length - 1, Math.max(0, cur) + (cur < 0 ? 0 : 1))
+                    : Math.max(0, (cur < 0 ? 0 : cur) - 1);
+                this.select(rows[next].dataset.modelId, true);
+            } else if (e.key === "Enter") {
+                e.preventDefault(); e.stopPropagation();
+                const m = (this.data.models || []).find(x => x.id === this._sel);
+                if (!m) return;
+                if (m.installed) { if (!m.active) this.apply(m.id); } else this.download(m.id);
+            } else if (e.key === "Escape") {
+                // Only clear the list selection — the settings dialog stays open.
+                e.stopPropagation();
+                rows.forEach(r => r.classList.remove("selected"));
+                this._sel = null;
+                this.renderActions();
+            }
+        },
+
+        // ---- actions ----
+        act(act) {
+            const m = (this.data.models || []).find(x => x.id === this._sel);
+            const task = m ? this.taskFor(m.id) : null;
+            if (act === "download" && m) this.download(m.id);
+            else if (act === "apply" && m) this.apply(m.id);
+            else if (act === "delete" && m) this.askDelete(m);
+            else if (act === "pause" && task) ipc.invoke("llm:download-pause", { taskId: task.id }).then(() => this.refreshAll()).catch(() => {});
+            else if (act === "resume" && task) ipc.invoke("llm:download-resume", { taskId: task.id }).then(() => this.refreshAll()).catch(() => {});
+            else if (act === "cancel" && task) ipc.invoke("llm:download-cancel", { taskId: task.id }).then(() => this.refreshAll()).catch(() => {});
+        },
+        download(modelId) {
+            const m = (this.data.models || []).find(x => x.id === modelId);
+            if (m && m.recommendation && m.recommendation.diskOk === false) {
+                notifyToast(t("settings.llm.err.diskLow"));
+                return;
+            }
+            ipc.invoke("llm:download", { modelId }).then(r => {
+                if (!r || !r.ok) { notifyToast(this.errorText(r && r.error)); this.refreshAll(); return; }
+                notifyToast(t("settings.llm.downloadStarted"));
+                this.refreshAll();
+            }).catch(e => notifyToast(this.errorText(e && e.message)));
+        },
+        addFromUrl() {
+            const el = document.getElementById("settingsLlmUrl");
+            const url = el ? el.value.trim() : "";
+            if (!url) return;
+            ipc.invoke("llm:download", { url }).then(r => {
+                if (r && !r.ok && r.error === "MULTIPLE_FILES") { this.pickRepoFile(r.files); return; }
+                if (!r || !r.ok) { notifyToast(this.errorText(r && r.error)); return; }
+                if (el) el.value = "";
+                notifyToast(t("settings.llm.downloadStarted"));
+                this.refreshAll();
+            }).catch(e => notifyToast(this.errorText(e && e.message)));
+        },
+        pickRepoFile(files) {
+            const list = files || [];
+            if (!list.length) return;
+            const modal = new Modal({
+                type: "custom",
+                closeLabel: t("settings.llm.cancel"),
+                title: t("settings.llm.pickFile"),
+                html: `<div class="settings_net_list" style="max-height:40vh">${list.map((f, i) =>
+                    `<button type="button" class="settings_net_row" data-pick="${i}">
+                        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${window._escapeHtml(f.name)}</span>
+                        <span class="settings_net_info">${window._escapeHtml(llmFmtBytes(f.size))}</span>
+                    </button>`).join("")}</div>`,
+                buttons: []
+            });
+            const pick = i => {
+                const f = list[i];
+                if (!f) return;
+                try { window.modals[modal.id].close(); } catch (e) {}
+                ipc.invoke("llm:download", {
+                    url: f.url,
+                    fileName: f.name.split("/").pop(),
+                    sha256: f.sha256 || "",
+                    sizeBytes: f.size || 0
+                }).then(r => {
+                    if (!r || !r.ok) { notifyToast(this.errorText(r && r.error)); return; }
+                    notifyToast(t("settings.llm.downloadStarted"));
+                    this.refreshAll();
+                }).catch(() => {});
+            };
+            Array.from(document.querySelectorAll("#modal_" + modal.id + " [data-pick]"))
+                .forEach(b => b.addEventListener("click", () => pick(parseInt(b.dataset.pick, 10))));
+        },
+        importFile() {
+            ipc.invoke("llm:import").then(r => {
+                if (!r || !r.ok) {
+                    if (r && r.error && r.error !== "CANCELLED") notifyToast(this.errorText(r.error));
+                    return;
+                }
+                notifyToast(t("settings.llm.imported"));
+                this.refreshAll();
+            }).catch(e => notifyToast(this.errorText(e && e.message)));
+        },
+        askDelete(m) {
+            this.confirm(t("settings.llm.deleteTitle"), t("settings.llm.deleteBody").replace("%s", this.modelLabel(m)), () => {
+                ipc.invoke("llm:delete", { modelId: m.id }).then(r => {
+                    if (!r || !r.ok) { notifyToast(this.errorText(r && r.error)); return; }
+                    notifyToast(t("settings.llm.deleted"));
+                    this.refreshAll();
+                }).catch(() => {});
+            });
+        },
+        apply(modelId) {
+            if (this._busy) { notifyToast(t("settings.llm.err.busy")); return; }
+            this._busy = true;
+            this.renderActions();
+            notifyToast(t("settings.llm.applying"));
+            ipc.invoke("llm:apply", { modelId }).then(r => {
+                this._busy = false;
+                if (!r || !r.ok) {
+                    notifyToast(t("settings.llm.applyFailed") + " — " + this.errorText(r && r.error));
+                    this.refreshAll();
+                    return;
+                }
+                notifyToast(t("settings.llm.applied"));
+                this.refreshAll();
+                // Applying a model never switches the AI provider on its own:
+                // ask every time (the user's call), and let them keep it.
+                if (!r.unchanged) this.promptSync(r.model);
+            }).catch(e => {
+                this._busy = false;
+                notifyToast(t("settings.llm.applyFailed") + " — " + this.errorText(e && e.message));
+                this.refreshAll();
+            });
+        },
+        promptSync(model) {
+            if (!model) return;
+            const st = { model, done: false, modalId: null };
+            this._sync = st;
+            const alias = model.alias || model.id;
+            const modal = new Modal({
+                type: "custom",
+                closeLabel: t("settings.llm.sync.keep"),
+                title: t("settings.llm.sync.title"),
+                html: `<h5>${window._escapeHtml(t("settings.llm.sync.body").replace("%s", alias))}</h5>
+                    <h6>${window._escapeHtml(t("settings.llm.sync.note"))}</h6>`,
+                buttons: [
+                    { label: t("settings.llm.sync.keep"), action: "window.llmManager.finishSync(false)" },
+                    { label: t("settings.llm.sync.switch"), action: "window.llmManager.finishSync(true)" }
+                ]
+            }, () => window.llmManager.finishSync(false));
+            st.modalId = modal.id;
+        },
+        finishSync(switchToLocal) {
+            const st = this._sync;
+            if (!st || st.done) return;
+            st.done = true;
+            this._sync = null;
+            if (st.modalId && window.modals[st.modalId]) {
+                try { window.modals[st.modalId].close(); } catch (e) {}
+            }
+            if (!switchToLocal) return;
+            ipc.invoke("llm:sync-claude", { modelId: st.model.id }).then(r => {
+                if (!r || !r.ok) { notifyToast(t("settings.llm.sync.failed")); return; }
+                const alias = st.model.alias || st.model.id;
+                // Keep the open form in step with what the main process just
+                // wrote, or the next Save would put the old provider back.
+                const prov = document.getElementById("settingsEditor-claude-provider");
+                if (prov) {
+                    prov.value = "local";
+                    prov.dispatchEvent(new Event("change"));
+                }
+                const cur = document.getElementById("settingsEditor-claude-model");
+                const hai = document.getElementById("settingsEditor-claude-haikuModel");
+                if (cur) cur.value = alias;
+                if (hai) hai.value = alias;
+                window.settings.claude = Object.assign({}, window.settings.claude, {
+                    provider: "local", baseUrl: "http://127.0.0.1:8080", apiKey: "local",
+                    model: alias, haikuModel: alias
+                });
+                notifyToast(t("settings.llm.sync.done"));
+            }).catch(() => notifyToast(t("settings.llm.sync.failed")));
+        },
+        startServer() {
+            ipc.invoke("llm:start").then(r => {
+                notifyToast(r && r.ok ? t("settings.llm.state.running") : this.errorText(r && r.error));
+                this.refreshAll();
+            }).catch(() => {});
+        },
+        stopServer() {
+            ipc.invoke("llm:stop").then(() => { notifyToast(t("settings.llm.state.stopped")); this.refreshAll(); }).catch(() => {});
+        },
+
+        // ---- llama-server versions ----
+        loadServerList(force) {
+            const box = document.getElementById("settingsLlmServerList");
+            if (box) box.innerHTML = `<div class="settings_net_empty">${window._escapeHtml(t("settings.llm.server.loading"))}</div>`;
+            ipc.invoke("llm:server-list", { force: !!force }).then(r => {
+                if (!r || !r.ok) {
+                    if (box) box.innerHTML = `<div class="settings_net_empty">${window._escapeHtml(t("settings.llm.server.unavailable"))}</div>`;
+                    return;
+                }
+                this.serverReleases = r.releases || [];
+                this.renderServerList();
+            }).catch(() => {
+                if (box) box.innerHTML = `<div class="settings_net_empty">${window._escapeHtml(t("settings.llm.server.unavailable"))}</div>`;
+            });
+        },
+        renderServerList() {
+            const box = document.getElementById("settingsLlmServerList");
+            if (!box) return;
+            const rels = this.serverReleases || [];
+            if (!rels.length) {
+                box.innerHTML = `<div class="settings_net_empty">${window._escapeHtml(t("settings.llm.server.empty"))}</div>`;
+                return;
+            }
+            const cur = this.status ? this.status.binVersion : null;
+            box.innerHTML = "";
+            rels.forEach(rel => {
+                const row = document.createElement("button");
+                row.type = "button";
+                row.className = "settings_net_row";
+                const date = rel.publishedAt ? String(rel.publishedAt).slice(0, 10) : "";
+                row.innerHTML = `<span class="settings_net_badge">${window._escapeHtml(rel.tag === cur ? t("settings.llm.server.current") : t("settings.llm.server.install"))}</span>
+                    <span style="flex:1">${window._escapeHtml(rel.tag)}</span>
+                    <span class="settings_net_info">${window._escapeHtml(date + (rel.size ? " · " + llmFmtBytes(rel.size) : ""))}</span>`;
+                row.addEventListener("click", () => {
+                    if (rel.tag === cur) return;
+                    this.confirm(t("settings.llm.server.installTitle"),
+                        t("settings.llm.server.installBody").replace("%s", rel.tag), () => this.installServer(rel));
+                });
+                box.appendChild(row);
+            });
+        },
+        installServer(rel) {
+            notifyToast(t("settings.llm.server.installing"));
+            const payload = { tag: rel.tag, url: rel.url, size: rel.size, sha256: rel.sha256 };
+            ipc.invoke("llm:server-install", payload).then(r => {
+                if (!r || !r.ok) { notifyToast(t("settings.llm.server.installFailed") + " — " + this.errorText(r && r.error)); }
+                else notifyToast(t("settings.llm.server.installed").replace("%s", r.version || rel.tag));
+                this.refreshAll();
+            }).catch(e => notifyToast(this.errorText(e && e.message)));
+        },
+        askRollback() {
+            this.confirm(t("settings.llm.server.rollbackTitle"), t("settings.llm.server.rollbackBody"), () => {
+                ipc.invoke("llm:server-rollback").then(r => {
+                    if (!r || !r.ok) { notifyToast(this.errorText(r && r.error)); return; }
+                    notifyToast(t("settings.llm.server.rolledBack").replace("%s", r.version || ""));
+                    this.refreshAll();
+                }).catch(() => {});
+            });
+        },
+        serverSelect(version) {
+            ipc.invoke("llm:server-select", { version }).then(r => {
+                if (!r || !r.ok) { notifyToast(this.errorText(r && r.error)); return; }
+                notifyToast(t("settings.llm.server.selected").replace("%s", version));
+                this.refreshAll();
+            }).catch(() => {});
+        },
+
+        confirm(title, body, onYes) {
+            const st = { id: null, onYes };
+            this._confirm = st;
+            const modal = new Modal({
+                type: "custom",
+                closeLabel: t("settings.llm.cancel"),
+                title,
+                html: `<h5>${window._escapeHtml(body)}</h5>`,
+                buttons: [{ label: t("settings.llm.confirm"), action: "window.llmManager._confirmYes()" }]
+            }, () => { window.llmManager._confirm = null; });
+            st.id = modal.id;
+        },
+        _confirmYes() {
+            const st = this._confirm;
+            if (!st) return;
+            this._confirm = null;
+            if (st.id && window.modals[st.id]) { try { window.modals[st.id].close(); } catch (e) {} }
+            if (st.onYes) st.onYes();
+        }
+    };
+
+    ipc.on("llm-models-tick", (e, payload) => {
+        if (!window.llmManager || !document.getElementById("settingsEditor")) return;
+        window.llmManager.onTick(payload);
+    });
+    ipc.on("llm-status-changed", (e, st) => {
+        if (!window.llmManager) return;
+        window.llmManager.onStatus(st);
+        if (document.getElementById("settingsEditor") && window.llmManager.data) window.llmManager.renderModels();
+    });
+    ipc.on("llm-log", (e, line) => {
+        const log = document.getElementById("settingsLlmLog");
+        if (!log || !line) return;
+        const lines = (log.textContent === "–" ? [] : log.textContent.split("\n"));
+        lines.push(line);
+        log.textContent = lines.slice(-200).join("\n");
+        log.scrollTop = log.scrollHeight;
+    });
+
     // Updates category (#47): app self-update, apt system update + last-update,
     // and per-bundled-program status. All data comes from the main-process IPC
     // added alongside (edex:latest-release, apt:last-update, bundled:status,
@@ -3166,11 +3740,14 @@ async function initUI() {
             ipc.invoke("llm:status").then(st => {
                 const el = document.getElementById("settingsLlmStatus");
                 if (!el) return;
-                if (!st || !st.available) { el.textContent = (window.settings.language === "zh") ? "未安装" : "not bundled"; return; }
                 const zh = window.settings.language === "zh";
-                if (st.ready) el.textContent = zh ? ("运行中 · :" + st.port) : ("ready · :" + st.port);
+                if (!st || !st.available) { el.textContent = zh ? "未安装" : "not bundled"; return; }
+                // Name the model actually being served — after a swap it is no
+                // longer necessarily the bundled one.
+                const name = st.model ? " · " + st.model : "";
+                if (st.ready) el.textContent = (zh ? ("运行中 · :" + st.port) : ("ready · :" + st.port)) + name;
                 else if (st.running) el.textContent = zh ? "模型加载中…" : "loading…";
-                else el.textContent = zh ? "未启动" : "stopped";
+                else el.textContent = (zh ? "未启动" : "stopped") + name;
             }).catch(() => {});
         },
         refreshAiTtsStatus() {
@@ -4357,8 +4934,8 @@ window.openSettings = async () => {
                 <option>${window.settings.screensaverEnabled}</option>
                 <option>${!window.settings.screensaverEnabled}</option>
             </select>`),
-            settingsRow("settings.screensaverIdle", `<input type="text" id="settingsEditor-screensaverIdle" value="${window.settings.screensaverIdle || 300}">`),
-            settingsRow("settings.screenOffIdle", `<input type="text" id="settingsEditor-screenOffIdle" value="${window.settings.screenOffIdle || 1800}">`, "settings.screenOffIdle.help"),
+            settingsRow("settings.screensaverIdle", `<input type="text" id="settingsEditor-screensaverIdle" value="${window.settings.screensaverIdle ?? 300}">`, "settings.screensaverIdle.help"),
+            settingsRow("settings.screenOffIdle", `<input type="text" id="settingsEditor-screenOffIdle" value="${window.settings.screenOffIdle ?? 1800}">`, "settings.screenOffIdle.help"),
             settingsRow("settings.screensaverStyle", `<select id="settingsEditor-screensaverStyle">
                 <option>${window.settings.screensaverStyle || "code"}</option>
                 <option>${(window.settings.screensaverStyle === "matrix") ? "code" : "matrix"}</option>
@@ -4510,7 +5087,7 @@ window.openSettings = async () => {
                         <option value="false" selected>${t("settings.network.off")}</option>
                     </select>
                     <div id="settingsClashTransferUrlWrap" style="display:none;margin-top:1vh;width:100%;text-align:center">
-                        <img id="settingsClashTransferQr" alt="QR" style="display:block;margin:12px auto 6px;width:132px;height:132px;border-radius:8px;background:#fff;padding:6px;box-sizing:content-box" hidden>
+                        <img id="settingsClashTransferQr" alt="QR" style="display:block;margin:12px auto 6px;width:132px;height:132px;border-radius:8px;background:${(window.theme && window.theme.colors && window.theme.colors.white) || "#ffffff"};padding:6px;box-sizing:content-box;border:0.15vh solid rgba(var(--color_r),var(--color_g),var(--color_b),.45)" hidden>
                         <span id="settingsClashTransferUrl" class="settings_net_info">–</span>
                         <div class="settings_net_actions">
                             <button type="button" id="settingsClashTransferCopy" class="settings_net_btn">${t("settings.clash.transferCopy")}</button>
@@ -4564,6 +5141,67 @@ window.openSettings = async () => {
                     <button type="button" id="settingsAiHistoryOpen" class="settings_net_btn">${t("settings.ai.history.historyOpen")}</button>
                 </div>`, "settings.ai.history.help"),
         ].join("") },
+        // Local model library. Deliberately NOT named "claude": the AI category
+        // is dropped on English systems (see the filter below), while swapping a
+        // model is language-independent.
+        { id: "llm", titleKey: "settings.cat.llm", html: () => {
+            const llm = window.settings.llm || {};
+            const cores = Math.max(1, navigator.hardwareConcurrency || 4);
+            const threadOpts = [`<option value="0" ${Number(llm.threads || 0) === 0 ? "selected" : ""}>${t("settings.llm.auto")}</option>`];
+            for (let i = 1; i <= Math.max(1, cores - 1); i++) {
+                threadOpts.push(`<option value="${i}" ${Number(llm.threads) === i ? "selected" : ""}>${i}</option>`);
+            }
+            const ctxOpts = [[0, t("settings.llm.auto")], [4096, "4096"], [8192, "8192"], [16384, "16384"], [32768, "32768"], [65536, "65536"]]
+                .map(([v, label]) => `<option value="${v}" ${Number(llm.ctxSize || 0) === v ? "selected" : ""}>${label}</option>`).join("");
+            return [
+                section("settings.cat.llm"),
+                settingsRow("settings.llm.hw", `<span id="settingsLlmHw" class="settings_net_info">–</span>`),
+                settingsRow("settings.llm.status", `<div class="settings_ver_row">
+                        <span id="settingsLlmModelStatus" class="settings_net_info">–</span>
+                        <div class="settings_net_actions">
+                            <button type="button" id="settingsLlmStart" class="settings_net_btn">${t("settings.llm.state.start")}</button>
+                            <button type="button" id="settingsLlmStop" class="settings_net_btn">${t("settings.llm.state.stop")}</button>
+                        </div>
+                    </div>`, "settings.llm.status.help"),
+                settingsRow("settings.llm.threads", `<select id="settingsLlmThreads">${threadOpts.join("")}</select>`, "settings.llm.threads.help"),
+                settingsRow("settings.llm.ctx", `<select id="settingsLlmCtx">${ctxOpts}</select>`, "settings.llm.ctx.help"),
+                settingsRow("settings.llm.mirror", `<select id="settingsLlmMirror">
+                        <option value="false" ${!llm.hfMirror ? "selected" : ""}>${t("settings.network.off")}</option>
+                        <option value="true" ${llm.hfMirror ? "selected" : ""}>${t("settings.network.on")}</option>
+                    </select>`, "settings.llm.mirror.help"),
+                section("settings.section.llmModels"),
+                settingsRow("settings.llm.models", `<div style="width:100%">
+                        <div id="settingsLlmModels" class="settings_net_list" tabindex="0"></div>
+                        <div id="settingsLlmJob" style="display:none;margin-top:0.6vh"></div>
+                        <div class="settings_net_actions" id="settingsLlmModelActions">
+                            <button type="button" class="settings_net_btn" data-act="download">${t("settings.llm.action.download")}</button>
+                            <button type="button" class="settings_net_btn" data-act="apply">${t("settings.llm.action.apply")}</button>
+                            <button type="button" class="settings_net_btn" data-act="pause">${t("settings.llm.action.pause")}</button>
+                            <button type="button" class="settings_net_btn" data-act="cancel">${t("settings.llm.action.cancel")}</button>
+                            <button type="button" class="settings_net_btn" data-act="delete">${t("settings.llm.action.delete")}</button>
+                        </div>
+                    </div>`, "settings.llm.models.help"),
+                section("settings.section.llmCustom"),
+                settingsRow("settings.llm.customUrl", `<div style="width:100%">
+                        <input type="text" id="settingsLlmUrl" placeholder="https://huggingface.co/…/*.gguf" style="width:100%" autocomplete="off">
+                        <div class="settings_net_actions">
+                            <button type="button" id="settingsLlmUrlAdd" class="settings_net_btn">${t("settings.llm.action.download")}</button>
+                            <button type="button" id="settingsLlmImport" class="settings_net_btn">${t("settings.llm.action.import")}</button>
+                        </div>
+                    </div>`, "settings.llm.customUrl.help"),
+                section("settings.section.llmServer"),
+                settingsRow("settings.llm.serverVersion", `<div class="settings_ver_row">
+                        <span id="settingsLlmServerVer" class="settings_net_info">–</span>
+                        <div class="settings_net_actions">
+                            <button type="button" id="settingsLlmServerCheck" class="settings_net_btn">${t("settings.llm.server.check")}</button>
+                            <button type="button" id="settingsLlmServerRollback" class="settings_net_btn">${t("settings.llm.server.rollback")}</button>
+                            <button type="button" id="settingsLlmServerBundled" class="settings_net_btn">${t("settings.llm.server.useBundled")}</button>
+                        </div>
+                    </div>`, "settings.llm.serverVersion.help"),
+                settingsRow("settings.llm.serverList", `<div id="settingsLlmServerList" class="settings_net_list"></div>`),
+                settingsRow("settings.llm.log", `<pre id="settingsLlmLog" class="settings_net_log">–</pre>`),
+            ].join("");
+        } },
         { id: "updates", titleKey: "settings.cat.updates", html: () => [
             section("settings.section.updatesApp"),
             settingsRow("settings.updates.app", `<div class="settings_ver_row">
@@ -4875,20 +5513,29 @@ window.openSettings = async () => {
             updateLockState();
         }
         // Screen-off timeout must stay at or above the screensaver timeout —
-        // flag the field red while it violates that (the saved value is still
-        // clamped up to the screensaver value on save).
+        // flag the field red while it violates that. 0 disables a timer ("never"),
+        // so a pair involving 0 is always valid; the ordering rule only bites
+        // when both timers actually run.
         const screenOffInput = document.getElementById("settingsEditor-screenOffIdle");
         const screensaverIdleInput = document.getElementById("settingsEditor-screensaverIdle");
         const checkScreenOff = () => {
-            const so = Number(screenOffInput ? screenOffInput.value : 0);
-            const sv = Number(screensaverIdleInput ? screensaverIdleInput.value : 300);
-            if (screenOffInput) screenOffInput.classList.toggle("settings_invalid", !(so >= sv));
+            const soRaw = screenOffInput ? String(screenOffInput.value).trim() : "";
+            const svRaw = screensaverIdleInput ? String(screensaverIdleInput.value).trim() : "";
+            const so = Number(soRaw);
+            const sv = svRaw === "" ? 300 : Number(svRaw);
+            const ok = soRaw !== "" && isFinite(so) && so >= 0 && isFinite(sv) && sv >= 0
+                && (!(so > 0 && sv > 0) || so >= sv);
+            if (screenOffInput) screenOffInput.classList.toggle("settings_invalid", !ok);
         };
         if (screenOffInput) {
             screenOffInput.addEventListener("input", checkScreenOff);
             if (screensaverIdleInput) screensaverIdleInput.addEventListener("input", checkScreenOff);
             checkScreenOff();
         }
+        // Local model library: hardware summary, catalog, task list and the
+        // llama-server version row. Runs last so the custom dropdowns above are
+        // already built (threads/ctx/mirror are <select>s of this category).
+        if (window.llmManager) window.llmManager.initSettings();
     }, 50);
 };
 
@@ -5652,16 +6299,24 @@ window.writeSettingsFile = () => {
     s.hideDotfiles = (document.getElementById("settingsEditor-hideDotfiles").value === "true");
     s.fsListView = (document.getElementById("settingsEditor-fsListView").value === "true");
     s.screensaverEnabled = (document.getElementById("settingsEditor-screensaverEnabled").value === "true");
-    s.screensaverIdle = Number(document.getElementById("settingsEditor-screensaverIdle").value);
+    // Both timeouts accept 0 = "never". Blank or non-numeric input falls back to
+    // the default so a typo can never silently disable the timer.
+    const readTimeout = (raw, fallback) => {
+        const txt = String(raw == null ? "" : raw).trim();
+        if (txt === "") return fallback;
+        const n = Number(txt);
+        return (isFinite(n) && n >= 0) ? Math.round(n) : fallback;
+    };
+    s.screensaverIdle = readTimeout(document.getElementById("settingsEditor-screensaverIdle").value, 300);
     // Screen-off must never be shorter than the screensaver timeout — clamp it
     // up to the screensaver value if the user entered something lower (and
     // mirror the clamp into the field so the displayed value stays truthful).
-    s.screenOffIdle = Number(document.getElementById("settingsEditor-screenOffIdle").value);
-    const minScreenOff = Math.max(Number(s.screensaverIdle) || 300, 0);
-    if (!(s.screenOffIdle >= minScreenOff)) {
-        s.screenOffIdle = minScreenOff;
+    // The ordering rule only applies when both timers actually run (non-zero).
+    s.screenOffIdle = readTimeout(document.getElementById("settingsEditor-screenOffIdle").value, 1800);
+    if (s.screensaverIdle > 0 && s.screenOffIdle > 0 && s.screenOffIdle < s.screensaverIdle) {
+        s.screenOffIdle = s.screensaverIdle;
         const soInput = document.getElementById("settingsEditor-screenOffIdle");
-        if (soInput) soInput.value = String(minScreenOff);
+        if (soInput) soInput.value = String(s.screenOffIdle);
     }
     s.screensaverStyle = document.getElementById("settingsEditor-screensaverStyle").value;
     s.lockCode = document.getElementById("settingsEditor-lockCode").value;
@@ -5716,6 +6371,19 @@ window.writeSettingsFile = () => {
     const _dlThreadsEl = document.getElementById("settingsDlThreads");
     if (_dlDirEl) s.downloadDir = _dlDirEl.value.trim();
     if (_dlThreadsEl) s.downloadThreads = Math.max(1, Math.min(32, parseInt(_dlThreadsEl.value, 10) || 6));
+    // Local model settings: only these three controls belong to the renderer.
+    // modelId / lastGoodModelId / serverVersion are written by the main process
+    // (applyModel, installServer), so MERGE instead of rebuilding — a stale
+    // copy here would resurrect the model the user just switched away from.
+    const _llmThreads = document.getElementById("settingsLlmThreads");
+    const _llmCtx = document.getElementById("settingsLlmCtx");
+    const _llmMirror = document.getElementById("settingsLlmMirror");
+    const _llmPrev = s.llm || (window.settings && window.settings.llm) || {};
+    s.llm = Object.assign({}, _llmPrev, {
+        threads: _llmThreads ? (parseInt(_llmThreads.value, 10) || 0) : (Number(_llmPrev.threads) || 0),
+        ctxSize: _llmCtx ? (parseInt(_llmCtx.value, 10) || 0) : (Number(_llmPrev.ctxSize) || 0),
+        hfMirror: _llmMirror ? _llmMirror.value === "true" : !!_llmPrev.hfMirror
+    });
     s.clash = {
         enabled: (document.getElementById("settingsClashEnabled").value === "true"),
         // No form control for port — the mixed port is fixed by the seeded
@@ -7136,11 +7804,25 @@ const multiBump = (() => {
 );
 // Input on any display wakes/locks/unlocks the whole system.
 ipc.on("multi:activity", () => { if (window.__screen.master) bumpActivity(); });
+// Idle timeout in milliseconds. An explicit 0 means "never" (the timer is
+// disabled) — that is what the settings pane promises. Empty / unparsable
+// values keep the historical default, so old settings files are unaffected.
+function idleTimeoutMs(value, fallbackSec) {
+    if (value === undefined || value === null || value === "") return fallbackSec * 1000;
+    const n = Number(value);
+    if (!isFinite(n) || n < 0) return fallbackSec * 1000;
+    return n === 0 ? Infinity : n * 1000;
+}
 setInterval(() => {
     // Locks, screensaver, blanking and hardware DPMS are master-only: N windows
     // each running their own timers meant N independent screensavers and a race
     // over `power:screen`.
     if (!window.__screen.master) return;
+    // An open Wireless Transfer dialog keeps the display awake: the phone is
+    // about to scan a code and move files, and blanking or locking the screen
+    // would take the dialog down together with the server it is running.
+    // Closing the dialog restarts the idle countdown from zero.
+    if (window._ftransOpen) { lastActivity = Date.now(); return; }
     const idleMs = Date.now() - lastActivity;
     const locked = window.lockScreen && window.lockScreen.active;
     const screensaverOn = window.screensaver.isActive();
@@ -7151,8 +7833,8 @@ setInterval(() => {
     // the very same boot screen. This is what keeps "sit on the boot password"
     // from ever producing a screensaver-then-lock double prompt.
     const bootPhase = !window._uiReady;
-    const screenOffIdle = (Number(window.settings.screenOffIdle) || 1800) * 1000;
-    const screensaverIdle = (Number(window.settings.screensaverIdle) || 300) * 1000;
+    const screenOffIdle = idleTimeoutMs(window.settings.screenOffIdle, 1800);
+    const screensaverIdle = idleTimeoutMs(window.settings.screensaverIdle, 300);
     const shouldLockOnIdle = window.settings.lockOnIdle !== false
         && String(window.settings.lockCode || "").length > 0;
 

@@ -1134,8 +1134,10 @@ const targets = [
       .join('Object.keys(window.term||{}).forEach(e=>{const t=window.term[e];t&&t.term&&"function"==typeof t.fit&&t.fit(),t&&"function"==typeof t.reconnectNow&&t.reconnectNow()})')
       .split('ipc.on("pm:suspend",()=>{try{window.lockScreen&&!window.lockScreen.active&&window.settings&&String(window.settings.lockCode||"").length>0&&!1!==window.settings.lockOnIdle&&window.lockScreen.engage()}catch(e){try{console.error("pm:suspend handler failed:",e&&e.stack||e)}catch(e){}}})')
       .join('ipc.on("pm:suspend",()=>{try{window.lockScreen&&!window.lockScreen.active&&window.settings&&String(window.settings.lockCode||"").length>0&&!1!==window.settings.lockOnIdle&&window.lockScreen.engage()}catch(e){try{console.error("pm:suspend handler failed:",e&&e.stack||e)}catch(e){}}}),ipc.on("system-idle",(e,s)=>{try{window._sysIdleSec=Number(s)||0}catch(_){}})')
-      .split('const e=Date.now()-lastActivity,t=window.lockScreen')
-      .join('const e=1e3*(window._sysIdleSec>=0?window._sysIdleSec:Math.round((Date.now()-lastActivity)/1e3)),t=window.lockScreen')
+      // 变量名由 terser 频率分析给出,会随周围代码漂移(加入 idle 守卫后 idleMs 由 e 变 t)。
+      // 用正则捕获真实名字,任何一版产物都能命中;名字取不到就原样跳过。
+      .replace(/const (\w+)=Date\.now\(\)-lastActivity,(\w+)=window\.lockScreen/g, (m, a, b) =>
+          'const ' + a + '=1e3*(window._sysIdleSec>=0?window._sysIdleSec:Math.round((Date.now()-lastActivity)/1e3)),' + b + '=window.lockScreen')
       // v2.2:当前部署态(默认关行)先 revert 回锚点,再从锚点注入默认开的新行(收敛/幂等)。
       .split(SSH_NET_ROW_OLD).join(SSH_NET_ANCHOR)
       .split(SSH_NET_ANCHOR).join(SSH_NET_ROW)

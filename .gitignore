@@ -87,3 +87,6 @@ id_ed25519*
 settings.json
 HANDOVER_LOCAL.md
 docs/
+
+# LLM catalog generator cache
+scripts/.cache/

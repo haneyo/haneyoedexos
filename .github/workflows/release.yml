@@ -26,7 +26,12 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # PINNED, do not use ubuntu-latest: node-pty has no linux-x64 prebuild and is
+    # compiled by node-gyp on the runner. ubuntu-latest moved to 26.04 (glibc
+    # 2.42) on 2026-10-28, which produced AppImages whose pty.node cannot load on
+    # the ISO's Ubuntu 24.04 → eDEX dies before its first window (black screen +
+    # cursor; v2.4.54/55/56). The ISO base is 24.04, so build on 24.04.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
@@ -51,9 +56,15 @@ jobs:
         run: |
           npm run prebuild-linux
           ./node_modules/.bin/electron-builder build -l --x64 --publish never
-          rm -R prebuild-src
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify native modules load on the target (glibc 2.39)
+        run: |
+          # Refuse to publish an AppImage whose native modules need a newer glibc
+          # than Ubuntu 24.04 ships — see packaging/check-native-glibc.sh.
+          bash packaging/check-native-glibc.sh prebuild-src 2.39
+          rm -R prebuild-src
 
       - name: Patch AppImage (true-machine fixes)
         run: |
@@ -84,7 +95,9 @@ jobs:
   # both artifacts ("every update = AppImage + ISO").
   iso:
     needs: release
-    runs-on: ubuntu-latest
+    # Same pin as the release job: the ISO remaster itself only needs xorriso,
+    # but keeping both jobs on 24.04 keeps the toolchain identical.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 

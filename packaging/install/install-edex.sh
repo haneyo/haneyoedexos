@@ -196,6 +196,16 @@ cat > "/home/$U/.config/eDEX-UI/settings.json" <<'SETTINGS'
         "model": "qwen2.5-0.5b-instruct-q4_k_m",
         "haikuModel": "qwen2.5-0.5b-instruct-q4_k_m"
     },
+    "llm": {
+        "modelId": "qwen2.5-0.5b-instruct-q4_k_m",
+        "lastGoodModelId": "qwen2.5-0.5b-instruct-q4_k_m",
+        "serverVersion": "bundled",
+        "threads": 0,
+        "ctxSize": 0,
+        "cacheTypeK": "q8_0",
+        "cacheTypeV": "q8_0",
+        "hfMirror": false
+    },
     "voiceMicMode": "input",
     "webapps": []
 }
@@ -958,6 +968,13 @@ fi
 [ -s /etc/ssh/ssh_host_ed25519_key ] || [ -s /etc/ssh/ssh_host_rsa_key ] || ssh-keygen -A 2>/dev/null || true
 systemctl disable ssh.service 2>/dev/null || true
 systemctl enable ssh.socket 2>/dev/null || true
+
+# Wireless Transfer (file browser on http://<ip>/files/) binds port 80 so the
+# address stays typable instead of carrying :8080. Ports below 1024 are root-only
+# by default; this is the documented kernel knob that lifts the floor for the
+# desktop's own unprivileged processes. Without it the feature still works — it
+# just falls back to a port number in the URL.
+echo 'net.ipv4.ip_unprivileged_port_start = 80' > /etc/sysctl.d/60-edex-unprivileged-ports.conf
 
 echo "[edex] Flatpak: flathub remote (flatpak group add → edex-firstboot.sh)"
 # flatpak core + xdg-desktop-portal(-gtk) are baked into the ISO. Wire up the

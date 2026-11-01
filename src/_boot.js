@@ -105,7 +105,28 @@ const path = require("path");
 const url = require("url");
 const fs = require("fs");
 const which = require("which");
-const Terminal = require("./classes/terminal.class.js").Terminal;
+// A native module that will not load takes the whole app down at require time.
+// node-pty is the one that bites in practice: it has no linux-x64 prebuild, so
+// node-gyp compiles it on the build machine, and a build machine with a newer
+// glibc than the target produces a pty.node that dlopen rejects (v2.4.54/55/56
+// shipped exactly that). The require used to reject an unhandled promise and
+// leave the app running with no window — the machine booted to a black screen
+// with only a mouse cursor and nothing to diagnose. Say what is wrong instead.
+let Terminal = null;
+try {
+    Terminal = require("./classes/terminal.class.js").Terminal;
+} catch (err) {
+    signale.fatal(err);
+    app.whenReady().then(() => {
+        try {
+            dialog.showErrorBox("eDEX-UI 无法启动 / failed to start",
+                "终端组件（node-pty）加载失败，界面无法启动。\n" +
+                "The terminal back-end (node-pty) failed to load, so the UI cannot start.\n\n" +
+                (err && err.message ? err.message : String(err)));
+        } catch (e) {}
+        app.quit();
+    });
+}
 
 ipc.on("log", (e, type, content) => {
     signale[type](content);
@@ -212,6 +233,16 @@ const DEFAULT_SETTINGS = {
         model: "qwen2.5-0.5b-instruct-q4_k_m",
         haikuModel: "qwen2.5-0.5b-instruct-q4_k_m",
         aiWebSearch: true              // #158: AI chat does a live web search and injects results
+    },
+    llm: {
+        modelId: "qwen2.5-0.5b-instruct-q4_k_m",  // active GGUF; the ISO-baked model is the undeletable fallback
+        lastGoodModelId: "qwen2.5-0.5b-instruct-q4_k_m",
+        serverVersion: "bundled",      // "bundled" | llama.cpp release tag (bNNNN) installed under userData
+        threads: 0,                    // 0 = auto: min(8, cores/2); manual cap is cores-1
+        ctxSize: 0,                    // 0 = auto: min(32768, model native ctx), shrunk to fit RAM
+        cacheTypeK: "q8_0",
+        cacheTypeV: "q8_0",
+        hfMirror: false                // route huggingface.co through hf-mirror.com
     },
     voiceMicMode: "input",             // mic button / Win-key voice input target: "input" (ASR→terminal) | "chat" (AI chat)
     appMonitor: {
@@ -746,23 +777,35 @@ app.on('ready', async () => {
     // service / API into every terminal's environment.
     const claudeConf = settings.claude || {};
     const claudeShell = await which("claude", { path: cleanEnv.PATH }).catch(() => null);
-    // Bundled local LLM (#144): /opt/edex/llm/ holds llama-server + the
-    // quantized GGUF, baked into the ISO by build-iso.sh. Absent on macOS
-    // preview and on installs that predate the feature, so every consumer must
-    // guard on LLM_GGUF being non-null.
-    const LLM_DIR = "/opt/edex/llm";
-    const LLM_BIN = process.platform === "linux" && fs.existsSync(path.join(LLM_DIR, "llama-server"))
-        ? path.join(LLM_DIR, "llama-server") : null;
-    const LLM_GGUF = LLM_BIN && fs.existsSync(path.join(LLM_DIR, "qwen2.5-0.5b-instruct-q4_k_m.gguf"))
-        ? path.join(LLM_DIR, "qwen2.5-0.5b-instruct-q4_k_m.gguf") : null;
+    // Bundled local LLM (#144): the ISO bakes llama-server + one quantized GGUF
+    // into /opt/edex/llm. That copy is read-only and stays as the undeletable
+    // fallback; downloaded models and upgraded llama-server builds live in
+    // <userData>/llm (see llm-manager.js). Both the binary and the model are
+    // resolved per call, so switching a model never needs a settings const.
+    const llmMgr = require("./llm-manager").create({
+        settingsFile,
+        signale,
+        defaults: DEFAULT_SETTINGS.llm,
+        readSettings: () => {
+            try {
+                return Object.assign({}, DEFAULT_SETTINGS, JSON.parse(fs.readFileSync(settingsFile, "utf8")));
+            } catch (e) {
+                return Object.assign({}, DEFAULT_SETTINGS);
+            }
+        },
+        broadcast
+    });
+    global.llmManager = llmMgr;
+    const llmActive = llmMgr.activeModel();
+    const llmBin = llmMgr.resolveBinary();
     const claudeEnv = {};
     if (claudeConf.enabled) {
-        // provider=local points the claude CLI at the bundled llama-server.
-        // If the model is missing (macOS preview / pre-#144 install) skip the
+        // provider=local points the claude CLI at our llama-server. If no
+        // binary/model resolves (macOS preview / pre-#144 install) skip the
         // injection entirely so claude falls back to its own defaults instead
         // of erroring on a dead 127.0.0.1 endpoint.
         const isLocal = claudeConf.provider === "local";
-        const llmReady = isLocal && !!LLM_GGUF;
+        const llmReady = isLocal && !!(llmActive && llmBin.bin);
         if (!isLocal || llmReady) {
             if (claudeConf.baseUrl) claudeEnv.ANTHROPIC_BASE_URL = claudeConf.baseUrl;
             if (claudeConf.apiKey) claudeEnv.ANTHROPIC_API_KEY = claudeConf.apiKey;
@@ -779,9 +822,9 @@ app.on('ready', async () => {
             claudeEnv.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = "1";
             claudeEnv.CLAUDE_CODE_SKIP_FAST_MODE_NETWORK_ERRORS = "1";
             claudeEnv.DISABLE_AUTOUPDATER = "1";
-            claudeEnv.CLAUDE_CODE_MAX_CONTEXT_TOKENS = "32768";
+            claudeEnv.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(llmMgr.resolveCtx(llmActive));
         } else if (isLocal) {
-            signale.warn("claude provider=local but bundled model not found at " + LLM_DIR + " — skipping local env injection");
+            signale.warn("claude provider=local but no local llama-server/model resolved — skipping local env injection");
         }
     }
 
@@ -1798,14 +1841,26 @@ function show(cls,msg){status.className=cls;status.textContent=msg}
         return { ok: true, running: !!transferSrv, url, qr: transferSrv ? transferQr(url) : "" };
     });
 
-    // ---- File browser "Wi-Fi transfer" (ftrans, served on port 8720) ----
-    // Unlike the clash drop-page above (one-way import), this serves a whole
-    // mini file browser: browse/download the user's home and upload into whatever
-    // folder is open on the phone/other machine. Scope is strictly the user's home
-    // — every route resolves the requested path and rejects anything escaping it.
+    // ---- File browser "Wireless Transfer" (ftrans) ----
+    // Serves a small, theme-matched file browser on the LAN while the Wireless
+    // Transfer dialog is open. The address is meant to be typable — http://<ip>/files/ —
+    // which needs an unprivileged bind on port 80: install-edex.sh sets
+    // net.ipv4.ip_unprivileged_port_start=80, and when that is not in place (or
+    // 80 is taken) we fall back to 8080 and then to whatever port the kernel
+    // hands out. Scope is strictly the user's home — every route re-resolves the
+    // requested path and rejects anything that escapes it.
+    //
+    // The page can also end the session on its own, so a phone can finish the
+    // job without walking back to the machine: STOP closes the dialog (which
+    // stops this server), LOCK closes it and locks the session, and an
+    // "after transfers finish" policy does either one once the last upload or
+    // download completes.
+    const FTRANS_BASE = "/files";
     let ftransSrv = null;
     let ftransPort = 0;
-    let ftransToken = "";
+    let ftransPolicy = "none";   // none | stop | lock — one-shot, cleared when it fires
+    let ftransActive = 0;        // in-flight uploads + downloads
+    let ftransDoneTimer = null;
     const home = require("os").homedir();
     // Mirror the file browser's quick links (its _defaultQuickLinks on the
     // renderer side) as relative-to-home paths the page can jump to.
@@ -1827,100 +1882,172 @@ function show(cls,msg){status.className=cls;status.textContent=msg}
         } catch (e) {}
         return null;
     };
-    const ftransUrl = () => ftransSrv ? "http://" + lanIPv4() + ":" + ftransPort + "/" + ftransToken : "";
+    const ftransUrl = () => ftransSrv
+        ? "http://" + lanIPv4() + (ftransPort === 80 ? "" : ":" + ftransPort) + FTRANS_BASE + "/"
+        : "";
+    // Colours for the served page, taken from whichever theme is active so the
+    // phone shows the same palette as the desktop. Everything is clamped to a
+    // plain hex/number before it reaches the stylesheet.
+    const ftransPalette = () => {
+        const num = (v, d) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(255, Math.round(n))) : d; };
+        const hex = (v, d) => /^#[0-9a-fA-F]{3,8}$/.test(String(v || "")) ? String(v) : d;
+        const p = { r: 170, g: 207, b: 209, bg: "#05080d", panel: "#000000", fg: "#cfe4e4", ok: "#2fd6a7", err: "#ff4f6d" };
+        try {
+            // Read the theme name off disk: the main-process copy of `settings`
+            // is loaded once at startup, so a theme switched during this session
+            // would otherwise leave the phone on the old palette.
+            let name = String(settings.theme || "");
+            try {
+                const onDisk = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
+                if (onDisk && onDisk.theme) name = String(onDisk.theme);
+            } catch (e) {}
+            let t = null;
+            for (const dir of [themesDir, innerThemesDir]) {
+                try { t = JSON.parse(fs.readFileSync(path.join(dir, name + ".json"), "utf8")); break; } catch (e) {}
+            }
+            const c = (t && t.colors) || null;
+            if (c) {
+                p.r = num(c.r, p.r);
+                p.g = num(c.g, p.g);
+                p.b = num(c.b, p.b);
+                p.bg = hex(c.light_black, p.bg);
+                p.panel = hex(c.black, p.panel);
+                p.fg = hex(c.white, p.fg);
+                if (/^#[0-9a-fA-F]{3,8}$/.test(String(c.green || ""))) p.ok = c.green;
+                if (/^#[0-9a-fA-F]{3,8}$/.test(String(c.red || ""))) p.err = c.red;
+            }
+        } catch (e) {}
+        return p;
+    };
     const ftransPage = () => {
         const quickJson = JSON.stringify(ftransQuickLinks);
+        const P = ftransPalette();
         return `<!DOCTYPE html>
-<html lang="zh">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Wireless Transfer / 无线传输</title>
+<meta name="theme-color" content="${P.bg}">
+<title>Wireless Transfer</title>
 <style>
-:root{--bg:#0d1117;--panel:#161b22;--border:#30363d;--fg:#c9d1d9;--dim:#8b949e;--acc:#58a6ff;--ok:#3fb950;--err:#f85149}
+:root{--r:${P.r};--g:${P.g};--b:${P.b};--bg:${P.bg};--panel:${P.panel};--fg:${P.fg};--ok:${P.ok};--err:${P.err};
+--acc:rgb(var(--r),var(--g),var(--b));--dim:rgba(var(--r),var(--g),var(--b),.55);--line:rgba(var(--r),var(--g),var(--b),.28);--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"DejaVu Sans Mono",monospace}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI","Noto Sans CJK SC",sans-serif;padding:14px 16px 90px}
-h1{font-size:17px;margin:0 0 2px}
-.sub{color:var(--dim);font-size:12px;margin:0 0 14px}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--mono);font-size:14px;padding:16px 16px 40px;-webkit-text-size-adjust:100%}
+h1{font-size:15px;letter-spacing:.14em;text-transform:uppercase;margin:0 0 4px;color:var(--acc);text-shadow:0 0 10px rgba(var(--r),var(--g),var(--b),.45)}
+h2{font-size:11px;letter-spacing:.14em;text-transform:uppercase;margin:0 0 10px;color:var(--dim);font-weight:400}
+.sub{color:var(--dim);font-size:11px;margin:0 0 16px;line-height:1.6;letter-spacing:.02em}
+hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 #quickbar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
-.qbtn{background:var(--panel);border:1px solid var(--border);color:var(--fg);padding:6px 12px;border-radius:8px;cursor:pointer;font-size:13px}
-.qbtn:hover{border-color:var(--acc)}
-.qbtn.on{background:var(--acc);color:#04070d;border-color:var(--acc);font-weight:600}
-#pathbar{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-bottom:12px}
-#pathbar button{background:transparent;border:1px solid var(--border);color:var(--fg);width:30px;height:30px;border-radius:7px;cursor:pointer;font-size:15px;flex:0 0 auto}
+.qbtn{background:transparent;border:1px solid var(--line);color:var(--fg);padding:6px 10px;cursor:pointer;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase}
+.qbtn:hover{border-color:var(--acc);color:var(--acc)}
+.qbtn.on{border-color:var(--acc);color:var(--acc);background:rgba(var(--r),var(--g),var(--b),.1);text-shadow:0 0 8px rgba(var(--r),var(--g),var(--b),.5)}
+#pathbar{display:flex;align-items:center;gap:10px;border:1px solid var(--line);padding:8px 10px;margin-bottom:12px;background:var(--panel)}
+#pathbar button{background:transparent;border:1px solid var(--line);color:var(--acc);width:30px;height:30px;cursor:pointer;font-size:15px;flex:0 0 auto;font-family:var(--mono)}
 #pathbar button:hover{border-color:var(--acc)}
-#path{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:var(--acc);word-break:break-all}
+#path{font-size:12px;color:var(--acc);word-break:break-all;letter-spacing:.02em}
 #grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
-.item{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:6px;cursor:default;min-height:96px}
+.item{background:var(--panel);border:1px solid var(--line);padding:11px;display:flex;flex-direction:column;gap:7px;min-height:94px;position:relative}
 .item.dir{cursor:pointer}
-.item.dir:hover,.item.file:hover{border-color:var(--acc)}
-.item .name{font-size:13px;line-height:1.3;word-break:break-all;flex:1}
-.item .sz{color:var(--dim);font-size:11px}
-.item .dl{background:var(--acc);color:#04070d;border:0;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;align-self:flex-start;font-weight:600}
-.item.icondir:hover{transform:translateY(-1px)}
-.empty{color:var(--dim);text-align:center;padding:40px 0;font-size:14px;grid-column:1/-1}
-.drop{border:2px dashed var(--border);border-radius:12px;padding:22px 16px;margin-top:14px;cursor:pointer;text-align:center;color:var(--dim);display:block;transition:border-color .2s,transform .2s}
-.drop b{color:var(--fg)}
-body.drag .drop{border-color:var(--acc);transform:scale(1.01);color:var(--acc)}
-.drop .label{color:var(--dim);font-size:12px;margin-top:4px}
+.item.dir:hover,.item.file:hover{border-color:var(--acc);box-shadow:0 0 12px rgba(var(--r),var(--g),var(--b),.14)}
+.item .name{font-size:12px;line-height:1.4;word-break:break-all;flex:1}
+.item .sz{color:var(--dim);font-size:10px;letter-spacing:.06em}
+.item .dl{background:transparent;border:1px solid var(--acc);color:var(--acc);padding:4px 10px;cursor:pointer;font-size:10px;align-self:flex-start;font-family:var(--mono);letter-spacing:.1em;text-transform:uppercase}
+.item .dl:hover{background:rgba(var(--r),var(--g),var(--b),.14)}
+.empty{color:var(--dim);text-align:center;padding:36px 0;font-size:12px;grid-column:1/-1;letter-spacing:.08em}
+.drop{border:1px dashed var(--line);padding:20px 16px;margin-top:14px;cursor:pointer;text-align:center;color:var(--dim);display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+.drop:hover,body.drag .drop{border-color:var(--acc);color:var(--acc);background:rgba(var(--r),var(--g),var(--b),.06)}
+.drop b{color:var(--acc);font-weight:400}
 #file{position:fixed;left:-10000px;top:-10000px;width:1px;height:1px;opacity:0}
-#toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 18px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;word-break:break-all}
+#session{margin-top:20px;border:1px solid var(--line);padding:12px;background:var(--panel)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.row label{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+select{background:var(--bg);color:var(--fg);border:1px solid var(--line);font-family:var(--mono);font-size:12px;padding:6px 8px;min-width:160px}
+select:focus{outline:0;border-color:var(--acc)}
+.actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.actions button{flex:1;min-width:130px;background:transparent;border:1px solid var(--line);color:var(--fg);font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;padding:10px 12px;cursor:pointer}
+.actions button:hover{border-color:var(--acc);color:var(--acc)}
+#stop:hover{border-color:var(--err);color:var(--err)}
+#sessmsg{margin:10px 0 0;font-size:11px;color:var(--dim);min-height:15px;letter-spacing:.02em}
+#toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--panel);border:1px solid var(--line);padding:10px 16px;font-size:11px;letter-spacing:.04em;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;word-break:break-all}
 #toast.show{opacity:1}
 #toast.ok{border-color:var(--ok);color:var(--ok)}
 #toast.err{border-color:var(--err);color:var(--err)}
 </style>
 </head>
 <body>
-<h1>Wireless Transfer / 无线传输</h1>
-<p class="sub">浏览并下载本机文件,或把文件拖上来传进当前打开的文件夹 — Browse, download or upload to the folder you're viewing.</p>
+<h1>Wireless Transfer</h1>
+<p class="sub">Browse and download files from this machine, or upload into the folder you are viewing.</p>
 <div id="quickbar"></div>
 <div id="pathbar"><button id="up" title="Up" onclick="goUp()">↑</button><span id="path">~/</span></div>
 <div id="grid"></div>
 <input type="file" id="file" multiple>
-<label id="drop" class="drop" for="file">Drop files here to upload into the current folder<br><span class="label">或点击选择文件 / or click to browse</span></label>
+<label id="drop" class="drop" for="file">Drop files to upload here<br><b>or tap to pick files</b></label>
+<hr>
+<div id="session">
+<h2>Session</h2>
+<div class="row">
+<label for="policy">When transfers finish</label>
+<select id="policy">
+<option value="none">Do nothing</option>
+<option value="stop">Stop transfer</option>
+<option value="lock">Lock screen</option>
+</select>
+</div>
+<div class="actions">
+<button id="stop">Stop transfer</button>
+<button id="lock">Lock screen</button>
+</div>
+<p id="sessmsg"></p>
+</div>
 <div id="toast"></div>
 <script>
+var API=${JSON.stringify(FTRANS_BASE)};
 var QUICK=${quickJson};
 var state={path:'',depth:0};
+var finished=false;
 function el(id){return document.getElementById(id)}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;')}
 function fmt(n){if(n==null)return '';var c=1024,e=['B','KiB','MiB','GiB','TiB','PiB'],i=0;while(n>=c&&i<e.length-1){n/=c;i++}return (n>=10||i===0?Math.round(n):n.toFixed(1))+' '+e[i]}
-function show(msg,cls){var t=el('toast');t.textContent=msg;t.className='toast '+(cls||'');clearTimeout(t._t);t._t=setTimeout(function(){t.className='toast'},2400)}
-var DIR='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
-var FIL='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8b949e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
+function show(msg,cls){var t=el('toast');t.textContent=msg;t.className='toast '+(cls||'');clearTimeout(t._t);t._t=setTimeout(function(){t.className='toast'},2600)}
+var ACC='rgb(${P.r},${P.g},${P.b})';
+var DIM='rgba(${P.r},${P.g},${P.b},.6)';
+var DIR='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="'+ACC+'" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+var FIL='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="'+DIM+'" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
 function renderQuick(){
   var h='';for(var i=0;i<QUICK.length;i++){var q=QUICK[i];
     h+='<button class="qbtn'+(state.path===q.rel?' on':'')+'" data-nav="'+encodeURIComponent(q.rel)+'">'+esc(q.label)+'</button>';}
   el('quickbar').innerHTML=h;
 }
 function rel(a,b){return a?(a+'/'+b):b}
-function setPath(p){state.path=p||'';el('path').textContent='~/';load()}
+function setPath(p){state.path=p||'';el('path').textContent='~/'+state.path;load()}
 function goUp(){if(!state.path)return;var seg=state.path.split('/');seg.pop();setPath(seg.join('/'))}
 function load(){
-  el('grid').innerHTML='<div class="empty">Loading…</div>';
-  fetch('api/list?path='+encodeURIComponent(state.path)).then(function(r){return r.json()}).then(function(j){
-    if(!j.ok){el('grid').innerHTML='<div class="empty">'+(esc(j.error||'Failed'))+'</div>';return}
-    state.path=j.path||'';el('path').textContent='~/'+(state.path);renderQuick();
+  if(finished)return;
+  el('grid').innerHTML='<div class="empty">Loading...</div>';
+  fetch(API+'/api/list?path='+encodeURIComponent(state.path)).then(function(r){return r.json()}).then(function(j){
+    if(!j.ok){el('grid').innerHTML='<div class="empty">'+esc(j.error||'Failed')+'</div>';return}
+    state.path=j.path||'';el('path').textContent='~/'+state.path;renderQuick();
     var items=j.items||[];var i,h='';
     for(i=0;i<items.length;i++){h+=itemHTML(items[i])}
-    if(!items.length)h='<div class="empty">空文件夹 / Empty folder</div>';
+    if(!items.length)h='<div class="empty">Empty folder</div>';
     el('grid').innerHTML=h;
-  }).catch(function(){el('grid').innerHTML='<div class="empty">Network error</div>'});
+  }).catch(function(){el('grid').innerHTML='<div class="empty">Cannot reach the eDEX machine - is the transfer window still open?</div>'});
 }
 function itemHTML(it){
   var cls='item '+(it.isDir?'dir':'file');
   if(it.isDir){return '<div class="'+cls+'" data-nav="'+encodeURIComponent(rel(state.path,it.name))+'">'+DIR+'<span class="name">'+esc(it.name)+'</span></div>'}
-  return '<div class="'+cls+'">'+FIL+'<span class="name">'+esc(it.name)+'</span><span class="sz">'+fmt(it.size)+'</span><button class="dl" data-dl="'+encodeURIComponent(rel(state.path,it.name))+'">下载 ↓</button></div>'
+  return '<div class="'+cls+'">'+FIL+'<span class="name">'+esc(it.name)+'</span><span class="sz">'+fmt(it.size)+'</span><button class="dl" data-dl="'+encodeURIComponent(rel(state.path,it.name))+'">Download</button></div>'
 }
-function dl(p){var a=document.createElement('a');a.href='dl?path='+encodeURIComponent(p);a.download='';document.body.appendChild(a);a.click();a.remove()}
+function dl(p){var a=document.createElement('a');a.href=API+'/dl?path='+encodeURIComponent(p);a.download='';document.body.appendChild(a);a.click();a.remove()}
 // --- delegated clicks (nav + download) ---
 document.addEventListener('click',function(e){
-  var n=e.target.closest('[data-nav]');if(n){setPath(decodeURIComponent(n.getAttribute('data-nav')));return}
-  var d=e.target.closest('[data-dl]');if(d){e.preventDefault();dl(d.getAttribute('data-dl'));return}
+  var n=e.target.closest('[data-nav]');if(n){e.preventDefault();setPath(decodeURIComponent(n.getAttribute('data-nav')));return}
+  var d=e.target.closest('[data-dl]');if(d){e.preventDefault();dl(decodeURIComponent(d.getAttribute('data-dl')));return}
 });
 // --- whole-document drag/drop for upload (browser never navigates away) ---
 var file=el('file');
-file.onchange=function(){if(file.files.length)uploadMany(file.files)}
+file.onchange=function(){if(file.files.length)uploadMany(file.files);file.value=''};
 document.addEventListener('dragenter',function(e){e.preventDefault();state.depth++;document.body.className='drag'});
 document.addEventListener('dragover',function(e){e.preventDefault();if(e.dataTransfer)e.dataTransfer.dropEffect='copy'});
 document.addEventListener('dragleave',function(){if(--state.depth<=0){state.depth=0;document.body.className=''}});
@@ -1930,195 +2057,276 @@ function uploadMany(files){
   for(var i=0;i<files.length;i++){uploadOne(files[i])}
 }
 function uploadOne(f){
-  var target=encodeURIComponent(rel(state.path,f.name));
-  show('上传中… / Uploading '+f.name+'…');
-  fetch('api/upload?path='+encodeURIComponent(rel(state.path,''))+'&name='+encodeURIComponent(f.name),{method:'POST',body:f}).then(function(r){return r.json()}).then(function(j){
-    if(j.ok){show('✓ '+f.name+' 已上传 / uploaded','ok');load()}
-    else{show('✗ '+f.name+': '+j.error,'err')}
-  }).catch(function(){show('✗ '+f.name+' 上传失败 / failed','err')});
+  show('Uploading '+f.name+'...');
+  fetch(API+'/api/upload?path='+encodeURIComponent(state.path)+'&name='+encodeURIComponent(f.name),{method:'POST',body:f}).then(function(r){return r.json()}).then(function(j){
+    if(j.ok){show('Uploaded '+f.name,'ok');load()}
+    else{show(f.name+': '+j.error,'err')}
+  }).catch(function(){show(f.name+': upload failed','err')});
 }
+// --- remote session control ---
+function post(path,body){
+  return fetch(API+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(function(r){return r.json()});
+}
+function setPolicy(v){
+  post('/api/action',{action:'policy',value:v}).then(function(j){
+    el('sessmsg').textContent=j.ok?policyMsg(v):(j.error||'Failed');
+  }).catch(function(){el('sessmsg').textContent='Cannot reach the eDEX machine'});
+}
+function policyMsg(v){
+  if(v==='stop')return 'The transfer window will close as soon as the transfers finish.';
+  if(v==='lock')return 'The screen will lock as soon as the transfers finish.';
+  return 'The transfer window stays open until you close it.';
+}
+function act(a){
+  if(a==='lock'&&!confirm('Lock the eDEX screen and close the transfer window?'))return;
+  if(a==='stop'&&!confirm('Close the transfer window on the eDEX machine?'))return;
+  post('/api/action',{action:a}).then(function(j){
+    if(!j.ok){show(j.error||'Failed','err');return}
+    finished=true;
+    el('sessmsg').textContent=(a==='lock'?'Screen locked.':'Transfer stopped.')+' You can close this page.';
+    el('stop').disabled=true;el('lock').disabled=true;el('policy').disabled=true;
+    show(a==='lock'?'Screen locked':'Transfer stopped','ok');
+  }).catch(function(){show('Cannot reach the eDEX machine','err')});
+}
+el('policy').onchange=function(){setPolicy(this.value)};
+el('stop').onclick=function(){act('stop')};
+el('lock').onclick=function(){act('lock')};
+// Keep the policy control in step with a page reload, and reflect server state.
+function status(){
+  if(finished)return;
+  fetch(API+'/api/status').then(function(r){return r.json()}).then(function(j){
+    if(!j.ok)return;
+    el('policy').value=j.policy||'none';
+    if(j.transfers>0)el('sessmsg').textContent=j.transfers+(j.transfers===1?' transfer running':' transfers running');
+    else el('sessmsg').textContent=policyMsg(j.policy||'none');
+  }).catch(function(){el('sessmsg').textContent='The eDEX session has ended.'});
+}
+setInterval(status,4000);
+renderQuick();
 setPath('');
+status();
 </script>
 </body>
 </html>`;
     };
-    const ftransStart = () => new Promise(resolve => {
-        if (ftransSrv) return resolve({ ok: true, url: ftransUrl() });
-        const http = require("http");
-        ftransToken = require("crypto").randomBytes(3).toString("hex");
-        const json = (res, code, obj) => {
-            res.writeHead(code, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(obj));
-        };
-        const srv = http.createServer((req, res) => {
-            const raw = (req.url || "");
-            const q = raw.indexOf("?");
-            const p = q === -1 ? raw : raw.slice(0, q);
-            const query = {};
-            if (q !== -1) {
-                raw.slice(q + 1).split("&").forEach(kv => {
-                    const i = kv.indexOf("=");
-                    if (i === -1) query[kv] = "";
-                    else query[kv.slice(0, i)] = kv.slice(i + 1);
-                });
-            }
-            const relOf = k => { try { return decodeURIComponent(query[k] || ""); } catch (e) { return ""; } };
-            // page
-            if (req.method === "GET" && p === "/" + ftransToken) {
-                res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-                res.end(ftransPage());
-                return;
-            }
-            // list a directory
-            if (req.method === "GET" && p === "/" + ftransToken + "/api/list") {
-                const abs = ftransResolve(relOf("path"));
-                if (!abs) return json(res, 403, { ok: false, error: "Forbidden" });
-                require("fs").readdir(abs, { withFileTypes: true }, (err, ents) => {
-                    if (err) return json(res, 404, { ok: false, error: "Cannot read: " + err.code });
-                    const items = ents.map(d => {
-                        let isDir = d.isDirectory(), size = 0;
-                        try {
-                            const st = require("fs").statSync(path.join(abs, d.name));
-                            size = st.size;
-                            if (st.isDirectory()) isDir = true;
-                        } catch (e) {}
-                        return { name: d.name, isDir, size };
-                    }).sort((a, b) => (b.isDir ? 1 : 0) - (a.isDir ? 1 : 0) || a.name.localeCompare(b.name));
-                    json(res, 200, { ok: true, path: path.relative(home, abs) || "", items });
-                });
-                return;
-            }
-            // download a file
-            if (req.method === "GET" && p === "/" + ftransToken + "/dl") {
-                const abs = ftransResolve(relOf("path"));
-                const fs = require("fs");
-                if (!abs) return json(res, 403, { ok: false, error: "Forbidden" });
-                fs.stat(abs, (err, st) => {
-                    if (err || !st.isFile()) return json(res, 404, { ok: false, error: "Not found" });
-                    res.writeHead(200, {
-                        "Content-Type": "application/octet-stream",
-                        "Content-Length": st.size,
-                        "Content-Disposition": 'attachment; filename="' + encodeURIComponent(path.basename(abs)) + '"'
-                    });
-                    fs.createReadStream(abs).pipe(res);
-                });
-                return;
-            }
-            // upload one file into the current folder
-            if (req.method === "POST" && p === "/" + ftransToken + "/api/upload") {
-                const dir = ftransResolve(relOf("path"));
-                const name = relOf("name");
-                if (!dir) return json(res, 403, { ok: false, error: "Forbidden" });
-                if (!name || name === "." || name === ".." || name.includes("/") || name.includes("\\") || name.includes("\0"))
-                    return json(res, 400, { ok: false, error: "Bad filename" });
-                const target = path.join(dir, name);
-                const fs = require("fs");
-                const ws = fs.createWriteStream(target);
-                req.pipe(ws);
-                ws.on("finish", () => json(res, 200, { ok: true, size: ws.bytesWritten || 0 }));
-                ws.on("error", e => { if (!res.headersSent) json(res, 500, { ok: false, error: e.message }); });
-                req.on("error", () => { try { ws.destroy(); } catch (e) {} });
-                return;
-            }
-            res.writeHead(404, { "Content-Type": "text/plain" });
-            res.end("Not found");
-        });
-        const finish = port => {
-            ftransPort = port;
-            ftransSrv = srv;
-            global.ftransSrv = srv;
-            srv.on("error", () => {});
-            resolve({ ok: true, url: ftransUrl() });
-        };
-        srv.once("error", e => {
-            if (e.code !== "EADDRINUSE") return resolve({ ok: false, error: e.message });
-            srv.listen(0, "0.0.0.0", () => finish(srv.address().port));
-        });
-        srv.listen(8720, "0.0.0.0", () => finish(srv.address().port));
-    });
+    // Count uploads/downloads so the "when transfers finish" policy only fires
+    // once the queue is actually empty.
+    const ftransBegin = () => {
+        ftransActive++;
+        if (ftransDoneTimer) { clearTimeout(ftransDoneTimer); ftransDoneTimer = null; }
+    };
+    const ftransEnd = () => {
+        ftransActive = Math.max(0, ftransActive - 1);
+        if (ftransActive || ftransPolicy === "none") return;
+        // Uploading a folder sends one request per file, and the next one only
+        // starts after the previous response lands — so give the page a few
+        // seconds to start the next transfer before acting.
+        if (ftransDoneTimer) clearTimeout(ftransDoneTimer);
+        ftransDoneTimer = setTimeout(() => {
+            ftransDoneTimer = null;
+            if (ftransActive || ftransPolicy === "none") return;
+            ftransAct(ftransPolicy);
+        }, 5000);
+    };
+    // Close the dialog on the machine (which stops this server) and, for LOCK,
+    // lock the session. The renderer owns both, so this is a broadcast.
+    const ftransAct = act => {
+        const a = act === "lock" ? "lock" : act === "stop" ? "stop" : null;
+        if (!a) return;
+        ftransPolicy = "none";
+        if (ftransDoneTimer) { clearTimeout(ftransDoneTimer); ftransDoneTimer = null; }
+        broadcast("ftrans:remote", { action: a });
+        // Let the in-flight HTTP response flush before the server goes away.
+        setTimeout(() => ftransStop(), 300);
+    };
     const ftransStop = () => new Promise(resolve => {
+        if (ftransDoneTimer) { clearTimeout(ftransDoneTimer); ftransDoneTimer = null; }
+        ftransPolicy = "none";
         if (ftransSrv) { try { ftransSrv.close(); } catch (e) {} ftransSrv = null; }
         global.ftransSrv = null;
         resolve({ ok: true });
     });
+    const ftransHandler = (req, res) => {
+        const raw = req.url || "";
+        const qi = raw.indexOf("?");
+        const p = qi === -1 ? raw : raw.slice(0, qi);
+        const query = {};
+        if (qi !== -1) {
+            raw.slice(qi + 1).split("&").forEach(kv => {
+                const i = kv.indexOf("=");
+                const k = i === -1 ? kv : kv.slice(0, i);
+                const v = i === -1 ? "" : kv.slice(i + 1);
+                try { query[decodeURIComponent(k)] = decodeURIComponent(v); } catch (e) { query[k] = v; }
+            });
+        }
+        const relOf = k => String(query[k] || "");
+        const json = (code, obj) => {
+            try {
+                res.writeHead(code, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+                res.end(JSON.stringify(obj));
+            } catch (e) {}
+        };
+        const fs = require("fs");
+        // Bare / and /files both land on the page directory.
+        if (req.method === "GET" && (p === "/" || p === FTRANS_BASE)) {
+            res.writeHead(302, { Location: FTRANS_BASE + "/" });
+            res.end();
+            return;
+        }
+        if (p !== FTRANS_BASE + "/" && p.indexOf(FTRANS_BASE + "/") !== 0) {
+            res.writeHead(404, { "Content-Type": "text/plain" });
+            res.end("Not found");
+            return;
+        }
+        const route = p.slice(FTRANS_BASE.length);   // "/", "/api/list", "/dl", ...
+        // page
+        if (req.method === "GET" && route === "/") {
+            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+            res.end(ftransPage());
+            return;
+        }
+        // list a directory
+        if (req.method === "GET" && route === "/api/list") {
+            const abs = ftransResolve(relOf("path"));
+            if (!abs) return json(403, { ok: false, error: "Forbidden" });
+            fs.readdir(abs, { withFileTypes: true }, (err, ents) => {
+                if (err) return json(404, { ok: false, error: "Cannot read: " + err.code });
+                const items = ents.map(d => {
+                    let isDir = d.isDirectory(), size = 0;
+                    try {
+                        const st = fs.statSync(path.join(abs, d.name));
+                        size = st.size;
+                        if (st.isDirectory()) isDir = true;
+                    } catch (e) {}
+                    return { name: d.name, isDir, size };
+                }).sort((a, b) => (b.isDir ? 1 : 0) - (a.isDir ? 1 : 0) || a.name.localeCompare(b.name));
+                json(200, { ok: true, path: path.relative(home, abs) || "", items });
+            });
+            return;
+        }
+        // download a file
+        if (req.method === "GET" && route === "/dl") {
+            const abs = ftransResolve(relOf("path"));
+            if (!abs) return json(403, { ok: false, error: "Forbidden" });
+            fs.stat(abs, (err, st) => {
+                if (err || !st.isFile()) return json(404, { ok: false, error: "Not found" });
+                const head = {
+                    "Content-Type": "application/octet-stream",
+                    "Content-Disposition": 'attachment; filename="' + encodeURIComponent(path.basename(abs)) + '"'
+                };
+                if (st.size > 0) head["Content-Length"] = st.size;
+                res.writeHead(200, head);
+                ftransBegin();
+                let done = false;
+                const endOnce = () => { if (!done) { done = true; ftransEnd(); } };
+                const rs = fs.createReadStream(abs);
+                rs.on("error", () => { try { res.end(); } catch (e) {} endOnce(); });
+                rs.on("end", endOnce);
+                res.on("close", endOnce);
+                rs.pipe(res);
+            });
+            return;
+        }
+        // upload one file into the current folder
+        if (req.method === "POST" && route === "/api/upload") {
+            const dir = ftransResolve(relOf("path"));
+            const name = relOf("name");
+            if (!dir) return json(403, { ok: false, error: "Forbidden" });
+            if (!name || name === "." || name === ".." || name.indexOf("/") !== -1 ||
+                name.indexOf("\\") !== -1 || name.indexOf("\0") !== -1)
+                return json(400, { ok: false, error: "Bad filename" });
+            const target = path.join(dir, name);
+            const ws = fs.createWriteStream(target);
+            ftransBegin();
+            let done = false;
+            const endOnce = () => { if (!done) { done = true; ftransEnd(); } };
+            req.pipe(ws);
+            ws.on("finish", () => { json(200, { ok: true, size: ws.bytesWritten || 0 }); endOnce(); });
+            ws.on("error", e => { if (!res.headersSent) json(500, { ok: false, error: e.message }); endOnce(); });
+            req.on("error", () => { try { ws.destroy(); } catch (e) {} endOnce(); });
+            res.on("close", endOnce);
+            return;
+        }
+        // session control: stop / lock / after-transfers policy
+        if (req.method === "POST" && route === "/api/action") {
+            let body = "", over = false;
+            req.on("data", c => {
+                if (over) return;
+                body += c;
+                if (body.length > 65536) { over = true; body = ""; }
+            });
+            req.on("end", () => {
+                let o = {};
+                try { o = JSON.parse(body || "{}") || {}; } catch (e) { o = {}; }
+                const act = String(o.action || "");
+                if (act === "policy") {
+                    const v = String(o.value || "none");
+                    if (v !== "none" && v !== "stop" && v !== "lock") return json(400, { ok: false, error: "Bad policy" });
+                    // Only remembers the choice: it fires once a transfer
+                    // actually finishes (ftransEnd), so picking it with nothing
+                    // in flight never ends the session behind the user's back.
+                    ftransPolicy = v;
+                    json(200, { ok: true, policy: ftransPolicy });
+                    return;
+                }
+                if (act !== "stop" && act !== "lock") return json(400, { ok: false, error: "Bad action" });
+                json(200, { ok: true, action: act });
+                setTimeout(() => ftransAct(act), 60);
+            });
+            return;
+        }
+        // status for the page's session panel
+        if (req.method === "GET" && route === "/api/status") {
+            json(200, { ok: true, policy: ftransPolicy, transfers: ftransActive, port: ftransPort });
+            return;
+        }
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.end("Not found");
+    };
+    // Try ports in order: 80 gives the typable http://<ip>/files/, 8080/8720 are
+    // the usual fallbacks, and 0 lets the kernel pick when everything is taken.
+    const ftransListen = (srv, ports) => new Promise(resolve => {
+        let i = 0;
+        const tryNext = () => {
+            if (i >= ports.length) return resolve(false);
+            const port = ports[i++];
+            const onOk = () => { srv.removeListener("error", onErr); resolve(true); };
+            const onErr = () => { srv.removeListener("listening", onOk); tryNext(); };
+            srv.once("error", onErr);
+            srv.once("listening", onOk);
+            try { srv.listen(port, "0.0.0.0"); } catch (e) { srv.removeListener("error", onErr); tryNext(); }
+        };
+        tryNext();
+    });
+    const ftransStart = async () => {
+        if (ftransSrv) return { ok: true, url: ftransUrl() };
+        const srv = require("http").createServer(ftransHandler);
+        const ok = await ftransListen(srv, [80, 8080, 8720, 0]);
+        if (!ok) {
+            try { srv.close(); } catch (e) {}
+            return { ok: false, error: "No free port" };
+        }
+        ftransPort = srv.address().port;
+        ftransSrv = srv;
+        global.ftransSrv = srv;
+        srv.on("error", () => {});
+        return { ok: true, url: ftransUrl() };
+    };
     ipc.handle("ftrans:start", () => ftransStart());
     ipc.handle("ftrans:stop", () => ftransStop());
     ipc.handle("ftrans:status", () => {
         const url = ftransUrl();
-        return { ok: true, running: !!ftransSrv, url, qr: ftransSrv ? transferQr(url) : "" };
+        return { ok: true, running: !!ftransSrv, url, qr: ftransSrv ? transferQr(url) : "", policy: ftransPolicy };
     });
 
-    // ---- Bundled local LLM daemon (llama-server, #144) ----
-    // Mirrors the clash daemon: plain spawn of the baked binary with a log ring
-    // buffer pushed to the renderer. Started when settings.claude.provider ==
-    // "local" so the offline assistant works without network. On macOS preview
-    // there is no binary, so every handler reports the unavailable state.
-    let llmProc = null;
-    let llmRunning = false;
-    let llmLog = [];
-    const llmLogLine = line => {
-        llmLog.push(line);
-        if (llmLog.length > 400) llmLog.splice(0, llmLog.length - 400);
-        broadcast("llm-log", line);
-    };
-    // llama-server /health returns {"status":"ok"} once the model is loaded and
-    // serving. Poll it to report readiness without a fixed startup sleep.
-    const llmHealth = () => new Promise(resolve => {
-        const http = require("http");
-        const req = http.get({ host: "127.0.0.1", port: 8080, path: "/health", timeout: 1500 }, res => {
-            let d = ""; res.on("data", c => d += c);
-            res.on("end", () => resolve(String(d).includes("ok")));
-        });
-        req.on("error", () => resolve(false));
-        req.on("timeout", () => { req.destroy(); resolve(false); });
-    });
-    const llmStart = () => new Promise(resolve => {
-        if (!LLM_GGUF) return resolve({ ok: false, error: "NO_MODEL" });
-        if (llmRunning) return resolve({ ok: true, already: true });
-        // If the user already runs their own server on the port, adopt it.
-        llmHealth().then(healthy => {
-            if (healthy) { llmRunning = true; llmLogLine("[llama-server already up on :8080, adopting]"); return resolve({ ok: true }); }
-            const { spawn } = require("child_process");
-            const proc = spawn(LLM_BIN, ["-m", LLM_GGUF, "--host", "127.0.0.1", "--port", "8080",
-                // claude CLI 每次请求带 ~20k token 系统提示(ctx 必须 ≥32k 否则 400 exceeds context);
-                // KV q8_0 压 RSS ~0.7GB;--parallel 1 让单 slot 始终持有 warm 前缀,同目录重复会话命中 LCP 缓存
-                // (实测:M1 上首条 prefill 19.5k≈52s,缓存命中后只 prefill ~1.4k≈8s)
-                "--threads", "2", "--parallel", "1", "--ctx-size", "32768",
-                "--cache-type-k", "q8_0", "--cache-type-v", "q8_0",
-                "--alias", "qwen2.5-0.5b-instruct-q4_k_m"],
-                { stdio: ["ignore", "pipe", "pipe"] });
-            const pump = d => String(d).split("\n").forEach(l => l.trim() && llmLogLine(l.trim()));
-            proc.stdout.on("data", pump);
-            proc.stderr.on("data", pump);
-            proc.on("exit", code => { llmRunning = false; llmProc = null; llmLogLine("[llama-server exited, code " + code + "]"); });
-            proc.on("error", e => { llmRunning = false; llmProc = null; llmLogLine("[llama-server spawn error: " + e.message + "]"); resolve({ ok: false, error: "SPAWN_FAILED" }); });
-            global.llmProc = llmProc = proc;
-            llmRunning = true;
-            llmLogLine("[llama-server started " + LLM_BIN + "]");
-            resolve({ ok: true });
-        });
-    });
-    const llmStop = () => new Promise(resolve => {
-        if (llmProc) { try { llmProc.kill("SIGTERM"); } catch (e) {} }
-        llmProc = null; global.llmProc = null; llmRunning = false;
-        resolve({ ok: true });
-    });
-    ipc.handle("llm:status", () => new Promise(async resolve => {
-        const cfg = (settings.claude) || {};
-        resolve({
-            ok: true,
-            available: !!LLM_GGUF,
-            running: llmRunning,
-            ready: await llmHealth(),
-            port: 8080,
-            model: cfg.model || "qwen2.5-0.5b-instruct-q4_k_m",
-            log: llmLog.slice(-200)
-        });
-    }));
-    ipc.handle("llm:start", () => llmStart());
-    ipc.handle("llm:stop", () => llmStop());
-    ipc.handle("llm:set-enabled", (e, { enabled }) =>
-        enabled ? llmStart().then(r => ({ ok: !!r.ok })) : llmStop().then(() => ({ ok: true })));
+    // ---- Local LLM daemon + model manager (llama-server, #144) ----
+    // The daemon itself, the model catalog, downloads, apply/rollback and the
+    // llama-server upgrade path all live in llm-manager.js. It registers its own
+    // IPC handlers below the llm: namespace; the two names kept here are the
+    // ones still used by the boot-time auto-start.
+    llmMgr.registerIpc();
+    const llmStart = () => llmMgr.start();
+    const llmLogLine = line => signale.info("[llm] " + line);
 
     // ---- AI chat + voice replies (#151) ----
     // The mic button / Win-key doubles as an AI-chat trigger
@@ -2481,16 +2689,16 @@ setPath('');
             try { cfg = Object.assign(cfg, (JSON.parse(fs.readFileSync(settingsFile, "utf8")).claude) || {}); } catch (e3) {}
             const isLocal = cfg.provider === "local";
             if (isLocal) {
-                if (!LLM_GGUF) return { ok: false, error: "LOCAL_MODEL_MISSING" };
-                if (!await llmHealth()) {
-                    const r = await llmStart();
-                    if (!r.ok) return { ok: false, error: "LLM_NOT_READY" };
-                    let ready = false;
-                    for (let i = 0; i < 20; i++) { // ≤10s for the model to load
-                        if (await llmHealth()) { ready = true; break; }
-                        await new Promise(r2 => setTimeout(r2, 500));
-                    }
-                    if (!ready) return { ok: false, error: "LLM_NOT_READY" };
+                if (!llmMgr.activeModel()) return { ok: false, error: "LOCAL_MODEL_MISSING" };
+                if (!await llmMgr.health()) {
+                    const r = await llmMgr.start();
+                    if (!r.ok) return { ok: false, error: r.error === "PORT_FOREIGN" ? "LLM_NOT_READY" : r.error || "LLM_NOT_READY" };
+                    // Model load (mmap + warmup) is not the same as the first
+                    // prefill: give a swapped-in 4B up to a minute here rather
+                    // than the old flat 10 s, and report a distinct LLM_LOADING
+                    // so the chat bubble can say "still loading" instead of
+                    // claiming the request failed.
+                    if (!await llmMgr.waitReady(60000)) return { ok: false, error: "LLM_LOADING" };
                 }
             }
             const baseUrl = (cfg.baseUrl || "http://127.0.0.1:8080").replace(/\/+$/, "");
@@ -2511,7 +2719,7 @@ setPath('');
                     "anthropic-version": "2023-06-01"
                 },
                 body: JSON.stringify({
-                    model: cfg.model || "qwen2.5-0.5b-instruct-q4_k_m",
+                    model: cfg.model || llmMgr.activeAlias() || "qwen2.5-0.5b-instruct-q4_k_m",
                     max_tokens: 1024,
                     stream: true,
                     // #158 personal assistant: private device, owner-only use. The
@@ -3337,7 +3545,7 @@ setPath('');
     // to AI-chat mode (which routes through the same local backend), so
     // cloud-provider users never pay the ~1.5GB RSS for an unused model. A
     // missing binary/model just logs and stays off, like clash.
-    if (LLM_GGUF && claudeConf.provider === "local" &&
+    if (llmMgr.activeModel() && claudeConf.provider === "local" &&
         (claudeConf.enabled || settings.voiceMicMode === "chat")) {
         llmStart().then(r => { if (!r.ok) llmLogLine("[llm auto-start skipped: " + r.error + "]"); });
     }
@@ -4019,6 +4227,11 @@ app.on('before-quit', () => {
     }
     if (global.transferSrv) {
         try { global.transferSrv.close(); } catch (e) {}
+    }
+    // llama-server and any in-flight model download are children of this
+    // process; kill them explicitly rather than relying on the orphan sweep.
+    if (global.llmManager) {
+        try { global.llmManager.shutdown(); } catch (e) {}
     }
     closeFsExitButtons();
     try { electron.globalShortcut.unregisterAll(); } catch (e) {}

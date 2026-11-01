@@ -73,13 +73,15 @@ class FilesystemDisplay {
         const gearIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
         const trashIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6"/></svg>`;
         const netIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>`;
-        // Wireless transfer (upload/download over LAN via a browser page). Reuses
-        // eDEX's rounded-corner stroke style; arrows up (upload) + down (download)
-        // inside a rounded square, with a small Wi-Fi arc to match the theme.
-        const wifiIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><path d="M9 3.5h6a2.5 2.5 0 0 1 2.5 2.5v8l-2 2.2-2-2.2h-4.5L7 16.2v-2.2A2.5 2.5 0 0 1 9.5 11.5H21"/></svg>`;
+        // Wireless transfer (upload/download over LAN via a browser page). Two
+        // opposed arrows — the usual "transfer" glyph — in the same rounded
+        // stroke style as the trash and globe buttons beside it. The previous
+        // icon mixed a Wi-Fi arc with an overlapping rounded rectangle and read
+        // as a smudge at header size.
+        const transferIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 20V4"/><path d="M5.5 6.5 8 4l2.5 2.5"/><path d="M16 4v16"/><path d="M13.5 17.5 16 20l2.5-2.5"/></svg>`;
 
         container.innerHTML = `
-            <h3 class="title"><p>FILESYSTEM<button class="fs_header_btn" title="Trash" onclick="window.fsDisp.showTrash()">${trashIcon}</button><button class="fs_header_btn" title="Wireless Transfer" onclick="window.fsDisp.showFileTransfer()">${wifiIcon}</button><button class="fs_header_btn" title="Network" onclick="window.fsDisp.showNetwork()">${netIcon}</button><button class="fs_gear" title="eDEX Settings" onclick="window.openSettings()">${gearIcon}</button></p><p id="fs_disp_title_dir"></p></h3>
+            <h3 class="title"><p>FILESYSTEM<button class="fs_header_btn" title="Trash" onclick="window.fsDisp.showTrash()">${trashIcon}</button><button class="fs_header_btn" title="Wireless Transfer" onclick="window.fsDisp.showFileTransfer()">${transferIcon}</button><button class="fs_header_btn" title="Network" onclick="window.fsDisp.showNetwork()">${netIcon}</button><button class="fs_gear" title="eDEX Settings" onclick="window.openSettings()">${gearIcon}</button></p><p id="fs_disp_title_dir"></p></h3>
             <div id="fs_quickbar">${this._quickbarHTML()}</div>
             <div id="fs_disp_container">
             </div>
@@ -1250,64 +1252,115 @@ class FilesystemDisplay {
         };
 
         /* ---- Wireless transfer (browse / upload / download over LAN) ---- */
-        // Opens a browser page served by the ftrans server in _boot.js (port 8720,
-        // token-gated). The page mirrors this file browser: navigate dirs, download
-        // any file, and upload into the currently-open directory. The stop/start +
-        // QR/URL live inside this modal; state is mirrored to this._ftransRunning
-        // so the toggle button knows which direction to send.
+        // Opens a browser page served by the ftrans server in _boot.js. The page
+        // mirrors this file browser: navigate dirs, download any file, upload
+        // into the currently-open directory, and end the session from the phone
+        // (stop the transfer, or lock this screen).
+        //
+        // The server lives only as long as the dialog: opening starts it, closing
+        // (button or Esc) tears it down, so nothing is left listening on the LAN.
+        // There is deliberately no Start/Stop/Copy button — the address is meant
+        // to be scanned, and a second button row only competed with the QR.
+        //
+        // The dialog is plain English on purpose: the phone side is English too,
+        // and the two have to read the same way.
         this._ftransRunning = false;
+        this._ftransModalId = null;
+        // qrcode.js emits black modules on a pure-white plate; window._themeQr
+        // (defined in _renderer.js) swaps in the active theme's darkest/lightest
+        // colours so the code sits inside the dialog instead of glowing #fff.
+        this._ftransQr = src => (window._themeQr ? window._themeQr(src) : src);
+        this._ftransClose = () => {
+            const id = this._ftransModalId;
+            this._ftransModalId = null;
+            if (id && window.modals[id]) {
+                try { window.modals[id].close(); } catch (e) {}
+            }
+        };
+        // Bound once: the served page can end the session from the phone (see
+        // ftransAct in _boot.js). STOP closes this dialog, which also stops the
+        // server; LOCK closes it and then locks the session.
+        if (!this._ftransRemoteBound) {
+            this._ftransRemoteBound = true;
+            require("electron").ipcRenderer.on("ftrans:remote", (e, msg) => {
+                const action = msg && msg.action;
+                this._ftransClose();
+                if (action !== "lock") return;
+                if (window.__screen && !window.__screen.master) return;
+                if (window.lockScreen && !window.lockScreen.active) window.lockScreen.show();
+            });
+        }
         this.showFileTransfer = () => {
-            const esc = s => String(s == null ? "" : s).replace(/</g, "&lt;");
-            new Modal({
+            const ipc = require("electron").ipcRenderer;
+            const colors = (window.theme && window.theme.colors) || {};
+            const plate = colors.white || "#ffffff";
+            const dim = "rgba(var(--color_r),var(--color_g),var(--color_b),.6)";
+            const accent = "rgb(var(--color_r),var(--color_g),var(--color_b))";
+            const modal = new Modal({
                 type: "custom",
-                title: "Wireless Transfer / 无线传输",
+                title: "Wireless Transfer",
                 html: `
                     <div style="padding:2px 4px">
-                        <p style="margin:0 0 12px;color:#8b949e;font-size:13px;line-height:1.5">Open the URL on a phone or another computer to browse, download files from, or upload files to this machine. Uploads land in whatever folder is open on that page.</p>
-                        <div style="display:flex;gap:14px;align-items:center">
-                            <img id="ftransQr" alt="QR code" style="width:124px;height:124px;border-radius:8px;background:#fff;padding:7px;display:none;flex:0 0 auto">
-                            <div style="flex:1;min-width:0">
-                                <div id="ftransUrl" style="font-family:monospace;font-size:13px;word-break:break-all;color:#58a6ff;min-height:20px;margin-bottom:10px"></div>
-                                <div style="display:flex;gap:8px">
-                                    <button id="ftransToggle" onclick="window.fsDisp.ftransToggle()">Start</button>
-                                    <button id="ftransCopy" onclick="window.fsDisp.ftransCopy()" style="display:none">Copy</button>
-                                </div>
-                            </div>
+                        <p style="margin:0 0 14px;color:${dim};font-size:13px;line-height:1.5">Open this address on a phone or another computer to browse, download and upload files. That page can also stop this transfer or lock this screen. Closing this window stops the server.</p>
+                        <div style="display:flex;gap:16px;align-items:center">
+                            <img id="ftransQr" alt="Wireless Transfer" style="width:128px;height:128px;border-radius:6px;background:${plate};padding:8px;box-sizing:content-box;border:0.15vh solid rgba(var(--color_r),var(--color_g),var(--color_b),.45);display:none;flex:0 0 auto">
+                            <div id="ftransUrl" style="flex:1;min-width:0;font-family:var(--font_mono),monospace;font-size:13px;line-height:1.6;word-break:break-all;color:${accent};min-height:20px;text-shadow:0 0 0.8vh rgba(var(--color_r),var(--color_g),var(--color_b),.35)"></div>
                         </div>
-                        <div id="ftransStatus" style="margin-top:12px;color:#8b949e;font-size:13px;min-height:18px"></div>
-                    </div>`,
-                buttons: [{ label: "Close", action: `window.modals[Object.keys(window.modals).pop()].close()` }]
+                        <div id="ftransStatus" style="margin-top:12px;color:${dim};font-size:13px;min-height:18px"></div>
+                    </div>`
+            }, () => {
+                // Closing the dialog always stops the LAN server and lets the
+                // idle countdown resume.
+                document.removeEventListener("keydown", escHandler, true);
+                this._ftransRunning = false;
+                this._ftransModalId = null;
+                window._ftransOpen = false;
+                ipc.invoke("ftrans:stop");
             });
-            setTimeout(() => this._ftransRefresh(), 0);
+            this._ftransModalId = modal.id;
+            window._ftransOpen = true;
+            // The Modal class has no Esc handling of its own; the dialog is a
+            // single-purpose one, so Esc closes it like the Close button does.
+            const escHandler = e => {
+                if (e.key !== "Escape") return;
+                e.preventDefault();
+                e.stopPropagation();
+                if (modal && window.modals[modal.id]) window.modals[modal.id].close();
+            };
+            document.addEventListener("keydown", escHandler, true);
+            setTimeout(() => this._ftransStart(), 0);
+        };
+        this._ftransStart = () => {
+            const ipc = require("electron").ipcRenderer;
+            const status = document.getElementById("ftransStatus");
+            if (!status) return;
+            status.textContent = "Starting…";
+            ipc.invoke("ftrans:start").then(() => {
+                // The dialog may have been closed while the server came up.
+                if (!document.getElementById("ftransQr")) { ipc.invoke("ftrans:stop"); return; }
+                this._ftransRefresh();
+            }).catch(() => {});
         };
         this._ftransRefresh = () => {
             const ipc = require("electron").ipcRenderer;
             ipc.invoke("ftrans:status").then(st => {
                 const qr = document.getElementById("ftransQr");
+                if (!qr) return; // modal was closed
                 const url = document.getElementById("ftransUrl");
-                const toggle = document.getElementById("ftransToggle");
-                const copy = document.getElementById("ftransCopy");
                 const status = document.getElementById("ftransStatus");
-                if (!toggle) return; // modal was closed
-                if (st && st.running && st.qr) { qr.style.display = "block"; qr.src = st.qr; }
-                else qr.style.display = "none";
-                if (st && st.running && st.url) { url.textContent = st.url; copy.style.display = ""; }
-                else { url.textContent = ""; copy.style.display = "none"; }
                 this._ftransRunning = !!(st && st.running);
-                toggle.textContent = this._ftransRunning ? "Stop" : "Start";
+                if (this._ftransRunning && st.qr) {
+                    qr.src = this._ftransQr(st.qr);
+                    qr.style.display = "block";
+                } else {
+                    qr.style.display = "none";
+                }
+                if (url) url.textContent = (this._ftransRunning && st.url) ? st.url : "";
                 if (status) status.textContent = this._ftransRunning
-                    ? "Running — scan the QR or open the URL. Stops when this modal closes."
-                    : (st && st.error) ? st.error : "Not running.";
+                    ? "Ready — scan the code or open the address."
+                    : (st && st.error) ? "Could not start the transfer server — " + st.error
+                        : "Not running";
             }).catch(() => {});
-        };
-        this.ftransToggle = () => {
-            const ipc = require("electron").ipcRenderer;
-            ipc.invoke(this._ftransRunning ? "ftrans:stop" : "ftrans:start").then(() => this._ftransRefresh());
-        };
-        this.ftransCopy = () => {
-            const url = document.getElementById("ftransUrl");
-            if (!url || !url.textContent) return;
-            try { require("@electron/remote").clipboard.writeText(url.textContent); } catch (e) {}
         };
 
         this._newFolder = () => {

@@ -397,6 +397,9 @@ echo "$LLM_RUN_SHA  $WORK/llama-${LLM_VER}-ubuntu.tar.gz" | sha256sum -c - >/dev
 sudo cp "$WORK/llm-qwen05.gguf" "$WORK/rootfs/opt/edex/llm/qwen2.5-0.5b-instruct-q4_k_m.gguf"
 sudo tar -xzf "$WORK/llama-${LLM_VER}-ubuntu.tar.gz" -C "$WORK/rootfs/opt/edex/llm" --strip-components=1
 [ -x "$WORK/rootfs/opt/edex/llm/llama-server" ] || { echo "[edex] ERROR: llama-server missing after extract" >&2; exit 1; }
+# Record the baked release tag: Settings → 本地模型 shows which llama-server the
+# ISO ships, and the "回滚到内置版" button has a name to display.
+printf '{\n    "version": "%s",\n    "asset": "llama-%s-bin-ubuntu-x64.tar.gz",\n    "source": "iso"\n}\n' "$LLM_VER" "$LLM_VER" | sudo tee "$WORK/rootfs/opt/edex/llm/version.json" >/dev/null
 
 # Bake in the offline Chinese TTS model so AI-chat voice replies work with zero
 # network at run time. Same HARD-dependency policy as the ASR/LLM blocks: a

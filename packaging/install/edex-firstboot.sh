@@ -164,6 +164,16 @@ cat > "/home/$U/.config/eDEX-UI/settings.json" <<'SETTINGS'
         "model": "qwen2.5-0.5b-instruct-q4_k_m",
         "haikuModel": "qwen2.5-0.5b-instruct-q4_k_m"
     },
+    "llm": {
+        "modelId": "qwen2.5-0.5b-instruct-q4_k_m",
+        "lastGoodModelId": "qwen2.5-0.5b-instruct-q4_k_m",
+        "serverVersion": "bundled",
+        "threads": 0,
+        "ctxSize": 0,
+        "cacheTypeK": "q8_0",
+        "cacheTypeV": "q8_0",
+        "hfMirror": false
+    },
     "voiceMicMode": "input",
     "webapps": []
 }
