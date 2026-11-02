@@ -6,7 +6,7 @@
 // Look: the same fullscreen dot-grid backdrop and centered ASCII terminal box as
 // the boot/code lock, but with SETUP copy — "SYSTEM INITIALIZATION · FIRST BOOT",
 // "SETUP TERMINAL", status lines, step prompts — never the lock's "SYSTEM
-// LOCKED / NUCLEAR ARSENAL / PASSCODE" text. English-only, like the lock.
+// LOCKED / INDUSTRIAL ENERGY CONTROL / PASSCODE" text. English-only, like the lock.
 //
 // Steps: interface language → timezone → unlock PIN (set + confirm). On finish it
 // writes lockCode / lockOnIdle / language into settings.json (same mechanism the

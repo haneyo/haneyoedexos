@@ -64,11 +64,11 @@ coolant loop: primary 5.2 bar, secondary 4.9 bar, no cavitation
 eDEXGravityComp::zero - offset 98.2%, load 3.4 kN
 antigrav field: 4 emitters aligned, hover test pass
 ThrusterArray::home - 4 gimbals, 0 faults
-rail capacitors: 84% charged, interlocks 4/4
-point defense: 4 turrets armed, safe arcs set
-EWAR suite: passive scan, jammer offline, 0 hits
-drone bay: 2 drones charged, launch ready
-ammo feed: 240/240, belt tension nominal
+bus capacitors: 84% charged, interlocks 4/4
+turbine hall: 4 fans online, vibration normal
+EMI monitor: passive scan, noise floor normal, 0 events
+service bay: 2 AGVs charged, route ready
+feed line: 240/240 pallets, belt tension nominal
 life support: o2 21.0%, cabin 1.013 bar, scrubbers online
 cryo pods: 1-6 sealed, coolant 4.2 K
 hull integrity: 99.8%, 0 microfractures
@@ -135,7 +135,7 @@ Client task not privileged to open IOHIDSystem for mapping memory (e00002c1)
 sensor fusion: 32 sources, 0 stale tracks
 self-test: sensors 14/14, actuators 9/9, 0 faults
 ReactorWatchdog::arm - 60 s, no bite
-frame servos: 24/24 homed, brakes armed
+frame servos: 24/24 homed, brakes engaged
 pilot link: neural interface linked, vitals stable
 integrity scan: 4.2 GB readback, 0 anomalies
 failover chain: CLEAR, peer 10.0.0.2 rtt 0.9 ms
@@ -144,7 +144,7 @@ clock discipline: stratum 2, offset 0.0003 s
 time sync: NTP locked, jitter 0.9 ms
 audit trail: 0 shadow entries, clean
 SecretsVault::seal - no tamper
-deployment: sector 07 sheet, rigged
+dispatch: sector 07 shift, staffed
 roster: 2 operators on-station, clearance DELTA
 
 

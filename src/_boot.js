@@ -276,7 +276,18 @@ const DEFAULT_SETTINGS = {
         apiKey: "local",
         model: "qwen2.5-0.5b-instruct-q4_k_m",
         haikuModel: "qwen2.5-0.5b-instruct-q4_k_m",
-        aiWebSearch: true              // #158: AI chat does a live web search and injects results
+        aiWebSearch: true,             // #158: AI chat does a live web search and injects results
+        sharedWithAssistant: true      // AI chat reuses this block unless the user separates it
+    },
+    // AI assistant (voice chat) service config. Only used when
+    // claude.sharedWithAssistant === false; otherwise the claude block above is
+    // the single source for both the assistant and the Claude terminal.
+    assistant: {
+        provider: "local",
+        baseUrl: "http://127.0.0.1:8080",
+        apiKey: "local",
+        model: "qwen2.5-0.5b-instruct-q4_k_m",
+        aiWebSearch: true
     },
     llm: {
         modelId: "qwen2.5-0.5b-instruct-q4_k_m",  // active GGUF; the ISO-baked model is the undeletable fallback
@@ -326,6 +337,18 @@ if (!fs.existsSync(settingsFile)) {
         for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
             if (k === "lockCode") continue;
             if (!(k in onDisk)) missing[k] = v;
+        }
+        // Seed the new independent assistant block from the current claude
+        // config, so separating the two later does not lose a working setup.
+        if (missing.assistant) {
+            const c = onDisk.claude || {};
+            missing.assistant = Object.assign({}, missing.assistant, {
+                provider: c.provider || "local",
+                baseUrl: c.baseUrl || "http://127.0.0.1:8080",
+                apiKey: c.apiKey || "local",
+                model: c.model || "qwen2.5-0.5b-instruct-q4_k_m",
+                aiWebSearch: c.aiWebSearch !== false
+            });
         }
         const keys = Object.keys(missing);
         if (keys.length) {
@@ -2501,10 +2524,12 @@ status();
     // ---- AI chat + voice replies (#151) ----
     // The mic button / Win-key doubles as an AI-chat trigger
     // (settings.voiceMicMode === "chat"). The backend reuses the claude settings
-    // block (labelled "AI 功能" in the UI) so users point it at the bundled local
-    // llama-server or any Anthropic-compatible cloud API. Replies are streamed to
-    // the renderer (ai-token events) and spoken via sherpa-onnx OfflineTts — the
-    // same runtime as the ASR recognizer above, so no extra daemon or Python.
+    // block (labelled "AI 功能" in the UI) unless the user switched
+    // "share config with Claude" off, in which case settings.assistant drives
+    // it — either way users point it at the bundled local llama-server or any
+    // Anthropic-compatible cloud API. Replies are streamed to the renderer
+    // (ai-token events) and spoken via sherpa-onnx OfflineTts — the same runtime
+    // as the ASR recognizer above, so no extra daemon or Python.
     let aiChatBusy = false;
     let aiChatAbort = null;
     let ttsEngine = null;
@@ -2855,8 +2880,16 @@ status();
         try {
             // Re-read settings.json every call so a provider change in the settings
             // pane applies immediately, without restarting the app.
+            // The assistant reuses the claude block while
+            // claude.sharedWithAssistant is on (default); switching it off makes
+            // the dedicated assistant block the source.
+            let cur = {};
+            try { cur = JSON.parse(fs.readFileSync(settingsFile, "utf8")) || {}; } catch (e3) {}
+            const claudeCfg = cur.claude || {};
+            const sharedCfg = claudeCfg.sharedWithAssistant !== false;
             let cfg = { provider: "local", baseUrl: "http://127.0.0.1:8080", apiKey: "local", model: "qwen2.5-0.5b-instruct-q4_k_m" };
-            try { cfg = Object.assign(cfg, (JSON.parse(fs.readFileSync(settingsFile, "utf8")).claude) || {}); } catch (e3) {}
+            cfg = Object.assign(cfg, sharedCfg ? claudeCfg : (cur.assistant || {}));
+            if (cfg.aiWebSearch === undefined) cfg.aiWebSearch = claudeCfg.aiWebSearch;
             const isLocal = cfg.provider === "local";
             if (isLocal) {
                 if (!llmMgr.activeModel()) return { ok: false, error: "LOCAL_MODEL_MISSING" };
@@ -3787,11 +3820,15 @@ status();
 
     // Bundled local LLM auto-start (#144). Spawns at boot when the claude tab is
     // enabled AND pointed at the local model, or when the mic button is switched
-    // to AI-chat mode (which routes through the same local backend), so
+    // to AI-chat mode and the assistant resolves to the local model, so
     // cloud-provider users never pay the ~1.5GB RSS for an unused model. A
     // missing binary/model just logs and stays off, like clash.
-    if (llmMgr.activeModel() && claudeConf.provider === "local" &&
-        (claudeConf.enabled || settings.voiceMicMode === "chat")) {
+    const assistantLocal = ((settings.claude && settings.claude.sharedWithAssistant === false)
+        ? ((settings.assistant || {}).provider || "local")
+        : claudeConf.provider) === "local";
+    if (llmMgr.activeModel() &&
+        ((claudeConf.enabled && claudeConf.provider === "local") ||
+         (settings.voiceMicMode === "chat" && assistantLocal))) {
         llmStart().then(r => { if (!r.ok) llmLogLine("[llm auto-start skipped: " + r.error + "]"); });
     }
 

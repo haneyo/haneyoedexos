@@ -162,7 +162,16 @@ cat > "/home/$U/.config/eDEX-UI/settings.json" <<'SETTINGS'
         "baseUrl": "http://127.0.0.1:8080",
         "apiKey": "local",
         "model": "qwen2.5-0.5b-instruct-q4_k_m",
-        "haikuModel": "qwen2.5-0.5b-instruct-q4_k_m"
+        "haikuModel": "qwen2.5-0.5b-instruct-q4_k_m",
+        "aiWebSearch": true,
+        "sharedWithAssistant": true
+    },
+    "assistant": {
+        "provider": "local",
+        "baseUrl": "http://127.0.0.1:8080",
+        "apiKey": "local",
+        "model": "qwen2.5-0.5b-instruct-q4_k_m",
+        "aiWebSearch": true
     },
     "llm": {
         "modelId": "qwen2.5-0.5b-instruct-q4_k_m",

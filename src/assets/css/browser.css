@@ -1881,6 +1881,66 @@ body:has(#lock_block) #main_shell_tabs > li.active {
     100% { opacity: 0; }
 }
 
+/* ---- CRT-TV power-ON: the boot unlock entrance ----
+   The passcode panel hands over to this overlay, which is black on its very
+   first paint (so the lock's teardown can never flash the wallpaper behind
+   it), then lights a dot at the centre, stretches it into a full-width scan
+   line, and finally parts the two black curtains vertically to reveal the
+   desktop — the tube-TV switch-on played forwards (the power-off above reads
+   as a shutdown, which is why the boot unlock no longer uses it). The part is
+   armed by window.revealCrtPowerOn() once initUI's shell greeting is up. */
+#crt_on {
+    position: fixed; inset: 0;
+    z-index: 9999999;
+    pointer-events: none;
+    overflow: hidden;
+}
+/* Opaque guarantee for the first frame, before any animation state applies.
+   Removed the instant the curtains start to part (their scaleY(1) already
+   covers the whole frame at that moment). */
+#crt_on .crt_on_blank {
+    position: absolute; inset: 0;
+    background: #05080d;
+}
+#crt_on .crt_on_curtain {
+    position: absolute;
+    left: 0; right: 0;
+    height: 50.5%;
+    background: #05080d;
+    transform: scaleY(1);
+    will-change: transform;
+}
+#crt_on .crt_on_top { top: 0; transform-origin: top; }
+#crt_on .crt_on_bot { bottom: 0; transform-origin: bottom; }
+/* The picture opens from the centre outwards: each half shrinks back towards
+   its own edge, the exact reverse of the power-off convergence. */
+#crt_on.crt_on_open .crt_on_top,
+#crt_on.crt_on_open .crt_on_bot {
+    transform: scaleY(0);
+    transition: transform .55s cubic-bezier(.3, 0, .25, 1);
+}
+/* The scan line starts as a bright dot (scaleX ~0) and stretches to the full
+   window width; it sits above the black so it reads as the picture igniting. */
+#crt_on .crt_on_line {
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 100vw; height: 0.22vh;
+    background: #fff;
+    box-shadow: 0 0 1vh 0.12vh rgba(255, 255, 255, 0.75);
+    transform: translate(-50%, -50%) scaleX(0.004);
+    opacity: 0;
+    transition: transform .55s cubic-bezier(.2, 0, .3, 1), opacity .12s linear;
+}
+#crt_on .crt_on_line.crt_on_line_on {
+    transform: translate(-50%, -50%) scaleX(1);
+    opacity: 1;
+}
+/* Fades during the vertical open, so the line never lingers over the picture. */
+#crt_on .crt_on_line.crt_on_line_off {
+    opacity: 0;
+    transition: opacity .3s linear;
+}
+
 /* ---- Welcome-back after the matrix lock clears ----
    The matrix unlock no longer replays the boot logo; it shows the same
    "Welcome back" greeting as the boot-time welcome, on a dark overlay that

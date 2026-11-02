@@ -44,17 +44,18 @@ window._isHotReload = () => {
 };
 
 // ---- Cover mode ----
-// While the screensaver or the lock screen is up, eDEX presents itself as a
-// strategic nuclear launch terminal: terminal tab labels, the file browser,
-// the public IP and the process list all show fabricated data; everything else
-// stays real. `window.cover` is the single switch every consumer checks. All
-// DOM access happens at call time (set()), never at module load.
+// While the screensaver or the lock screen is up, eDEX presents itself as an
+// industrial energy / plant operations console: terminal tab labels, the file
+// browser, the public IP and the process list all show fabricated data;
+// everything else stays real. `window.cover` is the single switch every
+// consumer checks. All DOM access happens at call time (set()), never at module
+// load.
 window.cover = (() => {
-    const FAKE_TABS = { 0: "MAIN - LAUNCHCTRL", 1: "#2 - GUIDANCE", 2: "KEYHOLDER", 3: "WARHEAD A", 4: "WARHEAD B" };
+    const FAKE_TABS = { 0: "MAIN - GRIDCTRL", 1: "#2 - DISPATCH", 2: "OPERATOR", 3: "UNIT A", 4: "UNIT B" };
     const FALLBACK_TABS = { 0: "MAIN SHELL", 1: "EMPTY", 2: "EMPTY", 3: "MONITOR A", 4: "MONITOR B" };
-    const FAKE_PROCS = ["launch_seq", "targeting_core", "guidance_fuse", "key_custodian",
-        "threat_eval", "silo_monitor", "telemetry_relay", "auth_gate",
-        "warhead_diag", "perim_alarm"];
+    const FAKE_PROCS = ["grid_balance", "load_dispatch", "scada_poll", "turbine_reg",
+        "meter_ingest", "hvac_control", "telemetry_relay", "auth_gate",
+        "battery_mgmt", "site_alarm"];
     const R = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo));
     const j = (dir, name) => (dir + "/" + name).replace(/\/+/g, "/");
 
@@ -87,31 +88,31 @@ window.cover = (() => {
         dir = String(dir || "/").replace(/\/+$/, "") || "/";
         const out = [];
         if (dir === "/") {
-            ["bin", "launch", "warheads", "targets", "keys", "logs", "telemetry", "systems", "crypto", "ops", "archive"]
+            ["bin", "dispatch", "generation", "meters", "keys", "logs", "telemetry", "systems", "crypto", "ops", "archive"]
                 .forEach(n => out.push(fakeFolder("/", n)));
-            out.push(fakeFile("/", "launch_auth.sig"));
+            out.push(fakeFile("/", "dispatch_auth.sig"));
             out.push(fakeFile("/", "boot_checksum.bin", 1 << 10));
-            out.push(fakeFile("/", "silo_manifest.enc", 1 << 12));
+            out.push(fakeFile("/", "plant_manifest.enc", 1 << 12));
             out.push(fakeFile("/", "crypto_root.key", 1 << 8));
             out.push(fakeFile("/", "ops_summary.cfg"));
         } else if (dir === "/bin") {
             ["diag", "redundancy", "core_dump"].forEach(n => out.push(fakeFolder("/bin", n)));
             ["bootstrap.elf", "watchdog", "diag_agent.elf", "redundancy_link", "telemetry_relay", "checksum_tool", "secure_erase"]
                 .forEach(n => out.push(fakeFile("/bin", n, 1 << 16)));
-        } else if (dir === "/launch") {
-            ["sequence.dat", "arm_switch.ctl", "auth_checksum.sig", "two_person_rule.log", "launch_keys.bin", "countdown.db", "guidance_lock.cfg", "fire_order.enc"]
-                .forEach(n => out.push(fakeFile("/launch", n)));
-        } else if (dir === "/warheads") {
-            for (let i = 1; i <= 12; i++) out.push(fakeFolder("/warheads", "warhead_0" + i));
-            out.push(fakeFile("/warheads", "inventory_manifest.enc"));
-        } else if (/^\/warheads\/warhead_\d+$/.test(dir)) {
-            ["state.bin", "yield.cfg", "arming_cert.sig", "core_temp.log", "fuel_purity.snapshot", "serial.key", "veto_record.bin", "casing_id.txt"]
+        } else if (dir === "/dispatch") {
+            ["schedule.dat", "breaker_state.ctl", "auth_checksum.sig", "shift_handover.log", "dispatch_keys.bin", "ramp_profile.db", "sync_lock.cfg", "work_order.enc"]
+                .forEach(n => out.push(fakeFile("/dispatch", n)));
+        } else if (dir === "/generation") {
+            for (let i = 1; i <= 12; i++) out.push(fakeFolder("/generation", "gen_0" + i));
+            out.push(fakeFile("/generation", "capacity_manifest.enc"));
+        } else if (/^\/generation\/gen_\d+$/.test(dir)) {
+            ["state.bin", "rating.cfg", "commissioning_cert.sig", "winding_temp.log", "coolant_quality.snapshot", "serial.key", "derate_record.bin", "unit_id.txt"]
                 .forEach(n => out.push(fakeFile(dir, n)));
-        } else if (dir === "/targets") {
-            ["target_list.enc", "coordinates.bin", "reentry_schedule.dat", "priority_matrix.cfg", "strike_order.seq", "trajectory_table.csv", "impact_model.bin", "drone_assignments.cfg"]
-                .forEach(n => out.push(fakeFile("/targets", n)));
+        } else if (dir === "/meters") {
+            ["meter_list.enc", "readings.bin", "billing_schedule.dat", "tariff_matrix.cfg", "load_order.seq", "loss_model.bin", "outage_plan.cfg"]
+                .forEach(n => out.push(fakeFile("/meters", n)));
         } else if (dir === "/keys") {
-            out.push(fakeFile("/keys", "launch_keys.enc"));
+            out.push(fakeFile("/keys", "dispatch_keys.enc"));
             out.push(fakeFile("/keys", "master_key.der", 1 << 8));
             out.push(fakeFile("/keys", "rotating_cypher.key", 1 << 8));
             out.push(fakeFolder("/keys", "key_fragments"));
@@ -121,10 +122,10 @@ window.cover = (() => {
         } else if (dir === "/keys/backup_custody") {
             for (let i = 1; i <= 5; i++) out.push(fakeFile("/keys/backup_custody", "custody_" + i + ".kf", 1 << 8));
         } else if (dir === "/logs") {
-            ["access_audit.log", "telemetry.log", "handshake_trail.log", "perimeter_watch.log", "comm_sweep.log", "failsafe_checks.log", "rotation_audit.log", "temp_probe.log"]
+            ["access_audit.log", "telemetry.log", "handshake_trail.log", "site_watch.log", "comm_sweep.log", "failsafe_checks.log", "rotation_audit.log", "temp_probe.log"]
                 .forEach(n => out.push(fakeFile("/logs", n)));
         } else if (dir === "/telemetry") {
-            ["downlink_stream.buf", "silo_state.snapshot", "uplink_buffer.dat", "relay_status.snap", "telemetry_archive.enc", "sensor_grid.csv", "comms_log.bin", "beacon_ping.log"]
+            ["downlink_stream.buf", "plant_state.snapshot", "uplink_buffer.dat", "relay_status.snap", "telemetry_archive.enc", "sensor_grid.csv", "comms_log.bin", "beacon_ping.log"]
                 .forEach(n => out.push(fakeFile("/telemetry", n)));
         } else if (dir === "/systems") {
             ["integrity_scan.cfg", "failover.ctl", "mesh_topology.json", "power_distribution.map", "coolant_pressure.dat", "uplink_antennas.cfg", "self_test.suite", "redundancy_matrix.json"]
@@ -132,14 +133,14 @@ window.cover = (() => {
         } else if (dir === "/crypto") {
             ["root_cert.pem", "signing_key.pub", "cipher_suites.cfg", "session_tokens.enc", "key_bundle.bin"].forEach(n => out.push(fakeFile("/crypto", n)));
         } else if (dir === "/ops") {
-            ["current_deployment.cfg", "roster.enc", "duty_rotation.sched", "clearance_matrix.json", "incident_reports.log"].forEach(n => out.push(fakeFile("/ops", n)));
+            ["current_shift.cfg", "roster.enc", "duty_rotation.sched", "clearance_matrix.json", "incident_reports.log"].forEach(n => out.push(fakeFile("/ops", n)));
         } else if (dir === "/archive") {
-            ["payload_schematics.bin", "historical_targets.enc", "engineering_notes.pdf", "migration_backup.tgz", "legacy_arm_codes.key"].forEach(n => out.push(fakeFile("/archive", n)));
+            ["plant_schematics.bin", "historical_loads.enc", "engineering_notes.pdf", "migration_backup.tgz", "legacy_access_codes.key"].forEach(n => out.push(fakeFile("/archive", n)));
         } else if (dir === "/operations" || dir.startsWith("/operations")) {
             // Every real path the cover didn't plan lands here (fakePath maps
             // unknown dirs → /operations), so this must be as rich as the real
             // roots — a sparse listing read as "only one fake file".
-            ["bootstrap_state.cfg", "sync_manifest.enc", "operator_schedule.sched", "cleared_badge.key", "sector_handshake.bin", "verify_token.sig", "watchdog_heartbeat.log", "cold_standby.dat", "runbook_rev.txt", "access_levels.json", "mission_ledger.bin", "drift_calibration.csv"]
+            ["bootstrap_state.cfg", "sync_manifest.enc", "operator_schedule.sched", "cleared_badge.key", "site_handshake.bin", "verify_token.sig", "watchdog_heartbeat.log", "cold_standby.dat", "runbook_rev.txt", "access_levels.json", "shift_ledger.bin", "drift_calibration.csv"]
                 .forEach(n => out.push(fakeFile(dir, n)));
             out.push(fakeFolder(dir, "systems"));
             out.push(fakeFolder(dir, "archive"));
@@ -156,8 +157,8 @@ window.cover = (() => {
     // reads that were already in flight when the cover turned on).
     const fakePath = dir => {
         dir = String(dir || "/");
-        if (dir === "/" || dir.startsWith("/launch") || dir.startsWith("/warheads") ||
-            dir.startsWith("/targets") || dir.startsWith("/keys") || dir.startsWith("/logs") ||
+        if (dir === "/" || dir.startsWith("/dispatch") || dir.startsWith("/generation") ||
+            dir.startsWith("/meters") || dir.startsWith("/keys") || dir.startsWith("/logs") ||
             dir.startsWith("/telemetry") || dir.startsWith("/systems") || dir.startsWith("/bin")) return dir;
         return "/operations";
     };
@@ -176,7 +177,7 @@ window.cover = (() => {
     // Cover identity: "A"/"B" is the panel's slot on the current display, so
     // screen 2's c/d panels still wear the decoy names.
     const fakeMonitorLabel = monitorId =>
-        (window.__screen && monitorId === window.__screen.monA) ? "WARHEAD A" : "WARHEAD B";
+        (window.__screen && monitorId === window.__screen.monA) ? "UNIT A" : "UNIT B";
 
     // ---- tab labels ----
     const tabEl = num => document.getElementById("shell_tab" + num);
@@ -216,8 +217,8 @@ window.cover = (() => {
     // treat one as the real directory to restore after the cover lifts.
     const isFakePath = p => {
         p = String(p || "");
-        return p === "/" || p === "/operations" || p.startsWith("/launch") || p.startsWith("/warheads")
-            || p.startsWith("/targets") || p.startsWith("/keys") || p.startsWith("/logs")
+        return p === "/" || p === "/operations" || p.startsWith("/dispatch") || p.startsWith("/generation")
+            || p.startsWith("/meters") || p.startsWith("/keys") || p.startsWith("/logs")
             || p.startsWith("/telemetry") || p.startsWith("/systems") || p.startsWith("/bin");
     };
 
@@ -288,10 +289,9 @@ window.__uiCovered = () =>
 
 // CRT-TV power-off: collapse the screen to a bright horizontal centre line and
 // go dark, like an old tube TV switching off. Called from lockScreen.unlock()
-// after the boot lock and the matrix lock clear. It is a pure overlay that runs
-// in PARALLEL with replayBoot()/initUI() (the welcome-back flow continues
-// underneath at its normal pace), so the password→welcome-back time is
-// unchanged — the animation only covers the first ~0.6s of that window.
+// for the SESSION locks (matrix / code) only — their dark welcome-back overlay
+// already covers the desktop. It is a pure overlay that runs in PARALLEL with
+// the reveal underneath, so the password→welcome-back time is unchanged.
 window.playCrtShutdown = () => {
     if (document.getElementById("crt_off")) return;
     const el = document.createElement("div");
@@ -302,6 +302,74 @@ window.playCrtShutdown = () => {
         const e = document.getElementById("crt_off");
         if (e) e.remove();
     }, 800);
+};
+
+// CRT-TV power-ON for the boot unlock, played forwards like a tube switching
+// on: the passcode panel hands over to a frame that is black from its very
+// first paint (so tearing the lock down can no longer flash a frame of
+// wallpaper), a bright dot ignites at the centre and stretches into a
+// full-width scan line, and then the two black curtains part vertically to
+// reveal the desktop. The part is held until initUI has the shell frame back on
+// screen (window.revealCrtPowerOn), with a fallback so a missed call can never
+// pin a black frame over the UI. Pure parallel overlay: initUI keeps its own
+// pace underneath. (The old power-off was used here too, which read as a
+// shutdown and started from open curtains — the wallpaper flash — before
+// collapsing.)
+window.playCrtPowerOn = () => {
+    if (document.getElementById("crt_on")) return;
+    const el = document.createElement("div");
+    el.id = "crt_on";
+    // The blank layer guarantees an opaque first frame; the curtains sit on top
+    // of it (fully closed) and the scan line sits above both so it stays
+    // visible while the picture is still black.
+    el.innerHTML = '<div class="crt_on_blank"></div>'
+        + '<div class="crt_on_curtain crt_on_top"></div>'
+        + '<div class="crt_on_curtain crt_on_bot"></div>'
+        + '<div class="crt_on_line"></div>';
+    document.body.appendChild(el);
+    // The lock's teardown re-shows the pointer later in this same task, so
+    // park it on the next tick — a cursor floating over the black dot reads as
+    // a glitch. Any real mouse movement re-shows it (cursorTrap's handler).
+    setTimeout(() => { if (window.cursorTrap) window.cursorTrap.hide(); }, 0);
+    const line = el.querySelector(".crt_on_line");
+    // Two frames: the line's start state (dot, invisible) must be committed
+    // before the transition to the full scan line is armed.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (!line || !line.isConnected) return;
+        line.classList.add("crt_on_line_on");
+        // This version opens on a short fixed hold instead of waiting for
+        // initUI to be fully built: dot->line stretch (0.55s) plus ~0.45s of
+        // line, then the curtains part even if the dashboard underneath is
+        // still finishing — the opening itself covers the last bit. initUI's
+        // revealCrtPowerOn can still open sooner; the old 2.5s fallback stays
+        // as the last-resort guard.
+        clearTimeout(window._crtOnFallback);
+        window._crtOnFallback = setTimeout(open, 1000);
+    }));
+    let opened = false;
+    const open = () => {
+        if (opened || !el.isConnected) return;
+        opened = true;
+        clearTimeout(window._crtOnFallback);
+        window._crtOnReveal = null;
+        // The curtains alone cover the frame at this instant, so the blank
+        // layer can go now without exposing anything.
+        const blank = el.querySelector(".crt_on_blank");
+        if (blank) blank.remove();
+        el.classList.add("crt_on_open");
+        if (line) line.classList.add("crt_on_line_off");
+        setTimeout(() => {
+            try { el.remove(); } catch (e) {}
+            if (window.cursorTrap) window.cursorTrap.show();
+        }, 900);
+    };
+    window._crtOnReveal = open;
+    clearTimeout(window._crtOnFallback);
+    window._crtOnFallback = setTimeout(open, 2500);
+};
+// Called by initUI once the shell frame is back on screen.
+window.revealCrtPowerOn = () => {
+    if (typeof window._crtOnReveal === "function") window._crtOnReveal();
 };
 
 // "Welcome back" greeting after the matrix lock clears. The matrix unlock no
@@ -1732,6 +1800,12 @@ async function initUI() {
     await _delay(10);
 
     document.getElementById("main_shell").setAttribute("style", "");
+    // The boot unlock's CRT switch-on has been holding a black frame with its
+    // scan line while this frame was built. Part the curtains as soon as the
+    // shell is back on screen so the line does not sit still for too long; the
+    // greeting and filesystem fade in during the opening. No-op when there is
+    // no boot lock (session unlocks, secondary displays, settings.nointro).
+    if (typeof window.revealCrtPowerOn === "function") window.revealCrtPowerOn();
 
     await _delay(270);
 
@@ -2668,6 +2742,23 @@ async function initUI() {
             if (el.type === "password") { el.type = "text"; if (btn) btn.textContent = "HIDE"; }
             else { el.type = "password"; if (btn) btn.textContent = "SHOW"; }
         },
+        // Same for the independent AI-assistant key (only shown when sharing
+        // with the Claude terminal is off).
+        toggleAssistantKey() {
+            const el = document.getElementById("settingsEditor-assistant-apiKey");
+            const btn = document.getElementById("settingsEditor-assistant-apiKey-toggle");
+            if (!el) return;
+            if (el.type === "password") { el.type = "text"; if (btn) btn.textContent = "HIDE"; }
+            else { el.type = "password"; if (btn) btn.textContent = "SHOW"; }
+        },
+        // Sharing switch: on hides the assistant's own service fields (it reuses
+        // the Claude block), off reveals them.
+        applyAssistantShare() {
+            const el = document.getElementById("settingsEditor-assistant-share");
+            const box = document.getElementById("settingsAssistantCfg");
+            if (!el || !box) return;
+            box.style.display = el.value === "false" ? "block" : "none";
+        },
         // Fill the URL + models from the selected provider preset. The API key
         // is left untouched (the user pastes their own); every field stays
         // editable afterwards, so a preset is just a convenience pre-fill.
@@ -2675,10 +2766,11 @@ async function initUI() {
         // resets the fields to the preset's defaults; false only fills fields
         // that are still empty (used when the settings dialog opens, so a
         // previously saved custom value is not clobbered).
-        applyClaudeProvider(overwrite = true) {
+        // `prefix` is the settings block id: "claude" or "assistant".
+        applyProviderPreset(prefix, overwrite = true) {
             // #175 英文系统隐藏 AI 分类:claude 表单不渲染,元素缺失时直接跳过
             // (否则 openSettings 的预填充 applyClaudeProvider(false) 会 TypeError)。
-            const el = document.getElementById("settingsEditor-claude-provider");
+            const el = document.getElementById("settingsEditor-" + prefix + "-provider");
             if (!el) return;
             const id = el.value;
             const p = (window.CLAUDE_PROVIDERS || []).find(x => x.id === id);
@@ -2704,14 +2796,20 @@ async function initUI() {
                     });
                 }
             };
-            const baseUrl = document.getElementById("settingsEditor-claude-baseUrl");
-            const model = document.getElementById("settingsEditor-claude-model");
-            const haiku = document.getElementById("settingsEditor-claude-haikuModel");
+            const baseUrl = document.getElementById("settingsEditor-" + prefix + "-baseUrl");
+            const model = document.getElementById("settingsEditor-" + prefix + "-model");
+            const haiku = document.getElementById("settingsEditor-" + prefix + "-haikuModel");
             if (overwrite || (baseUrl && !baseUrl.value)) baseUrl.value = p.baseUrl || "";
             if (overwrite || (model && !model.value)) model.value = p.model || "";
-            if (overwrite || (haiku && !haiku.value)) haiku.value = p.haikuModel || "";
-            fillPick("settingsEditor-claude-model", p.models, p.model);
-            fillPick("settingsEditor-claude-haikuModel", p.haikuModels, p.haikuModel);
+            if (haiku && (overwrite || !haiku.value)) haiku.value = p.haikuModel || "";
+            fillPick("settingsEditor-" + prefix + "-model", p.models, p.model);
+            if (haiku) fillPick("settingsEditor-" + prefix + "-haikuModel", p.haikuModels, p.haikuModel);
+        },
+        applyClaudeProvider(overwrite = true) {
+            this.applyProviderPreset("claude", overwrite);
+        },
+        applyAssistantProvider(overwrite = true) {
+            this.applyProviderPreset("assistant", overwrite);
         }
     };
 
@@ -5671,19 +5769,26 @@ window.openSettings = async () => {
                 settingsRow("settings.clash.log", `<pre id="settingsClashLog" class="settings_net_log">–</pre>`),
             ].join("");
         } },
-        { id: "claude", titleKey: "settings.cat.claude", html: () => [
-            section("settings.cat.claude"),
+        { id: "claude", titleKey: "settings.cat.claude", html: () => {
+            const cl = window.settings.claude || {};
+            const shared = cl.sharedWithAssistant !== false;
+            // The assistant block is seeded from claude on first boot; fall back
+            // to claude values if an older settings.json is still on disk.
+            const asst = window.settings.assistant || cl;
+            const webOn = shared ? (cl.aiWebSearch !== false) : (asst.aiWebSearch !== false);
+            return [
+            section("settings.section.claude"),
             settingsRow("settings.claude.enabled", `<select id="settingsEditor-claude-enabled">
-                <option>${(window.settings.claude || {}).enabled}</option>
-                <option>${!(window.settings.claude || {}).enabled}</option>
+                <option>${cl.enabled}</option>
+                <option>${!cl.enabled}</option>
             </select>`, "settings.claude.enabled.help"),
             settingsRow("settings.claude.provider", `<select id="settingsEditor-claude-provider" onchange="window.sysCmd.applyClaudeProvider()">
-                ${(window.CLAUDE_PROVIDERS || []).map(p => `<option value="${p.id}"${(window.settings.claude && window.settings.claude.provider === p.id) ? " selected" : ""}>${(window.settings.language === "zh") ? p.label : p.labelEn}</option>`).join("")}
+                ${(window.CLAUDE_PROVIDERS || []).map(p => `<option value="${p.id}"${(cl.provider === p.id) ? " selected" : ""}>${(window.settings.language === "zh") ? p.label : p.labelEn}</option>`).join("")}
             </select>`, "settings.claude.provider.help"),
             settingsRow("settings.claude.llmStatus", `<div class="settings_ver_row"><span id="settingsLlmStatus" class="settings_net_info">–</span></div>`, "settings.claude.llmStatus.help"),
-            settingsRow("settings.claude.baseUrl", `<input type="text" id="settingsEditor-claude-baseUrl" value="${(window.settings.claude || {}).baseUrl || ''}">`, "settings.claude.baseUrl.help"),
+            settingsRow("settings.claude.baseUrl", `<input type="text" id="settingsEditor-claude-baseUrl" value="${cl.baseUrl || ''}">`, "settings.claude.baseUrl.help"),
             settingsRow("settings.claude.apiKey", `<div class="settings_api_pw">
-                <input type="password" id="settingsEditor-claude-apiKey" autocomplete="off" value="${(window.settings.claude || {}).apiKey || ''}">
+                <input type="password" id="settingsEditor-claude-apiKey" autocomplete="off" value="${cl.apiKey || ''}">
                 <button type="button" id="settingsEditor-claude-apiKey-toggle" class="settings_pw_toggle" onclick="window.sysCmd.toggleClaudeKey()">SHOW</button>
             </div>`, "settings.claude.apiKey.help"),
             // Model fields are editable combo boxes: one text input holds the
@@ -5692,30 +5797,54 @@ window.openSettings = async () => {
             // picking. The list is (re)built when a provider is chosen; picking
             // fills the input, which stays editable afterwards.
             settingsRow("settings.claude.model", `<div class="settings_combobox">
-                <input type="text" id="settingsEditor-claude-model" value="${(window.settings.claude || {}).model || ''}" placeholder="${t("settings.claude.modelPlaceholder")}" autocomplete="off">
+                <input type="text" id="settingsEditor-claude-model" value="${cl.model || ''}" placeholder="${t("settings.claude.modelPlaceholder")}" autocomplete="off">
                 <button type="button" class="mod_loc_btn" title="${t("settings.claude.modelPlaceholder")}"></button>
                 <div class="mod_loc_list"></div>
             </div>`, "settings.claude.model.help"),
             settingsRow("settings.claude.haikuModel", `<div class="settings_combobox">
-                <input type="text" id="settingsEditor-claude-haikuModel" value="${(window.settings.claude || {}).haikuModel || ''}" placeholder="${t("settings.claude.modelPlaceholder")}" autocomplete="off">
+                <input type="text" id="settingsEditor-claude-haikuModel" value="${cl.haikuModel || ''}" placeholder="${t("settings.claude.modelPlaceholder")}" autocomplete="off">
                 <button type="button" class="mod_loc_btn" title="${t("settings.claude.modelPlaceholder")}"></button>
                 <div class="mod_loc_list"></div>
             </div>`, "settings.claude.haikuModel.help"),
-            section("settings.section.claudeNote"),
             section("settings.section.aiChat"),
+            // Sharing switch: on = the assistant reuses the Claude block above
+            // (the pre-existing behaviour); off = the dedicated block below
+            // appears and is used instead. Hiding is done on the wrapper so the
+            // custom dropdown rows disappear with it.
+            settingsRow("settings.claude.shared", `<select id="settingsEditor-assistant-share" onchange="window.sysCmd.applyAssistantShare()">
+                <option value="true" ${shared ? "selected" : ""}>${t("settings.network.on")}</option>
+                <option value="false" ${!shared ? "selected" : ""}>${t("settings.network.off")}</option>
+            </select>`, "settings.claude.shared.help"),
+            `<div id="settingsAssistantCfg" style="display:${shared ? "none" : "block"}">`,
+            section("settings.section.assistant"),
+            settingsRow("settings.assistant.provider", `<select id="settingsEditor-assistant-provider">
+                ${(window.CLAUDE_PROVIDERS || []).map(p => `<option value="${p.id}"${(asst.provider === p.id) ? " selected" : ""}>${(window.settings.language === "zh") ? p.label : p.labelEn}</option>`).join("")}
+            </select>`, "settings.assistant.provider.help"),
+            settingsRow("settings.assistant.baseUrl", `<input type="text" id="settingsEditor-assistant-baseUrl" value="${asst.baseUrl || ''}">`, "settings.assistant.baseUrl.help"),
+            settingsRow("settings.assistant.apiKey", `<div class="settings_api_pw">
+                <input type="password" id="settingsEditor-assistant-apiKey" autocomplete="off" value="${asst.apiKey || ''}">
+                <button type="button" id="settingsEditor-assistant-apiKey-toggle" class="settings_pw_toggle" onclick="window.sysCmd.toggleAssistantKey()">SHOW</button>
+            </div>`, "settings.assistant.apiKey.help"),
+            settingsRow("settings.assistant.model", `<div class="settings_combobox">
+                <input type="text" id="settingsEditor-assistant-model" value="${asst.model || ''}" placeholder="${t("settings.claude.modelPlaceholder")}" autocomplete="off">
+                <button type="button" class="mod_loc_btn" title="${t("settings.claude.modelPlaceholder")}"></button>
+                <div class="mod_loc_list"></div>
+            </div>`, "settings.assistant.model.help"),
+            `</div>`,
             settingsRow("settings.voice.micMode", `<select id="settingsEditor-voiceMicMode">
                 <option value="input" ${(window.settings.voiceMicMode || "input") === "input" ? "selected" : ""}>${t("settings.voice.micMode.input")}</option>
                 <option value="chat" ${(window.settings.voiceMicMode || "input") === "chat" ? "selected" : ""}>${t("settings.voice.micMode.chat")}</option>
             </select>`, "settings.voice.micMode.help"),
             settingsRow("settings.claude.aiWebSearch", `<select id="settingsEditor-claude-aiWebSearch">
-                <option value="true" ${(window.settings.claude || {}).aiWebSearch !== false ? "selected" : ""}>${t("settings.claude.aiWebSearch.on")}</option>
-                <option value="false" ${(window.settings.claude || {}).aiWebSearch === false ? "selected" : ""}>${t("settings.claude.aiWebSearch.off")}</option>
+                <option value="true" ${webOn ? "selected" : ""}>${t("settings.claude.aiWebSearch.on")}</option>
+                <option value="false" ${!webOn ? "selected" : ""}>${t("settings.claude.aiWebSearch.off")}</option>
             </select>`, "settings.claude.aiWebSearch.help"),
             settingsRow("settings.ai.ttsStatus", `<div class="settings_ver_row"><span id="settingsAiTtsStatus" class="settings_net_info">–</span></div>`, "settings.ai.ttsStatus.help"),
             settingsRow("settings.ai.history", `<div class="settings_net_actions">
                     <button type="button" id="settingsAiHistoryOpen" class="settings_net_btn">${t("settings.ai.history.historyOpen")}</button>
                 </div>`, "settings.ai.history.help"),
-        ].join("") },
+            ].join("");
+        } },
         // Local model library. Deliberately NOT named "claude": the AI category
         // is dropped on English systems (see the filter below), while swapping a
         // model is language-independent.
@@ -5930,6 +6059,12 @@ window.openSettings = async () => {
         // dropdown's list click via the change dispatch in setupSettingsDropdowns.
         const claudeProvider = document.getElementById("settingsEditor-claude-provider");
         if (claudeProvider) claudeProvider.addEventListener("change", () => window.sysCmd.applyClaudeProvider());
+        // The independent AI-assistant provider + sharing switch are converted
+        // the same way, so their inline handlers have to be re-bound here.
+        const assistantProvider = document.getElementById("settingsEditor-assistant-provider");
+        if (assistantProvider) assistantProvider.addEventListener("change", () => window.sysCmd.applyAssistantProvider());
+        const assistantShare = document.getElementById("settingsEditor-assistant-share");
+        if (assistantShare) assistantShare.addEventListener("change", () => window.sysCmd.applyAssistantShare());
         // Same pattern for the showGui toggle: its <select> is replaced by the
         // custom dropdown (hidden input keeps the id), so an inline onchange on
         // the original select would be lost and showGui would never persist
@@ -5942,6 +6077,8 @@ window.openSettings = async () => {
         // clobbered).
         if (window.setupSettingsComboboxes) window.setupSettingsComboboxes();
         if (window.sysCmd.applyClaudeProvider) window.sysCmd.applyClaudeProvider(false);
+        if (window.sysCmd.applyAssistantProvider) window.sysCmd.applyAssistantProvider(false);
+        if (window.sysCmd.applyAssistantShare) window.sysCmd.applyAssistantShare();
         if (window.sysCmd.refreshLlmStatus) window.sysCmd.refreshLlmStatus();
         // #151/#161 AI-chat category bindings: TTS status + the chat-history
         // popup (opened from settings; the log itself is a standalone modal).
@@ -6923,6 +7060,8 @@ window.writeSettingsFile = () => {
     // #175 英文系统隐藏 AI 分类:claude 表单不渲染,provider 元素缺失时整块跳过,
     // 保留已存 claude 配置(否则 Save 会 TypeError)。
     const cPrEl = document.getElementById("settingsEditor-claude-provider");
+    const shareEl = document.getElementById("settingsEditor-assistant-share");
+    const shared = shareEl ? (shareEl.value !== "false") : ((s.claude || {}).sharedWithAssistant !== false);
     if (cPrEl) {
         s.claude = Object.assign({}, s.claude, {
             enabled: (document.getElementById("settingsEditor-claude-enabled").value === "true"),
@@ -6931,7 +7070,22 @@ window.writeSettingsFile = () => {
             apiKey: document.getElementById("settingsEditor-claude-apiKey").value,
             model: document.getElementById("settingsEditor-claude-model").value,
             haikuModel: document.getElementById("settingsEditor-claude-haikuModel").value,
-            aiWebSearch: awsEl ? (awsEl.value === "true") : (s.claude.aiWebSearch !== false)
+            sharedWithAssistant: shared,
+            // Web search belongs to whichever block currently drives the AI
+            // chat; leave the other block's stored value untouched.
+            aiWebSearch: shared
+                ? (awsEl ? (awsEl.value === "true") : ((s.claude || {}).aiWebSearch !== false))
+                : ((s.claude || {}).aiWebSearch !== false)
+        });
+    }
+    const aPrEl = document.getElementById("settingsEditor-assistant-provider");
+    if (aPrEl) {
+        s.assistant = Object.assign({}, s.assistant, {
+            provider: aPrEl.value,
+            baseUrl: document.getElementById("settingsEditor-assistant-baseUrl").value,
+            apiKey: document.getElementById("settingsEditor-assistant-apiKey").value,
+            model: document.getElementById("settingsEditor-assistant-model").value,
+            aiWebSearch: (!shared && awsEl) ? (awsEl.value === "true") : ((s.assistant || {}).aiWebSearch !== false)
         });
     }
     const micModeEl = document.getElementById("settingsEditor-voiceMicMode");
@@ -7584,33 +7738,33 @@ window.screensaver = (() => {
     let winding = false;
     const pick = a => a[Math.floor(Math.random() * a.length)];
     const R = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo));
-    // Appearance over rigour: generate the LOOK of a real scientific codebase -
+    // Appearance over rigour: generate the LOOK of a real engineering codebase -
     // long signatures, long physics formulas, long explanatory comments. The
     // stream is divided into collections — each one a substantial algorithm
-    // (ballistic trajectory, weapon yield, decoy discrimination, …) of 5-9
-    // related functions — so it never reads as a short loop of unrelated scraps.
+    // (turbine dynamics, grid dispatch, storage rebuild, …) of 5-9 related
+    // functions — so it never reads as a short loop of unrelated scraps.
     const pad = n => "    ".repeat(Math.max(0, n));
     const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
     const GENWORDS = ["state", "vector", "matrix", "delta", "alpha", "beta", "gamma", "coef", "rate", "factor", "index", "buffer", "sample", "offset", "scale", "bound", "residual", "kernel", "envelope", "spectrum", "derivative", "integral"];
     const DOMAINS = [
-        { key: "ballistic", nouns: ["apogee", "reentry", "trajectory", "overpressure", "impact", "fallout", "yield", "thrust", "azimuth", "elevation", "payload", "warhead"], verbs: ["compute", "predict", "integrate", "estimate", "assess", "trace", "solve", "model"], note: "three-stage ballistic trajectory and yield model" },
-        { key: "radar", nouns: ["track", "doppler", "beam", "clutter", "range_rate", "cross_section", "azimuth", "elevation", "signal", "noise_floor", "coherence"], verbs: ["update", "init", "detect", "fuse", "coast", "handoff", "filter", "gate"], note: "phased-array tracking and CFAR detection" },
-        { key: "emp", nouns: ["coupling", "surge", "attenuation", "resonance", "hardening", "induction", "shield", "cable", "impedance", "skin_depth"], verbs: ["compute", "estimate", "assess", "model", "verify", "sweep", "clamp", "measure"], note: "HEMP coupling and circuit hardening" },
-        { key: "winter", nouns: ["aerosol", "optical_depth", "insolation", "temperature_drop", "settling", "stratosphere", "soot", "albedo", "tau", "forcing"], verbs: ["inject", "evolve", "transport", "project", "compute", "estimate", "advect", "scatter"], note: "stratospheric aerosol transport and forcing" },
-        { key: "uplink", nouns: ["downlink", "carrier", "parity", "ack", "retransmit", "jitter", "sync", "throughput", "channel", "latency"], verbs: ["encrypt", "decode", "verify", "resync", "throttle", "buffer", "handshake", "route"], note: "deep-space uplink and forward error correction" },
-        { key: "recon", nouns: ["signature", "sweep", "footprint", "spectrum", "return", "masking", "baseline", "resolution", "aperture", "phase"], verbs: ["scan", "classify", "normalize", "correlate", "lock", "descope", "triangulate", "confirm"], note: "orbital reconnaissance and signature analysis" },
-        { key: "sonar", nouns: ["bearing", "beam", "broadside", "reverberation", "clutter", "ping", "doppler", "depth", "sidelobe", "array"], verbs: ["beamform", "normalize", "localize", "classify", "track", "filter", "resolve", "integrate"], note: "passive sonar beamforming and contact localisation" },
-        { key: "ecm", nouns: ["jammer", "burnthrough", "standoff", "noise", "deception", "saturation", "retrograde", "pattern", "gate", "decoy"], verbs: ["generate", "modulate", "suppress", "sequence", "cancel", "null", "blank", "deceive"], note: "standoff jamming and ECCM burnthrough" },
-        { key: "yield", nouns: ["fission", "fusion", "yield", "compression", "tamp", "neutron", "flux", "burn", "efficiency", "criticality"], verbs: ["scale", "estimate", "model", "compute", "bound", "predict", "assess", "derive"], note: "weapon yield scaling and burn-efficiency model" },
-        { key: "orbit", nouns: ["perigee", "apogee", "inclination", "node", "eccentricity", "semi_major", "perturbation", "drag", "sun_sync", "ground_track"], verbs: ["propagate", "fit", "estimate", "correct", "predict", "maintain", "debias", "maneuver"], note: "low-orbit propagation and SGP4-style fitting" },
-        { key: "warhead", nouns: ["heat_shield", "ablation", "stagnation", "tps", "reentry", "flux", "char", "blunting", "angle", "corridor"], verbs: ["integrate", "model", "compute", "size", "verify", "cool", "track", "bound"], note: "reentry-vehicle aerothermodynamics and TPS sizing" },
-        { key: "decoy", nouns: ["signature", "chaff", "separation", "contrast", "screening", "kinematics", "mass_ratio", "precession", "midcourse", "target"], verbs: ["discriminate", "compare", "identify", "track", "measure", "classify", "score", "gate"], note: "midcourse decoy discrimination and target scoring" },
-        { key: "booster", nouns: ["stage", "thrust", "mass_fraction", "isp", "burntime", "nozzle", "chamber", "dynes", "propellant", "trajectory"], verbs: ["model", "compute", "optimize", "simulate", "budget", "constrain", "throttle", "stage"], note: "solid-rocket staging and ascent performance" },
-        { key: "fuze", nouns: ["arming", "detonation", "timing", "standoff", "proximity", "safety", "interlock", "range_gate", "airburst", "contact"], verbs: ["schedule", "verify", "authorize", "delay", "sync", "monitor", "rearm", "clear"], note: "fuze arming chain and airburst timing" },
-        { key: "guidance", nouns: ["inertial", "misalignment", "drift", "accelerometer", "gyro", "navigation", "correction", "bias", "alignment", "reset"], verbs: ["filter", "estimate", "update", "correct", "align", "fuse", "compensate", "recalibrate"], note: "inertial navigation and INS/GPS fusion" },
-        { key: "c2", nouns: ["tasking", "latency", "handover", "bandwidth", "picture", "engagement", "deconfliction", "priority", "slot", "sector"], verbs: ["schedule", "assign", "deconflict", "queue", "rank", "handoff", "reallocate", "filter"], note: "command-and-control tasking and engagement scheduling" },
-        { key: "drone", nouns: ["waypoint", "swarm", "separation", "battery", "loiter", "path", "obstacle", "handoff", "station", "relay"], verbs: ["plan", "route", "deconflict", "assign", "replan", "monitor", "sync", "recover"], note: "autonomous swarm routing and collision avoidance" },
-        { key: "cyber", nouns: ["intrusion", "anomaly", "signature", "flow", "baseline", "threshold", "beacon", "exfil", "protocol", "session"], verbs: ["detect", "score", "correlate", "flag", "cluster", "alert", "verify", "suppress"], note: "network intrusion detection and anomaly scoring" }
+        { key: "turbine", nouns: ["rotor", "blade", "vibration", "bearing", "steam", "pressure", "speed", "governor", "lubrication", "clearance"], verbs: ["monitor", "balance", "compute", "trend", "alarm", "model", "trim", "log"], note: "steam turbine rotor dynamics and governor tuning" },
+        { key: "grid", nouns: ["frequency", "load", "dispatch", "reserve", "feeder", "voltage", "reactive", "peak", "margin", "island"], verbs: ["balance", "forecast", "dispatch", "regulate", "settle", "allocate", "curtail", "monitor"], note: "grid frequency regulation and load dispatch" },
+        { key: "battery", nouns: ["soc", "soh", "cell", "balancing", "thermal", "charge", "discharge", "cycle", "impedance", "string"], verbs: ["estimate", "balance", "protect", "age", "measure", "limit", "calibrate", "report"], note: "battery state estimation and cell balancing" },
+        { key: "solar", nouns: ["irradiance", "inverter", "string", "azimuth", "tilt", "mppt", "yield", "shading", "panel", "tracker"], verbs: ["estimate", "track", "optimize", "forecast", "derate", "measure", "align", "scan"], note: "PV array yield forecasting and MPPT tracking" },
+        { key: "hvac", nouns: ["airflow", "setpoint", "damper", "chiller", "humidity", "enthalpy", "duct", "compressor", "zone", "load"], verbs: ["regulate", "schedule", "balance", "tune", "forecast", "limit", "reset", "trim"], note: "HVAC zone control and chiller optimization" },
+        { key: "pipeline", nouns: ["flow", "pressure", "valve", "leak", "transient", "surge", "pump", "viscosity", "segment", "head"], verbs: ["monitor", "detect", "model", "balance", "regulate", "locate", "isolate", "trend"], note: "pipeline flow balance and leak detection" },
+        { key: "motor", nouns: ["torque", "stator", "rotor", "slip", "inrush", "vfd", "winding", "efficiency", "load", "thermal"], verbs: ["estimate", "control", "derate", "measure", "protect", "tune", "model", "trend"], note: "induction motor drive control and thermal derating" },
+        { key: "compute", nouns: ["thread", "cache", "latency", "throughput", "queue", "scheduler", "core", "allocation", "budget", "migration"], verbs: ["schedule", "balance", "measure", "throttle", "migrate", "profile", "bound", "prioritize"], note: "workload scheduling and cache-aware balancing" },
+        { key: "network", nouns: ["packet", "route", "congestion", "window", "latency", "jitter", "link", "queue", "bandwidth", "drop"], verbs: ["route", "shape", "measure", "recover", "prioritize", "probe", "balance", "throttle"], note: "congested-link routing and window control" },
+        { key: "storage", nouns: ["block", "erasure", "parity", "stripe", "wear", "io_latency", "cache", "trim", "replica", "queue"], verbs: ["write", "verify", "rebuild", "scrub", "balance", "flush", "repair", "throttle"], note: "erasure-coded storage rebuild and wear leveling" },
+        { key: "cooling", nouns: ["coolant", "pump", "loop", "delta_t", "flow", "heat", "exchanger", "bypass", "sensor", "capacity"], verbs: ["regulate", "balance", "detect", "model", "trim", "verify", "trend", "limit"], note: "cooling loop capacity control and heat rejection" },
+        { key: "compressor", nouns: ["pressure", "ratio", "stage", "surge", "vane", "discharge", "inlet", "efficiency", "trip", "margin"], verbs: ["control", "anticipate", "model", "protect", "trim", "measure", "limit", "recover"], note: "multi-stage compressor surge margin control" },
+        { key: "scada", nouns: ["tag", "sample", "poll", "alarm", "historian", "setpoint", "quality", "scan", "event", "interlock"], verbs: ["poll", "aggregate", "validate", "archive", "raise", "clear", "reconcile", "throttle"], note: "SCADA polling and alarm reconciliation" },
+        { key: "forecast", nouns: ["demand", "weather", "horizon", "season", "trend", "residual", "quantile", "model", "error", "profile"], verbs: ["fit", "predict", "blend", "validate", "correct", "bound", "retrain", "score"], note: "short-term demand forecasting and error bounds" },
+        { key: "vibration", nouns: ["bearing", "spectrum", "harmonic", "envelope", "fault", "rpm", "accel", "peak", "noise_floor", "trend"], verbs: ["sample", "filter", "detect", "classify", "trend", "alarm", "isolate", "verify"], note: "rotating-machinery vibration diagnostics" },
+        { key: "thermal", nouns: ["heat", "flux", "gradient", "junction", "ambient", "dissipation", "resistance", "fan", "curve", "limit"], verbs: ["model", "estimate", "throttle", "cool", "verify", "trim", "bound", "measure"], note: "thermal budget and junction temperature control" },
+        { key: "metering", nouns: ["reading", "interval", "baseline", "tamper", "tariff", "register", "pulse", "calibration", "drift", "audit"], verbs: ["collect", "validate", "reconcile", "flag", "calibrate", "aggregate", "verify", "report"], note: "meter data validation and tariff reconciliation" },
+        { key: "scheduler", nouns: ["job", "queue", "window", "slot", "priority", "backlog", "retry", "worker", "pool", "deadline"], verbs: ["schedule", "dispatch", "preempt", "retry", "balance", "drain", "rank", "monitor"], note: "job queue scheduling and worker pool sizing" }
     ];
 
     // The names of every function the generator has emitted this session. Each
@@ -7666,14 +7820,14 @@ window.screensaver = (() => {
         return "Revisit the " + a + " once the " + b + " settles, or the " + c + " report will mislead.";
     };
     const SIGS = [
-        "const SimConfig& cfg, const StateVector& s, double dt, int mode",
-        "const TrackState& t, const Measurement& m, const Matrix& Q, const Matrix& R",
-        "double target_range, double target_velocity, double elevation, int mode, bool strict",
+        "const PlantConfig& cfg, const StateVector& s, double dt, int mode",
+        "const SensorSample& m, const Covariance& q, const Covariance& r",
+        "double setpoint, double measured, double rate, double dt, bool strict",
         "const Config& cfg, const array<double, 6>& state, double t0, double t1, double eps",
-        "const RadarSweep& sweep, const GateList& gates, size_t beam_idx, double scale",
+        "const SampleBlock& block, const GateList& gates, size_t chan, double scale",
         "const Vector3& pos, const Vector3& vel, const double* coeffs, size_t n, int iter",
         "double temperature, double pressure, double humidity, bool saturated, int pass",
-        "const PlatformState& p, const ThreatList& threats, double horizon, double dt",
+        "const UnitState& p, const LoadList& loads, double horizon, double dt",
         "const double* observed, const double* predicted, size_t n, double tol, bool adapt",
         "const CommsFrame& frame, const Codec& codec, int priority, bool encrypt, uint8_t chan"
     ];
@@ -7762,8 +7916,8 @@ window.screensaver = (() => {
         const lines = [];
         lines.push("\r\nroot@kali:~# g++ -O3 -march=native -std=c++20 edex_phase_" + R(2, 9999) + ".cpp -lm -o sim");
         lines.push("");
-        lines.push("/* eDEX OS - subsystem " + cap(pick(["telemetry", "analysis", "guidance", "detection", "warhead", "uplink", "defense", "recon", "propagation", "tracking"])) + " phase " + R(1, 9) + "." + R(0, 9) + " */");
-        lines.push("/* " + pick(["no warranty - research use only", "declassified reference model", "internal audit build", "classified - export controlled", "nightly integration build"]) + " */");
+        lines.push("/* eDEX OS - subsystem " + cap(pick(["telemetry", "analysis", "dispatch", "generation", "metering", "cooling", "storage", "network", "forecast", "scheduling"])) + " phase " + R(1, 9) + "." + R(0, 9) + " */");
+        lines.push("/* " + pick(["no warranty - research use only", "reference model", "internal audit build", "plant simulation build", "nightly integration build"]) + " */");
         lines.push("#include <cmath>");
         lines.push("#include <vector>");
         lines.push("#include <array>");

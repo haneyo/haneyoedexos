@@ -163,7 +163,7 @@ class LockScreen {
             && window.screensaver.coverRestoreTab() != null)
             ? window.screensaver.coverRestoreTab() : window.currentTerm;
         // While locked, eDEX wears its cover identity (fake tabs / filesystem /
-        // IP / process list) — a launch device doesn't show real data.
+        // IP / process list) — a plant console doesn't show real data.
         if (window.cover) window.cover.set(true);
     }
 
@@ -556,14 +556,14 @@ class LockScreen {
                 + "\x1b[1;36m[\x1b[0m" + "\x1b[1;33m" + dots + "█\x1b[0m" + "\x1b[1;36m]\x1b[0m");
         return [
             top,
-            interior(cy("  eDEX-OS · NUCLEAR ARSENAL CONTROL · RESTRICTED  ")),
+            interior(cy("  eDEX-OS · INDUSTRIAL ENERGY · RESTRICTED  ")),
             sep,
             interior(""),
             interior("    " + wh("▁▂▃▄▅▆▇█▇▆▅▄▃▂▁") + dim("  ACCESS TERMINAL v5.2")),
             interior(""),
             interior("    ╔══╗"),
             interior("    ║  ║   " + ye("SYSTEM LOCKED")),
-            interior("    ║ ═║   " + dim("ALL LAUNCH PROCEDURES")),
+            interior("    ║ ═║   " + dim("ALL DISPATCH PROCEDURES")),
             interior("    ║══║   " + ye("HAVE BEEN HALTED")),
             interior("    ╚══╝"),
             interior(""),
@@ -853,7 +853,7 @@ class LockScreen {
         const rows = [
             "    ╔══╗",
             "    ║" + c1 + c2 + "║   " + ye("SYSTEM LOCKED"),
-            "    ║ " + core + "║   " + dim("ALL LAUNCH PROCEDURES"),
+            "    ║ " + core + "║   " + dim("ALL DISPATCH PROCEDURES"),
             "    ║══║   " + ye("HAVE BEEN HALTED"),
             "    ╚══╝"
         ];
@@ -1205,11 +1205,19 @@ class LockScreen {
             }
             // No longer need the 30s idle timeout once the passcode matches.
             if (this._idleTimer) { clearInterval(this._idleTimer); this._idleTimer = null; }
-            // CRT-TV power-off after the boot/matrix lock clears. It is a
-            // parallel overlay — replayBoot()/initUI() below keep running at
-            // their normal pace underneath, so the password→welcome-back time
-            // is unchanged. The code-mode lock (_codeSubmit) never reaches here.
-            if (typeof window.playCrtShutdown === "function") window.playCrtShutdown();
+            // The boot lock hands over with a CRT power-ON (dot → scan line →
+            // the curtains part into the desktop): the old power-off read as a
+            // shutdown, and because its curtains started open it flashed a
+            // frame of wallpaper between the lock teardown and the collapse.
+            // Session locks (matrix) keep the power-off — their dark
+            // #welcome_back overlay already covers the desktop. Both are
+            // parallel overlays: initUI() below keeps its own pace.
+            // The code-mode lock (_codeSubmit) never reaches here.
+            if (matrix) {
+                if (typeof window.playCrtShutdown === "function") window.playCrtShutdown();
+            } else if (typeof window.playCrtPowerOn === "function") {
+                window.playCrtPowerOn();
+            }
             // The Matrix lock always replays the welcome-back + desktop entrance
             // on unlock (the old "boot animation after unlock" toggle was
             // removed — this is now fixed behaviour, and it is what lets the
