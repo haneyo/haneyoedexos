@@ -3291,12 +3291,17 @@ status();
                 if (code !== 0) return fail("download failed (curl exit " + code + ")");
                 const done = () => {
                     // 4) Same-filesystem copy into place, then an atomic rename.
-                    //    /opt/edex is root-owned on the eDEX-OS install, so a
-                    //    plain install fails with EACCES and we escalate to sudo
-                    //    (the autologin user has passwordless sudo).
+                    //    /opt/edex is root-owned on the eDEX-OS install, so decide
+                    //    up front whether sudo is needed: the first plain attempt
+                    //    would print "install: cannot create … Permission denied"
+                    //    into the update log even though the sudo retry then
+                    //    succeeds, which reads like a failure to the user.
                     send("Checksum OK — replacing AppImage…");
                     const newPath = APPIMAGE + ".new";
-                    const trySwap = sudo => {
+                    let writable = true;
+                    try { fs.accessSync(path.dirname(APPIMAGE), fs.constants.W_OK); }
+                    catch (e) { writable = false; }
+                    const trySwap = (sudo, quiet) => {
                         const cmd = sudo
                             ? `install -m 755 -o root -g root '${tmp}' '${newPath}' && mv -f '${newPath}' '${APPIMAGE}'`
                             : `install -m 755 '${tmp}' '${newPath}' && mv -f '${newPath}' '${APPIMAGE}'`;
@@ -3304,10 +3309,10 @@ status();
                         // sudo from install-edex.sh isn't in place, fail fast
                         // instead of hanging on a password prompt.
                         const p = spawn(sudo ? "sudo" : "bash", sudo ? ["-n", "bash", "-c", cmd] : ["-c", cmd]);
-                        p.stderr.on("data", d => send(String(d).trim()));
+                        p.stderr.on("data", d => { if (!quiet) send(String(d).trim()); });
                         p.on("close", code => {
                             if (code !== 0) {
-                                if (!sudo) return trySwap(true);
+                                if (!sudo) return trySwap(true, false);
                                 cleanup();
                                 return resolve({ ok: false, error: "replace failed (sudo exit " + code + ")" });
                             }
@@ -3315,7 +3320,7 @@ status();
                             resolve({ ok: true });
                         });
                     };
-                    trySwap(false);
+                    trySwap(!writable, writable);
                 };
                 // 3) Verify sha256 when the release provided one.
                 if (sha) {
