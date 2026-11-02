@@ -2745,7 +2745,12 @@ async function initUI() {
                     document.removeEventListener("keydown", window._powerEsc, true);
                     const e = document.getElementById("power_countdown");
                     if (e) e.remove();
-                    remote.app.relaunch(); remote.app.quit();
+                    // AppImage: the main process re-execs the AppImage file itself
+                    // (app.relaunch would restart the FUSE-mounted inner binary and
+                    // break once that mount goes away). Outside an AppImage it
+                    // declines, and relaunch()/quit() stays the fallback.
+                    const fallback = () => { remote.app.relaunch(); remote.app.quit(); };
+                    ipc.invoke("app:relaunch").then(r => { if (!r || !r.ok) fallback(); else remote.app.quit(); }).catch(fallback);
                 }
             }, 1000),
             onCancel: () => {
@@ -4710,7 +4715,23 @@ async function initUI() {
         },
         start(url, sha256Url, releaseUrl) {
             if (!this.isAppImage) {
-                require("electron").shell.openExternal(releaseUrl || url);
+                // Not an AppImage (dev checkout, macOS preview, or an install
+                // running from an extracted tree): there is no single file to
+                // download over, so say so instead of silently throwing the user
+                // into a browser after they pressed "Download & Update".
+                const esc = s => JSON.stringify(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+                new Modal({
+                    type: "custom",
+                    title: "UPDATE",
+                    html:
+                        `<div style="margin:0 0 .8vh">This build does not run from an AppImage, so it cannot update itself in place.</div>` +
+                        `<div style="opacity:.72;margin:0 0 .8vh">当前版本不是以 AppImage 方式运行（例如从解包目录/开发环境启动），无法就地自动更新。</div>` +
+                        `<pre style="font-size:12px;opacity:.6;margin:0;white-space:pre-wrap">${(releaseUrl || url || "").replace(/</g, "&lt;")}</pre>`,
+                    buttons: [{
+                        label: "Open release page",
+                        action: `require("electron").shell.openExternal(${esc(releaseUrl || url)})`
+                    }]
+                });
                 return;
             }
             if (this.modal) return;

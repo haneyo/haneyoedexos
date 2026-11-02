@@ -2848,7 +2848,9 @@ status();
 
     // Tell the renderer whether eDEX is running from an AppImage (eDEX-OS
     // install). The GitHub self-update is only meaningful in that mode — when
-    // running from src/ during development there is no file to replace.
+    // running from src/ during development, or from an extracted tree
+    // (/opt/edex/squashfs-root on a rescue install), there is no AppImage file
+    // to replace, so the renderer explains that instead of opening a web page.
     ipc.handle("app:env", () => ({ isAppImage: !!process.env.APPIMAGE }));
 
     // Laptop battery for the clock's battery readout. Desktops (no battery)
@@ -3305,6 +3307,30 @@ status();
             });
         });
     }));
+
+    // Relaunch after a self-update. `app.relaunch()` re-executes
+    // `process.execPath`, which on an AppImage is the FUSE-mounted inner binary
+    // (`/tmp/.mount_eDEX-…/edex-ui`) — that mount disappears with this process,
+    // so the new instance would come up broken. Re-exec the AppImage file itself
+    // (process.env.APPIMAGE) instead, with the same switches the session used
+    // (`--no-sandbox`). It must start only AFTER this process is gone: the
+    // single-instance lock is still held until we exit, and `_killChildTree()`
+    // SIGKILLs every child on will-quit, so the re-exec is handed to `setsid`
+    // (new session, reparented to init) after a 1s beat.
+    ipc.handle("app:relaunch", () => {
+        const target = process.env.APPIMAGE;
+        if (!target) return { ok: false };
+        const q = s => "'" + String(s).replace(/'/g, "'\\''") + "'";
+        const args = process.argv.slice(1);   // switches passed by edex-session.sh
+        const script = "sleep 1; exec " + q(target) + (args.length ? " " + args.map(q).join(" ") : "");
+        try {
+            const { spawn } = require("child_process");
+            spawn("setsid", ["-f", "sh", "-c", script], {detached: true, stdio: "ignore"}).unref();
+            return { ok: true };
+        } catch (e) {
+            return { ok: false, error: e.message };
+        }
+    });
 
     // ---- Updates category (#47) ----
     // Central update IPC: app self-update status, apt last-update timestamp,
