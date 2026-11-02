@@ -3338,25 +3338,39 @@ status();
         });
     }));
 
-    // Relaunch after a self-update. `app.relaunch()` re-executes
-    // `process.execPath`, which on an AppImage is the FUSE-mounted inner binary
-    // (`/tmp/.mount_eDEX-…/edex-ui`) — that mount disappears with this process,
-    // so the new instance would come up broken. Re-exec the AppImage file itself
-    // (process.env.APPIMAGE) instead, with the same switches the session used
-    // (`--no-sandbox`). It must start only AFTER this process is gone: the
-    // single-instance lock is still held until we exit, and `_killChildTree()`
-    // SIGKILLs every child on will-quit, so the re-exec is handed to `setsid`
-    // (new session, reparented to init) after a 1s beat.
+    // Relaunch after a self-update.
+    //
+    // On an eDEX-OS kiosk the display manager owns the session: bounce lightdm
+    // and its autologin session starts the new AppImage by itself. Starting a
+    // second app ourselves would race that respawn — whichever loses exits on
+    // the single-instance lock, and lightdm would keep retrying a session that
+    // dies immediately.
+    //
+    // Everywhere else `app.relaunch()` is useless: it re-executes
+    // `process.execPath`, which inside an AppImage is the FUSE-mounted inner
+    // binary (`/tmp/.mount_eDEX-…/edex-ui`) and that mount disappears with this
+    // process. Re-exec the AppImage file itself instead, with the switches the
+    // session used (`--no-sandbox`). It must start only AFTER this process is
+    // gone (the single-instance lock is held until we exit, and will-quit runs
+    // _killChildTree()), so the re-exec is handed to `setsid` after a 1s beat.
     ipc.handle("app:relaunch", () => {
+        const { spawn } = require("child_process");
+        // eDEX-OS install marker: install-edex.sh writes this xsession entry.
+        if (fs.existsSync("/usr/share/xsessions/edex.desktop")) {
+            try {
+                spawn("sudo", ["-n", "systemctl", "restart", "lightdm"],
+                    {detached: true, stdio: "ignore"}).unref();
+                return { ok: true, via: "lightdm" };
+            } catch (e) {}
+        }
         const target = edexAppImagePath();
         if (!target) return { ok: false };
         const q = s => "'" + String(s).replace(/'/g, "'\\''") + "'";
-        const args = process.argv.slice(1);   // switches passed by edex-session.sh
+        const args = process.argv.slice(1);
         const script = "sleep 1; exec " + q(target) + (args.length ? " " + args.map(q).join(" ") : "");
         try {
-            const { spawn } = require("child_process");
             spawn("setsid", ["-f", "sh", "-c", script], {detached: true, stdio: "ignore"}).unref();
-            return { ok: true };
+            return { ok: true, via: "appimage" };
         } catch (e) {
             return { ok: false, error: e.message };
         }
