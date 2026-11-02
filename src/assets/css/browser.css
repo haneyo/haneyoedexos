@@ -1649,6 +1649,35 @@ body:has(#lock_block) #main_shell_tabs > li.active {
     opacity: .85;
 }
 
+/* Cipher feed: four running hex channels above the status rows — the sheet's
+   "this machine is decrypting something" texture. Dimmer than the status rows
+   so it reads as background telemetry rather than another checklist. Lines are
+   rewritten in place by bootMask(), one at a time, every ~300-500ms. */
+.boot_mask_feed {
+    display: flex;
+    flex-direction: column;
+    gap: .35vh;
+    font-size: .72vh;
+    letter-spacing: .14em;
+    font-variant-numeric: tabular-nums;
+    color: rgba(var(--color_r), var(--color_g), var(--color_b), .26);
+}
+.bf_row {
+    display: flex;
+    gap: 1vh;
+    white-space: nowrap;
+    overflow: hidden;
+}
+.bf_row span {
+    flex: 0 0 4.2vh;
+    color: rgba(var(--color_r), var(--color_g), var(--color_b), .38);
+}
+.bf_row b {
+    font-weight: 400;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 /* Status rows: pending ones sit dim with the dotted leader already drawn, then
    brighten and print their state word as each stage completes. This is what
    turns the wait into an auth sequence instead of a spinner. */

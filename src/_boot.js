@@ -962,8 +962,19 @@ app.on('ready', async () => {
     // ---- Offline voice input (sherpa-onnx + a streaming Chinese model) ----
     // The renderer captures the mic (16 kHz mono Float32), streams chunks here
     // for recognition, and inserts the final text into the focused terminal.
-    let voiceRecognizer = null;
-    let voiceStream = null;
+    // v2.4.64: the recognizer now lives in a worker thread (see
+    // VOICE_WORKER_SRC). `new sherpa.OnlineRecognizer()` is ~12 s of
+    // *synchronous* CPU on the main process; that froze frame production and
+    // queued keystrokes during boot — the reported "passcode screen appears,
+    // then ignores you for 5 s". Off the main thread the same load costs the
+    // UI nothing (measured on the appliance: 7.2 s load, main-thread timer
+    // drift 1 ms).
+    let voiceWorker = null;
+    let voiceState = "idle"; // idle | loading | ready | failed
+    let voiceError = "";
+    let voiceInitWaiters = [];
+    let voiceCtrl = null; // {type: "start"|"stop", resolve}
+    let voiceSender = null; // webContents currently streaming audio
     // #158 debug: append-only log in userData so TTS/voice failure points are
     // auditable on the laptop without console access. Always a no-op on
     // failure, never throws. The renderer forwards its own logs via "dbg-log".
@@ -993,83 +1004,198 @@ app.on('ready', async () => {
             for (const base of bases) candidates.push(path.join(base, name));
         return candidates.find(p => fs.existsSync(path.join(p, "tokens.txt"))) || null;
     };
-    // #158: recognizer construction is synchronous (~10s) — extracted so a
-    // background warm-up at boot (see ready-callback tail) can pre-load it and
-    // the first mic press doesn't freeze the main process. Lazy paths below
-    // (voice:init, warm-up failure) all retry through here.
-    const ensureVoiceRecognizer = () => {
-        try {
-            if (voiceRecognizer) return { ok: true };
-            const sherpa = require("sherpa-onnx-node");
-            const dir = voiceModelDirs();
-            if (!dir) return { ok: false, error: "voice model not found" };
-            const pick = (k) => fs.readdirSync(dir).find(f => f.includes(k) && f.endsWith(".onnx"));
-            const encoder = pick("encoder"), decoder = pick("decoder"), joiner = pick("joiner");
-            if (!encoder || !decoder || !joiner) return { ok: false, error: "model files missing" };
-            const t0 = Date.now();
-            voiceRecognizer = new sherpa.OnlineRecognizer({
-                featConfig: { sampleRate: 16000, featureDim: 80 },
-                modelConfig: {
-                    transducer: {
-                        encoder: path.join(dir, encoder),
-                        decoder: path.join(dir, decoder),
-                        joiner: path.join(dir, joiner)
-                    },
-                    tokens: path.join(dir, "tokens.txt"),
-                    numThreads: 2,
-                    provider: "cpu",
-                    debug: 0
-                },
-                decodingMethod: "greedy_search"
-            });
-            dbgLog("ASR load " + (Date.now() - t0) + "ms");
-            signale.success("Voice recognizer ready (offline ASR)");
-            return { ok: true };
-        } catch (e) {
-            return { ok: false, error: String((e && e.message) || e) };
+    // The worker is self-contained (no Electron APIs): it requires sherpa,
+    // builds the recognizer from the paths in workerData, and owns the live
+    // stream. Protocol: ready / init-failed → started / start-failed →
+    // partial (repeatable) → final (or final with an `error`).
+    const VOICE_WORKER_SRC = `
+const { parentPort, workerData } = require("worker_threads");
+let recognizer = null, stream = null;
+const send = m => parentPort.postMessage(m);
+
+try {
+    const sherpa = require(workerData.pkg);
+    const t0 = Date.now();
+    recognizer = new sherpa.OnlineRecognizer({
+        featConfig: { sampleRate: 16000, featureDim: 80 },
+        modelConfig: {
+            transducer: {
+                encoder: workerData.encoder,
+                decoder: workerData.decoder,
+                joiner: workerData.joiner
+            },
+            tokens: workerData.tokens,
+            numThreads: 2,
+            provider: "cpu",
+            debug: 0
+        },
+        decodingMethod: "greedy_search"
+    });
+    send({ type: "ready", ms: Date.now() - t0 });
+} catch (e) {
+    send({ type: "init-failed", error: String((e && e.message) || e) });
+}
+
+parentPort.on("message", m => {
+    if (!recognizer) return;
+    try {
+        if (m.type === "start") {
+            stream = recognizer.createStream();
+            send({ type: "started" });
+        } else if (m.type === "chunk" && stream) {
+            const samples = m.samples instanceof Float32Array ? m.samples : new Float32Array(m.samples);
+            stream.acceptWaveform({ samples, sampleRate: 16000 });
+            while (recognizer.isReady(stream)) recognizer.decode(stream);
+            const r = recognizer.getResult(stream);
+            if (r && r.text) send({ type: "partial", text: r.text });
+        } else if (m.type === "stop") {
+            if (!stream) { send({ type: "final", text: "" }); return; }
+            stream.inputFinished();
+            while (recognizer.isReady(stream)) recognizer.decode(stream);
+            const r = recognizer.getResult(stream);
+            const text = (r && r.text) || "";
+            stream = null;
+            send({ type: "final", text });
+        }
+    } catch (e) {
+        const error = String((e && e.message) || e);
+        if (m.type === "start") send({ type: "start-failed", error });
+        else if (m.type === "stop") { stream = null; send({ type: "final", error }); }
+    }
+});
+`;
+    // A worker thread gets no asar fs patch in Electron, so sherpa-onnx-node
+    // must be required from the unpacked copy next to app.asar (the build
+    // config's asarUnpack keeps it there). A dev run (`electron src/`) has a
+    // plain directory and passes through untouched.
+    const voicePkgPath = () => {
+        const p = require.resolve("sherpa-onnx-node");
+        return p.includes("app.asar") ? p.replace("app.asar", "app.asar.unpacked") : p;
+    };
+
+    const settleVoiceInit = r => {
+        const waiters = voiceInitWaiters;
+        voiceInitWaiters = [];
+        for (const fn of waiters) { try { fn(r); } catch (e) {} }
+    };
+    const settleVoiceCtrl = r => {
+        const c = voiceCtrl;
+        voiceCtrl = null;
+        if (c) { try { c.resolve(r); } catch (e) {} }
+    };
+
+    const onVoiceWorkerMessage = m => {
+        if (!m || !m.type) return;
+        if (m.type === "ready") {
+            voiceState = "ready";
+            dbgLog("ASR load " + m.ms + "ms (worker)");
+            signale.success("Voice recognizer ready (offline ASR, worker)");
+            settleVoiceInit({ ok: true });
+        } else if (m.type === "init-failed") {
+            voiceState = "failed";
+            voiceError = m.error || "recognizer failed";
+            dbgLog("ASR worker init failed: " + voiceError);
+            settleVoiceInit({ ok: false, error: voiceError });
+        } else if (m.type === "started") {
+            settleVoiceCtrl({ ok: true });
+        } else if (m.type === "start-failed") {
+            settleVoiceCtrl({ ok: false, error: m.error });
+        } else if (m.type === "partial") {
+            // Back to the window that is actually recording: with one window
+            // per display, sending to `win` typed screen 1's dictation into
+            // screen 2's focused terminal.
+            try { if (voiceSender && !voiceSender.isDestroyed()) voiceSender.send("voice:partial", m.text); } catch (e) {}
+        } else if (m.type === "final") {
+            const text = String(m.text || "");
+            dbgLog("voice:stop text=" + JSON.stringify(text.slice(0, 40)) + " len=" + text.length);
+            settleVoiceCtrl(m.error ? { ok: false, error: m.error } : { ok: true, text });
+        } else if (m.type === "final-failed") {
+            settleVoiceCtrl({ ok: false, error: m.error });
         }
     };
-    ipc.handle("voice:init", () => ensureVoiceRecognizer());
-    ipc.handle("voice:start", () => {
-        if (!voiceRecognizer) { dbgLog("voice:start SKIP not-init"); return { ok: false, error: "not initialized" }; }
-        voiceStream = voiceRecognizer.createStream();
-        dbgLog("voice:start stream created");
-        return { ok: true };
-    });
-    ipc.on("voice:chunk", (e, samples) => {
-        // NB: this MUST be ipc.on (not ipc.handle) — the renderer streams audio
-        // via ipcRenderer.send (fire-and-forget, ~4×/s). handle only answers
-        // invoke, so every chunk was silently dropped and the recognizer stayed
-        // empty (voice input "did nothing" while init/start/stop all worked).
-        if (!voiceRecognizer || !voiceStream || !samples) return;
+
+    const startVoiceWorker = () => {
+        if (voiceWorker || voiceState !== "idle") return;
+        voiceState = "loading";
+        const dir = voiceModelDirs();
+        const pick = k => dir && fs.readdirSync(dir).find(f => f.includes(k) && f.endsWith(".onnx"));
+        const encoder = pick("encoder"), decoder = pick("decoder"), joiner = pick("joiner");
+        const fail = (error) => {
+            voiceState = "failed";
+            voiceError = error;
+            dbgLog("ASR worker init failed: " + error);
+            settleVoiceInit({ ok: false, error });
+        };
+        if (!dir) return fail("voice model not found");
+        if (!encoder || !decoder || !joiner) return fail("model files missing");
+        let pkg;
+        try { pkg = voicePkgPath(); } catch (e) { return fail(String((e && e.message) || e)); }
         try {
-            voiceStream.acceptWaveform({ samples: new Float32Array(samples), sampleRate: 16000 });
-            while (voiceRecognizer.isReady(voiceStream)) voiceRecognizer.decode(voiceStream);
-            const r = voiceRecognizer.getResult(voiceStream);
-            if (r && r.text) {
-                // Back to the window that is actually recording: with one window
-                // per display, sending to `win` typed screen 1's dictation into
-                // screen 2's focused terminal.
-                try { e.sender.send("voice:partial", r.text); } catch (e2) {}
-            }
-        } catch (e) {}
-    });
-    ipc.handle("voice:stop", () => {
-        if (!voiceRecognizer || !voiceStream) return { ok: true, text: "" };
-        try {
-            voiceStream.inputFinished();
-            while (voiceRecognizer.isReady(voiceStream)) voiceRecognizer.decode(voiceStream);
-            const r = voiceRecognizer.getResult(voiceStream);
-            const text = (r && r.text) || "";
-            voiceStream = null;
-            dbgLog("voice:stop text=" + JSON.stringify(text.slice(0, 40)) + " len=" + text.length);
-            return { ok: true, text };
+            const {Worker} = require("worker_threads");
+            voiceWorker = new Worker(VOICE_WORKER_SRC, {
+                eval: true,
+                workerData: {
+                    pkg,
+                    encoder: path.join(dir, encoder),
+                    decoder: path.join(dir, decoder),
+                    joiner: path.join(dir, joiner),
+                    tokens: path.join(dir, "tokens.txt")
+                }
+            });
+            voiceWorker.on("message", onVoiceWorkerMessage);
+            voiceWorker.on("error", e => {
+                voiceState = "failed";
+                voiceError = String((e && e.message) || e);
+                dbgLog("ASR worker error: " + voiceError);
+                settleVoiceInit({ ok: false, error: voiceError });
+                settleVoiceCtrl({ ok: false, error: voiceError });
+            });
+            voiceWorker.on("exit", code => {
+                if (voiceState === "ready" || voiceState === "loading") {
+                    voiceState = "failed";
+                    voiceError = "worker exited (" + code + ")";
+                    dbgLog("ASR worker exited: " + voiceError);
+                    settleVoiceInit({ ok: false, error: voiceError });
+                    settleVoiceCtrl({ ok: false, error: voiceError });
+                }
+                voiceWorker = null;
+            });
         } catch (e) {
-            voiceStream = null;
-            dbgLog("voice:stop FAIL " + String((e && e.message) || e));
-            return { ok: false, error: String((e && e.message) || e) };
+            fail(String((e && e.message) || e));
         }
+    };
+
+    ipc.handle("voice:init", () => new Promise(resolve => {
+        if (voiceState === "ready") return resolve({ ok: true });
+        if (voiceState === "failed") return resolve({ ok: false, error: voiceError });
+        voiceInitWaiters.push(resolve);
+        startVoiceWorker();
+    }));
+    ipc.handle("voice:start", () => new Promise(resolve => {
+        if (voiceState !== "ready" || !voiceWorker) {
+            dbgLog("voice:start SKIP not-init");
+            return resolve({ ok: false, error: "not initialized" });
+        }
+        voiceCtrl = { type: "start", resolve };
+        voiceWorker.postMessage({ type: "start" });
+    }));
+    // NB: this MUST be ipc.on (not ipc.handle) — the renderer streams audio
+    // via ipcRenderer.send (fire-and-forget, ~4×/s). handle only answers
+    // invoke, so every chunk was silently dropped and the recognizer stayed
+    // empty (voice input "did nothing" while init/start/stop all worked).
+    ipc.on("voice:chunk", (e, samples) => {
+        if (voiceState !== "ready" || !voiceWorker || !samples) return;
+        voiceSender = e.sender;
+        try {
+            const arr = new Float32Array(samples);
+            voiceWorker.postMessage({ type: "chunk", samples: arr }, [arr.buffer]);
+        } catch (e2) {}
     });
+    ipc.handle("voice:stop", () => new Promise(resolve => {
+        if (voiceState !== "ready" || !voiceWorker) return resolve({ ok: true, text: "" });
+        voiceCtrl = { type: "stop", resolve };
+        voiceWorker.postMessage({ type: "stop" });
+    }));
 
     // ---- WiFi (NetworkManager) — the simple-connect panel ----
     const execFile = require("child_process").execFile;
@@ -4281,15 +4407,13 @@ status();
 
     initAdBlocker();
 
-    // #158: pre-load the offline ASR + TTS engines in the background a few
-    // seconds after startup, so the FIRST mic press doesn't block the main
-    // process for ~10s (OnlineRecognizer construction is synchronous) and the
-    // first spoken reply doesn't pay model-load latency. A warm-up failure is
-    // harmless — ensureVoiceRecognizer()/ttsInit() lazily retry on demand, and
-    // the recognizer freezes the main process either way (just shifted to a
-    // predictable early-boot window instead of the first interaction).
-    setTimeout(() => { try { ensureVoiceRecognizer(); } catch (e) {} }, 4000);
-    setTimeout(() => { try { ttsInit(); } catch (e) {} }, 6000);
+    // #158 (v2.4.64): the ASR recognizer is built in a worker thread now, so a
+    // 1 s warm-up costs the UI nothing (it used to block the main process for
+    // ~12 s four seconds into boot, which is exactly when the passcode panel
+    // appears). TTS is a real async (libuv) load; it is pushed back so its
+    // 4-thread model load doesn't compete with the boot sequence.
+    setTimeout(() => { try { startVoiceWorker(); } catch (e) {} }, 1000);
+    setTimeout(() => { try { ttsInit(); } catch (e) {} }, 14000);
 });
 
 app.on('web-contents-created', (e, contents) => {

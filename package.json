@@ -44,6 +44,9 @@
     "productName": "eDEX-UI",
     "publish": "github",
     "asar": true,
+    "asarUnpack": [
+      "node_modules/sherpa-onnx-*/**"
+    ],
     "compression": "normal",
     "copyright": "Copyright © 2017-2021 Gabriel 'Squared' SAILLARD <gabriel@saillard.dev> (https://gaby.dev)",
     "directories": {

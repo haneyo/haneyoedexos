@@ -1099,14 +1099,20 @@ if (window.settings.nointro || window.settings.nointroOverride || !window.__scre
 
 // The sheet that bridges the log and the passcode panel. It comes up half a
 // second after the last log line (BOOT_MASK_DELAY — just enough to read it, no
-// more) and runs a fixed 3.6 s sequence. That length is deliberate: the panel
-// cannot accept a passcode until the fonts land (building it earlier lets the
-// webfont swap re-flow the field under the first keystrokes), and on this
-// appliance that gap is always a few seconds. The sequence is what covers it —
-// and it only starts fading once the panel underneath really exists, so "the
-// sheet is done" and "you can type" stay the same moment.
+// more) and runs a per-boot random sequence (5.2–8.4 s of *visible* time). The
+// length is never the thing that decides when you can type: the panel cannot
+// accept a passcode until the fonts land (building it earlier lets the webfont
+// swap re-flow the field under the first keystrokes), and the sheet only
+// starts fading once the panel underneath really exists and the window is
+// actually producing frames and routed keys — so "the sheet is done" and "you
+// can type" stay the same moment, whatever the boot was doing.
 const BOOT_MASK_DELAY = 500;
-const BOOT_MASK_MIN_SHOW = 3600;
+const BOOT_MASK_MIN_MS = 5200;
+const BOOT_MASK_MAX_MS = 8400;
+// Absolute ceiling on visible sheet time: if frames never settle or the window
+// never reports focus, the sheet still leaves once the panel exists (a sheet
+// pinned forever over a usable panel is worse than a slightly rough fade).
+const BOOT_MASK_HARD_CAP = 15000;
 
 // Idempotent: create the "sheet is on screen" promise and queue its insertion
 // BOOT_MASK_DELAY after the last log line.
@@ -1124,52 +1130,121 @@ function bootMask() {
     }
     const mask = document.createElement("div");
     mask.id = "boot_mask";
-    // Endfield-style auth readout: a hairline label block, three status rows that
-    // resolve one by one, and a segmented handshake bar. It reads as the boot
-    // sequence finishing rather than as a spinner, which is the point — it is
-    // covering the seconds before the passcode field can take input. "SYSTEM
-    // LOCKED" is the lock panel's own title, so the crossfade reads as the same
-    // screen settling rather than a swap.
+    // Endfield-style auth readout: a hairline label block, a live cipher feed,
+    // five status rows that resolve one by one, and a segmented handshake bar.
+    // It reads as the boot sequence finishing rather than as a spinner, which is
+    // the point — it is covering the seconds before the passcode field can take
+    // input. "SYSTEM LOCKED" is the lock panel's own title, so the crossfade
+    // reads as the same screen settling rather than a swap.
     mask.innerHTML = `
         <div class="boot_mask_core">
             <div class="boot_mask_label">SYSTEM LOCKED</div>
+            <div class="boot_mask_feed">
+                <div class="bf_row"><span>KEY</span><b></b></div>
+                <div class="bf_row"><span>PKT</span><b></b></div>
+                <div class="bf_row"><span>MAC</span><b></b></div>
+                <div class="bf_row"><span>HASH</span><b></b></div>
+            </div>
             <div class="boot_mask_log">
-                <div class="bl_row" data-at="600"><span>SECURE CHANNEL</span><i></i><b>STABLE</b></div>
-                <div class="bl_row" data-at="1600"><span>KEYSTORE SYNC</span><i></i><b>OK</b></div>
-                <div class="bl_row" data-at="2600"><span>AUTH GATE</span><i></i><b>ARMED</b></div>
+                <div class="bl_row" data-at="12"><span>SECURE CHANNEL</span><i></i><b>STABLE</b></div>
+                <div class="bl_row" data-at="32"><span>KEYSTORE SYNC</span><i></i><b>OK</b></div>
+                <div class="bl_row" data-at="54"><span>COMM RELAY</span><i></i><b>ENCRYPTED</b></div>
+                <div class="bl_row" data-at="76"><span>AUTH GATE</span><i></i><b>ARMED</b></div>
+                <div class="bl_row" data-at="92"><span>CIPHER SUITE</span><i></i><b>SEALED</b></div>
             </div>
             <div class="boot_mask_bar">${"<i></i>".repeat(26)}</div>
-            <div class="boot_mask_meta"><span>HANDSHAKE</span><span id="boot_mask_pct">000</span></div>
+            <div class="boot_mask_meta"><span id="boot_mask_stage">HANDSHAKE</span><span id="boot_mask_pct">000</span></div>
         </div>`;
     if (window.__bootDbg) window.__bootDbg.maskPre = Math.round(performance.now());
     document.body.appendChild(mask);
     if (window._bootMaskShownResolve) window._bootMaskShownResolve();
     if (window.__bootDbg) window.__bootDbg.maskPost = Math.round(performance.now());
-    // The rule fills off one clock that ends exactly when the sheet is allowed
-    // to leave, so "100 / done" is the reveal. Writes happen once per whole
-    // percent on one text node, plus one class flip per segment — cheap enough
-    // to never compete with the UI building up behind it.
+    // Progress is driven by a schedule rolled fresh on every boot: alternating
+    // stalls, bursts and slow creep instead of one fixed rate, so the readout
+    // behaves like a machine working through a cipher. Each segment owns a
+    // duration and a weight ("progress earned"); weights are normalised by the
+    // run's total, so the sequence lands exactly on 100 at `total` however it
+    // was paced. One array walk per frame — cheap enough to sit next to the UI
+    // building up behind the sheet.
     //
-    // The clock counts *visible* time only. On a cold start the X session can
-    // keep the window unmapped for several seconds right after the log ends
+    // Everything below counts *visible* time only. On a cold start the X session
+    // can keep the window unmapped for several seconds right after the log ends
     // (measured: 9 s), and both setTimeout and performance.now() keep running
     // through that — a wall-clock fill would burn its whole budget off-screen
     // and then pop the keypad the instant the window appeared. Spending the
     // budget at rAF time means the animation starts when the user can see it.
+    const total = BOOT_MASK_MIN_MS + Math.random() * (BOOT_MASK_MAX_MS - BOOT_MASK_MIN_MS);
+    const schedule = [];
+    {
+        let remain = total;
+        while (remain > 80) {
+            const r = Math.random();
+            let d, w;
+            if (r < 0.30) { d = 260 + Math.random() * 900; w = 1 + Math.random() * 4; }       // stall
+            else if (r < 0.66) { d = 120 + Math.random() * 320; w = 12 + Math.random() * 22; } // burst
+            else { d = 380 + Math.random() * 900; w = 3 + Math.random() * 9; }                 // creep
+            d = Math.min(d, remain);
+            schedule.push({d, w});
+            remain -= d;
+        }
+        if (remain > 0) schedule.push({d: remain, w: 8});
+    }
+    const weight = schedule.reduce((a, s) => a + s.w, 0);
+    const progressAt = t => {
+        if (t >= total) return 1;
+        let acc = 0, left = t;
+        for (const s of schedule) {
+            if (left <= s.d) return (acc + s.w * (left / s.d)) / weight;
+            acc += s.w;
+            left -= s.d;
+        }
+        return 1;
+    };
+
     const pct = mask.querySelector("#boot_mask_pct");
+    const stageEl = mask.querySelector("#boot_mask_stage");
     const rows = Array.from(mask.querySelectorAll(".bl_row"));
+    // Each row resolves at a slightly jittered percentage of the run, so the
+    // stages never print at the same moments twice.
+    for (const row of rows) {
+        row.dataset.at = String(Math.max(4, Math.min(97, Number(row.dataset.at) + Math.random() * 8 - 4)));
+    }
     const segs = Array.from(mask.querySelectorAll(".boot_mask_bar i"));
+    const stageWords = ["HANDSHAKE", "KEY EXCHANGE", "DECRYPTING", "VERIFYING", "CIPHER SYNC"];
+    // Cipher feed: four running hex channels, one rewritten every 280–520 ms of
+    // visible time. Only the changed line is touched, so the sheet's own paint
+    // cost stays flat.
+    const feedRows = Array.from(mask.querySelectorAll(".bf_row b"));
+    const hexByte = () => Math.floor(Math.random() * 256).toString(16).toUpperCase().padStart(2, "0");
+    const hexLine = () => {
+        const out = [];
+        for (let i = 0; i < 8; i++) out.push(hexByte());
+        return out.join(" ");
+    };
+    feedRows.forEach(b => { b.textContent = hexLine(); });
+    let nextFeed = 0, lastStage = -1;
     let spent = 0, last = performance.now(), lastPct = -1, lastFilled = -1, leaving = false;
+    let healthy = 0;
     let panelReady = false;
     (window._bootMaskReady || Promise.resolve()).then(() => { panelReady = true; });
     const onVisibility = () => { last = performance.now(); };
     document.addEventListener("visibilitychange", onVisibility);
+    // The panel fades up through the sheet instead of appearing behind it the
+    // instant the backdrop clears.
+    const leave = () => {
+        leaving = true;
+        const panel = document.querySelector("#lock_screen .lock_panel");
+        if (panel) panel.classList.add("boot_panel_in");
+        mask.classList.add("boot_mask_out");
+        setTimeout(() => mask.remove(), 500);
+    };
     const readout = () => {
         if (!mask.isConnected) {
             document.removeEventListener("visibilitychange", onVisibility);
             return;
         }
         const now = performance.now();
+        const dt = now - last;
         // TEMP-DEBUG: how long after insertion the first painted frame lands —
         // this is the style/layout/paint cost of the mask itself.
         if (window.__bootDbg) {
@@ -1179,40 +1254,60 @@ function bootMask() {
             }
             if (window.__bootDbg.maskFrames.length < 8) window.__bootDbg.maskFrames.push(Math.round(now));
         }
-        if (!document.hidden) spent += now - last;
-        last = now;
-        // The three status rows resolve on marks of *visible* time, so the
-        // sequence always plays out in full even if the renderer was parked.
-        for (const row of rows) {
-            if (!row.classList.contains("on") && spent >= Number(row.dataset.at)) row.classList.add("on");
+        if (!document.hidden) {
+            // A gap this large is the compositor/UI thread stalling, not the
+            // sheet's own timeline. Charging it to `spent` would burn the whole
+            // budget off-screen and pop the sheet the moment frames resume, so
+            // cap what a single frame can consume. `healthy` counts consecutive
+            // normally-paced frames — a stalled window cannot take keys either,
+            // so the sheet must not leave until that recovers.
+            spent += Math.min(dt, 250);
+            healthy = dt < 120 ? healthy + 1 : 0;
+        } else {
+            healthy = 0;
         }
-        // The segmented bar fills over the whole run, and holds just short of
-        // full while the panel is still being built: a bar parked on 100 with
-        // nothing happening reads as a hang.
-        const p = Math.min(panelReady ? 1 : 0.96, spent / BOOT_MASK_MIN_SHOW);
+        last = now;
+        if (spent >= nextFeed) {
+            nextFeed = spent + 280 + Math.random() * 240;
+            feedRows[Math.floor(Math.random() * feedRows.length)].textContent = hexLine();
+        }
+        // The bar holds just short of full while the panel is still being built:
+        // a readout parked on 100 with nothing happening reads as a hang.
+        const p = Math.min(panelReady ? 1 : 0.96, progressAt(spent));
         const n = Math.floor(p * 100);
         if (n !== lastPct) {
             lastPct = n;
             pct.textContent = String(n).padStart(3, "0");
+            const stage = Math.min(stageWords.length - 1, Math.floor(p * stageWords.length));
+            if (stage !== lastStage) {
+                lastStage = stage;
+                stageEl.textContent = stageWords[stage];
+            }
+        }
+        // Status rows resolve on marks of progress, so they always play out in
+        // full even if the renderer was parked mid-run.
+        const sc = p * 100;
+        for (const row of rows) {
+            if (!row.classList.contains("on") && sc >= Number(row.dataset.at)) row.classList.add("on");
         }
         const filled = Math.round(p * segs.length);
         if (filled !== lastFilled) {
             lastFilled = filled;
             segs.forEach((s, k) => s.classList.toggle("on", k < filled));
         }
-        // Leave only once the sheet has had its full run AND the panel is built
-        // underneath; the extra 8 s of *visible* time is the "never pin the
-        // screen" guard for a font load that never finishes. It is deliberately
-        // generous: this sequence exists to cover a slow font load, so leaving
-        // before the panel exists would be worse than holding a little longer.
-        if (!leaving && spent >= BOOT_MASK_MIN_SHOW && (panelReady || spent >= BOOT_MASK_MIN_SHOW + 8000)) {
-            leaving = true;
-            // The panel fades up through the sheet instead of appearing behind
-            // it the instant the backdrop clears.
-            const panel = document.querySelector("#lock_screen .lock_panel");
-            if (panel) panel.classList.add("boot_panel_in");
-            mask.classList.add("boot_mask_out");
-            setTimeout(() => mask.remove(), 500);
+        // Leave only once the sheet has had its full visible run, the panel is
+        // built underneath, the window really has focus (X maps the window
+        // before it routes keys), and the last frames came at a normal rate.
+        // Anything less and the user reaches a dead passcode field again.
+        if (!leaving && panelReady && spent >= total &&
+            document.hasFocus() && healthy >= 3) {
+            leave();
+            return;
+        }
+        // Bounded guard so a window that never reports focus / never settles
+        // cannot pin the sheet over a live panel forever.
+        if (!leaving && spent >= BOOT_MASK_HARD_CAP) {
+            leave();
             return;
         }
         requestAnimationFrame(readout);
