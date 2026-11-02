@@ -58,41 +58,85 @@ if (!gotLock) {
 }
 
 // Sweep orphaned processes from a PREVIOUS eDEX session. lightdm restarting
-// kills the AppImage wrapper, but the FUSE-mounted tree can survive with PPID 1
-// and squat the appmonitor ports (6080/6081…), answering HTTP with stale or
-// partial responses — which tripped Node's llhttp parser assert and, before the
-// recoverable-assertion handling above, killed the whole UI at boot. Only
-// processes from a DIFFERENT AppImage mount are touched; the current session's
-// own tree (same mount) and a live second instance (already excluded by the
-// single-instance lock) are left alone.
+// kills the X session but does not always collect the app: the main process and
+// its appmonitor child survive with PPID 1, keep the debug port (9222) and the
+// monitor ports (6080/6081…) bound, and answer them with a socket that no longer
+// has a live handler — CDP curls hang, and the next session cannot bind its own
+// port. The previous version only matched AppImage FUSE mounts
+// (`/tmp/.mount_eDEX-*`), which is empty on the extracted-tree deployment
+// (`/opt/edex/squashfs-root/edex-ui`) — so on that appliance nothing was ever
+// cleaned. The rule is now path-agnostic: anything running the eDEX binary that
+// is neither this process nor one of its ancestors/descendants is a leftover.
+// The single-instance lock above already excludes a legitimate second instance.
 try {
     const cp = require("child_process");
-    const ownMount = String(process.execPath).match(/(\/tmp\/\.mount_eDEX-[^/]+)\//);
-    const procs = cp.execSync("ps -eo pid,args 2>/dev/null || true").toString().split("\n");
+    const rows = cp.execSync("ps -eo pid,ppid,args 2>/dev/null || true").toString().split("\n");
+    const table = new Map();
+    for (const line of rows) {
+        const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
+        if (m) table.set(m[1], {ppid: m[2], args: m[3]});
+    }
+    const self = String(process.pid);
+    // Children must be resolved through the real ppid links. Walking *up* from
+    // every pid and treating "reaches an ancestor" as "is a descendant" made
+    // everything under init look like ours (init is an ancestor of this process),
+    // so the sweep found nothing.
+    const kidsOf = new Map();
+    for (const [pid, row] of table) {
+        if (!kidsOf.has(row.ppid)) kidsOf.set(row.ppid, []);
+        kidsOf.get(row.ppid).push(pid);
+    }
+    const keep = new Set([self]);
+    // ancestors
+    for (let p = self, hops = 0; table.has(p) && hops++ < 20;) {
+        const par = table.get(p).ppid;
+        if (!par || keep.has(par)) break;
+        keep.add(par);
+        p = par;
+    }
+    // descendants
+    const queue = [self];
+    while (queue.length) {
+        const cur = queue.pop();
+        for (const k of (kidsOf.get(cur) || [])) {
+            if (!keep.has(k)) { keep.add(k); queue.push(k); }
+        }
+    }
+    const looksEdex = args => /\/edex-ui\b/.test(args)
+        && (/\/squashfs-root\//.test(args) || /\.mount_eDEX-/.test(args) || /app\.asar/.test(args));
     const orphans = [];
-    for (const line of procs) {
-        const m = line.match(/^\s*(\d+)\s+(\S+\.mount_eDEX-[^/\s]+)\//);
-        if (m && String(m[2]) !== (ownMount && ownMount[1])) orphans.push(m[1]);
+    for (const [pid, row] of table) {
+        if (!keep.has(pid) && looksEdex(row.args)) orphans.push(pid);
     }
     if (orphans.length) {
         signale.warn(`[cleanup] killing ${orphans.length} orphaned process(es) from a previous eDEX session`);
-        cp.execSync(`kill -9 ${orphans.join(" ")} 2>/dev/null || true`);
+        cp.execSync(`kill -9 ${orphans.join(" ")} 2>/dev/null || true`, {stdio: "ignore"});
     }
 } catch (e) {}
 
 // Kill every child of this process tree (renderer, appmonitor server, tty
 // helpers, …) on quit/crash so repeated restarts/relaunches do NOT leave orphan
-// processes that pile up and eat RAM/CPU (the "越用越卡" accumulation).
+// processes that pile up and eat RAM/CPU (the "越用越卡" accumulation). The old
+// version joined every pid of a level into one `pgrep -P "a b"` call, which
+// matches nothing, so only the first level ever died. Walk each pid individually
+// and SIGKILL: nothing in this tree has state worth draining at exit.
 function _killChildTree(){
     try {
         const cp = require("child_process");
-        let cur = String(process.pid);
-        for (let depth = 0; depth < 5; depth++) {
-            const kids = cp.execSync("pgrep -P " + cur + " 2>/dev/null || true").toString().trim();
-            if (!kids) break;
-            cp.execSync("pkill -TERM -P " + cur + " 2>/dev/null || true", { stdio: "ignore" });
-            cur = kids.split(/\s+/).filter(Boolean).join(" ");
+        const kids = [];
+        let level = [String(process.pid)];
+        for (let depth = 0; depth < 6; depth++) {
+            const next = [];
+            for (const p of level) {
+                let out = "";
+                try { out = cp.execSync("pgrep -P " + p + " 2>/dev/null || true").toString(); } catch (e) {}
+                for (const k of out.split(/\s+/)) { if (k) next.push(k); }
+            }
+            if (!next.length) break;
+            for (const k of next) kids.push(k);
+            level = next;
         }
+        if (kids.length) cp.execSync("kill -9 " + kids.join(" ") + " 2>/dev/null || true", {stdio: "ignore"});
     } catch (e) {}
 }
 app.on("will-quit", () => _killChildTree());
@@ -3613,6 +3657,21 @@ status();
     // (which fire outside DOM keydown — a lock screen cannot intercept them)
     // stay inert while the screen is locked or the first-boot setup is up.
     ipc.on("edex-lock-state", (e, locked) => { global.__edexLocked = !!locked; });
+    // Renderer-side replacement for require("@electron/remote").getCurrentWindow()
+    // .focus(): those are synchronous IPC, and when the renderer asks during boot
+    // the browser process is still busy, so the whole renderer thread parks for
+    // seconds. Answering this message asynchronously keeps the boot mask animating
+    // and the passcode field live; the lock panel already binds keys at document
+    // level, so focus arriving a beat later loses no keystrokes.
+    ipc.on("edex-focus-window", (e) => {
+        const w = BrowserWindow.fromWebContents(e.sender);
+        if (!w || w.isDestroyed()) return;
+        try {
+            w.show();
+            w.focus();
+            if (w.webContents) w.webContents.focus();
+        } catch (err) {}
+    });
 
     // Open the WiFi connect panel.
     try {

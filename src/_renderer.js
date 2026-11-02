@@ -475,6 +475,7 @@ ipc.on("settings:changed", (e, s) => {
     if (window.applyLangHiding) window.applyLangHiding();
     if (s.theme && s.theme !== prevTheme) {
         try { _loadTheme(require(path.join(themesDir, s.theme + ".json"))); } catch (err) {}
+        if (window._refreshThemeConsumers) window._refreshThemeConsumers();
     }
     // Terminal cell size depends on settings; re-fit every live terminal.
     Object.keys(window.term || {}).forEach(k => {
@@ -674,26 +675,34 @@ window._refreshCursor = () => {
 
 // Load UI theme
 window._loadTheme = theme => {
+    // Remember the accent we are leaving so _refreshThemeConsumers can rewrite
+    // the few places that bake it into an attribute (file-browser icons, media
+    // controls) — those are the only ones CSS variables cannot reach.
+    window._prevAccent = (window.theme && window.theme.r != null)
+        ? `rgb(${window.theme.r}, ${window.theme.g}, ${window.theme.b})` : null;
     window.theme = theme;
     window.theme.r = theme.colors.r;
     window.theme.g = theme.colors.g;
     window.theme.b = theme.colors.b;
-
-    if (document.querySelector("style.theming")) {
-        document.querySelector("style.theming").remove();
-    }
 
     // Load fonts
     let mainFont = new FontFace(theme.cssvars.font_main, `url("${path.join(fontsDir, theme.cssvars.font_main.toLowerCase().replace(/ /g, '_')+'.woff2').replace(/\\/g, '/')}")`);
     let lightFont = new FontFace(theme.cssvars.font_main_light, `url("${path.join(fontsDir, theme.cssvars.font_main_light.toLowerCase().replace(/ /g, '_')+'.woff2').replace(/\\/g, '/')}")`);
     let termFont = new FontFace(theme.terminal.fontFamily, `url("${path.join(fontsDir, theme.terminal.fontFamily.toLowerCase().replace(/ /g, '_')+'.woff2').replace(/\\/g, '/')}")`);
 
-    document.fonts.add(mainFont);
-    document.fonts.load("12px "+theme.cssvars.font_main);
-    document.fonts.add(lightFont);
-    document.fonts.load("12px "+theme.cssvars.font_main_light);
-    document.fonts.add(termFont);
-    document.fonts.load("12px "+theme.terminal.fontFamily);
+    // _loadTheme also runs on a live theme switch, so only register a face once
+    // (a family always resolves to the same .woff2 here) — otherwise every
+    // switch would pile another copy onto document.fonts.
+    const _addFace = face => {
+        try {
+            for (const f of document.fonts) if (f.family === face.family) return;
+        } catch (e) {}
+        document.fonts.add(face);
+        document.fonts.load("12px " + face.family);
+    };
+    _addFace(mainFont);
+    _addFace(lightFont);
+    _addFace(termFont);
 
     // The wallpaper lives in theme.injectCSS as a huge body{background-image}
     // data-URI rule. The previous "defer wallpaper until after the boot lock"
@@ -708,7 +717,16 @@ window._loadTheme = theme => {
     const inject = theme.injectCSS || "";
     window._deferredWallpaper = null;
 
-    document.querySelector("head").innerHTML += `<style class="theming">
+    // Build the new sheet and swap it in as a node. The old code did
+    // `head.innerHTML += …`, which re-parses the whole <head> — every <link>
+    // stylesheet is re-fetched, so the UI flickers unstyled for a moment and a
+    // live theme switch would visibly tear. Appending first and only then
+    // dropping the previous <style class="theming"> keeps the cascade filled at
+    // every instant, which is what makes window.applyThemeLive() flicker-free.
+    const prevThemeStyle = document.querySelector("style.theming");
+    const themeStyle = document.createElement("style");
+    themeStyle.className = "theming";
+    themeStyle.textContent = `
     :root {
         --font_main: "${window._purifyCSS(theme.cssvars.font_main)}";
         --font_main_light: "${window._purifyCSS(theme.cssvars.font_main_light)}";
@@ -738,13 +756,150 @@ window._loadTheme = theme => {
     .cursor_hidden, .cursor_hidden * { cursor: none !important; }
 
     ${window._purifyCSS(inject)}
-    </style>`;
+    `;
+    document.head.appendChild(themeStyle);
+    if (prevThemeStyle) prevThemeStyle.remove();
     // The cursor-role style must stay AFTER the theming style so its rules win
     // the cascade; re-append it now that the theming block was rebuilt.
     if (window._refreshCursor) window._refreshCursor();
     // Re-apply the user's background-source choice on top of the fresh theme (the
     // inline body override beats the theme's body background in the cascade).
     if (window.applyBackground) window.applyBackground();
+};
+
+// Everything that paints from the CSS variables (chrome, panels, lists, modals,
+// wallpaper, cursor) follows a theme swap for free. These few modules bake the
+// accent colour into canvas / WebGL objects when they are constructed, so they
+// have to be re-tinted by hand — otherwise a live switch would leave the charts,
+// the radar and the globe in the previous theme's colour until a restart.
+window._refreshThemeConsumers = () => {
+    const th = window.theme || {};
+    if (th.r == null) return;
+    const solid = `rgb(${th.r},${th.g},${th.b})`;
+    const soft = `rgba(${th.r},${th.g},${th.b},0.4)`;
+    // Spaced form, which is what the render-time template strings use.
+    const spaced = `rgb(${th.r}, ${th.g}, ${th.b})`;
+
+    // File-browser icons and media-control SVGs bake the accent into fill/stroke
+    // when the row is built. Repaint the ones already on screen (same string
+    // swap, so fill="none" and themed per-file colours are left alone).
+    const prevAccent = window._prevAccent;
+    if (window.fsDisp) window.fsDisp.iconcolor = spaced;
+    if (prevAccent && prevAccent !== spaced) {
+        try {
+            document.querySelectorAll("#filesystem svg, .media_container svg, .media_controls svg, .mini_audio svg")
+                .forEach(svg => {
+                    ["fill", "stroke"].forEach(attr => {
+                        if (svg.getAttribute(attr) === prevAccent) svg.setAttribute(attr, spaced);
+                    });
+                });
+        } catch (e) {}
+    }
+
+    // Smoothie charts (CPU + network). Only the values that came from the old
+    // accent are rewritten, so cpuinfo's deliberately transparent grid stays
+    // transparent: the chart's grid/label colours live on chart.options, while
+    // the line colour lives on the chart's own seriesSet entry (TimeSeries.options
+    // only ever holds the bounds-reset knobs).
+    const _triple = s => s.slice(4, s.indexOf(")")).split(",").map(x => x.trim()).join(",");
+    const prevNS = prevAccent ? `rgb(${_triple(prevAccent)})` : null;
+    const prevSoft = prevAccent ? `rgba(${_triple(prevAccent)},0.4)` : null;
+    if (prevNS) {
+        [window.mods && window.mods.cpuinfo, window.mods && window.mods.conninfo].forEach(mod => {
+            if (!mod) return;
+            try {
+                (mod.charts || []).forEach(chart => {
+                    const o = chart.options;
+                    if (o && o.grid && o.grid.strokeStyle === prevSoft) o.grid.strokeStyle = soft;
+                    if (o && o.labels && o.labels.fillStyle === prevNS) o.labels.fillStyle = solid;
+                    (chart.seriesSet || []).forEach(entry => {
+                        if (entry && entry.options && entry.options.strokeStyle === prevNS) {
+                            entry.options.strokeStyle = solid;
+                        }
+                    });
+                });
+                (mod.series || []).forEach(serie => {
+                    if (serie && serie.options && serie.options.strokeStyle === prevNS) {
+                        serie.options.strokeStyle = solid;
+                    }
+                });
+            } catch (e) {}
+        });
+    }
+
+    // Cyber panel caches its RGB components (see CyberPanel: reading them off
+    // the computed style per frame was the jank source).
+    try {
+        if (window.cyberPanel) {
+            window.cyberPanel._tr = th.r;
+            window.cyberPanel._tg = th.g;
+            window.cyberPanel._tb = th.b;
+        }
+    } catch (e) {}
+
+    // Globe: colours are baked into materials at construction; the lib exposes
+    // setters for three of the four, plus the fog that came from init().
+    try {
+        const gl = window.mods && window.mods.globe && window.mods.globe.globe;
+        if (gl) {
+            const gc = th.globe || {};
+            if (gl.setBaseColor) gl.setBaseColor(gc.base || solid);
+            if (gl.setMarkerColor) gl.setMarkerColor(gc.marker || solid);
+            if (gl.setPinColor) gl.setPinColor(gc.pin || solid);
+            if (gl.scene && gl.scene.fog && th.colors) gl.scene.fog.color.set(th.colors.light_black);
+        }
+    } catch (e) {}
+
+    // xterm keeps its own colour table (it cannot read CSS variables) and this
+    // build only exposes it through setOption(). Only the values the theme
+    // defines are touched; everything else keeps what it was built with.
+    try {
+        const term = th.terminal || {}, c = th.colors || {};
+        Object.keys(window.term || {}).forEach(k => {
+            const x = window.term[k] && window.term[k].term; // the xterm instance
+            if (!x) return;
+            const setOpt = (name, value) => {
+                try {
+                    if (typeof x.setOption === "function") x.setOption(name, value);
+                    else if (x._core && x._core.options) x._core.options[name] = value;
+                } catch (e) {}
+            };
+            const cur = ((x._core && x._core.options) || {}).theme || {};
+            const next = Object.assign({}, cur);
+            ["foreground", "cursor", "cursorAccent", "selection"].forEach(key => {
+                if (term[key]) next[key] = term[key];
+            });
+            ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+             "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue",
+             "brightMagenta", "brightCyan", "brightWhite"].forEach(key => {
+                if (c[key]) next[key] = c[key];
+            });
+            setOpt("theme", next);
+            if (term.fontFamily) {
+                setOpt("fontFamily", term.fontFamily +
+                    ', "Noto Sans Mono CJK SC", "Noto Sans CJK SC", "Noto Sans CJK TC", "Noto Sans CJK JP", "Noto Sans CJK KR", "WenQuanYi Zen Hei Mono", monospace');
+            }
+            if (term.fontWeight) setOpt("fontWeight", term.fontWeight);
+            if (term.fontWeightBold) setOpt("fontWeightBold", term.fontWeightBold);
+        });
+    } catch (e) {}
+};
+
+// Switch to another bundled theme without reloading the renderer: terminals,
+// running shells, the file browser and every open panel survive. Returns false
+// when the theme file cannot be read (caller can then fall back to a restart).
+window.applyThemeLive = name => {
+    if (!name) return false;
+    let theme;
+    try {
+        theme = require(path.join(themesDir, name + ".json"));
+    } catch (e) {
+        return false;
+    }
+    window.settings.theme = name;
+    window._loadTheme(theme);
+    window._refreshThemeConsumers();
+    return true;
 };
 
 // qrcode.js (main process) draws black modules on a pure-white plate. Recolour a
@@ -942,6 +1097,129 @@ if (window.settings.nointro || window.settings.nointroOverride || !window.__scre
     displayLine();
 }
 
+// The sheet that bridges the log and the passcode panel. It comes up half a
+// second after the last log line (BOOT_MASK_DELAY — just enough to read it, no
+// more) and runs a fixed 3.6 s sequence. That length is deliberate: the panel
+// cannot accept a passcode until the fonts land (building it earlier lets the
+// webfont swap re-flow the field under the first keystrokes), and on this
+// appliance that gap is always a few seconds. The sequence is what covers it —
+// and it only starts fading once the panel underneath really exists, so "the
+// sheet is done" and "you can type" stay the same moment.
+const BOOT_MASK_DELAY = 500;
+const BOOT_MASK_MIN_SHOW = 3600;
+
+// Idempotent: create the "sheet is on screen" promise and queue its insertion
+// BOOT_MASK_DELAY after the last log line.
+function scheduleBootMask() {
+    window._bootMaskReady = window._bootMaskReady || new Promise(resolve => { window._bootMaskResolve = resolve; });
+    window._bootMaskShown = window._bootMaskShown || new Promise(resolve => { window._bootMaskShownResolve = resolve; });
+    if (window._bootMaskScheduled) return;
+    window._bootMaskScheduled = true;
+    setTimeout(bootMask, BOOT_MASK_DELAY);
+}
+function bootMask() {
+    if (document.getElementById("boot_mask")) {
+        if (window._bootMaskShownResolve) window._bootMaskShownResolve();
+        return;
+    }
+    const mask = document.createElement("div");
+    mask.id = "boot_mask";
+    // Endfield-style auth readout: a hairline label block, three status rows that
+    // resolve one by one, and a segmented handshake bar. It reads as the boot
+    // sequence finishing rather than as a spinner, which is the point — it is
+    // covering the seconds before the passcode field can take input. "SYSTEM
+    // LOCKED" is the lock panel's own title, so the crossfade reads as the same
+    // screen settling rather than a swap.
+    mask.innerHTML = `
+        <div class="boot_mask_core">
+            <div class="boot_mask_label">SYSTEM LOCKED</div>
+            <div class="boot_mask_log">
+                <div class="bl_row" data-at="600"><span>SECURE CHANNEL</span><i></i><b>STABLE</b></div>
+                <div class="bl_row" data-at="1600"><span>KEYSTORE SYNC</span><i></i><b>OK</b></div>
+                <div class="bl_row" data-at="2600"><span>AUTH GATE</span><i></i><b>ARMED</b></div>
+            </div>
+            <div class="boot_mask_bar">${"<i></i>".repeat(26)}</div>
+            <div class="boot_mask_meta"><span>HANDSHAKE</span><span id="boot_mask_pct">000</span></div>
+        </div>`;
+    if (window.__bootDbg) window.__bootDbg.maskPre = Math.round(performance.now());
+    document.body.appendChild(mask);
+    if (window._bootMaskShownResolve) window._bootMaskShownResolve();
+    if (window.__bootDbg) window.__bootDbg.maskPost = Math.round(performance.now());
+    // The rule fills off one clock that ends exactly when the sheet is allowed
+    // to leave, so "100 / done" is the reveal. Writes happen once per whole
+    // percent on one text node, plus one class flip per segment — cheap enough
+    // to never compete with the UI building up behind it.
+    //
+    // The clock counts *visible* time only. On a cold start the X session can
+    // keep the window unmapped for several seconds right after the log ends
+    // (measured: 9 s), and both setTimeout and performance.now() keep running
+    // through that — a wall-clock fill would burn its whole budget off-screen
+    // and then pop the keypad the instant the window appeared. Spending the
+    // budget at rAF time means the animation starts when the user can see it.
+    const pct = mask.querySelector("#boot_mask_pct");
+    const rows = Array.from(mask.querySelectorAll(".bl_row"));
+    const segs = Array.from(mask.querySelectorAll(".boot_mask_bar i"));
+    let spent = 0, last = performance.now(), lastPct = -1, lastFilled = -1, leaving = false;
+    let panelReady = false;
+    (window._bootMaskReady || Promise.resolve()).then(() => { panelReady = true; });
+    const onVisibility = () => { last = performance.now(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    const readout = () => {
+        if (!mask.isConnected) {
+            document.removeEventListener("visibilitychange", onVisibility);
+            return;
+        }
+        const now = performance.now();
+        // TEMP-DEBUG: how long after insertion the first painted frame lands —
+        // this is the style/layout/paint cost of the mask itself.
+        if (window.__bootDbg) {
+            if (!window.__bootDbg.maskFirstFrame) {
+                window.__bootDbg.maskFirstFrame = Math.round(now);
+                window.__bootDbg.maskFrames = [];
+            }
+            if (window.__bootDbg.maskFrames.length < 8) window.__bootDbg.maskFrames.push(Math.round(now));
+        }
+        if (!document.hidden) spent += now - last;
+        last = now;
+        // The three status rows resolve on marks of *visible* time, so the
+        // sequence always plays out in full even if the renderer was parked.
+        for (const row of rows) {
+            if (!row.classList.contains("on") && spent >= Number(row.dataset.at)) row.classList.add("on");
+        }
+        // The segmented bar fills over the whole run, and holds just short of
+        // full while the panel is still being built: a bar parked on 100 with
+        // nothing happening reads as a hang.
+        const p = Math.min(panelReady ? 1 : 0.96, spent / BOOT_MASK_MIN_SHOW);
+        const n = Math.floor(p * 100);
+        if (n !== lastPct) {
+            lastPct = n;
+            pct.textContent = String(n).padStart(3, "0");
+        }
+        const filled = Math.round(p * segs.length);
+        if (filled !== lastFilled) {
+            lastFilled = filled;
+            segs.forEach((s, k) => s.classList.toggle("on", k < filled));
+        }
+        // Leave only once the sheet has had its full run AND the panel is built
+        // underneath; the extra 8 s of *visible* time is the "never pin the
+        // screen" guard for a font load that never finishes. It is deliberately
+        // generous: this sequence exists to cover a slow font load, so leaving
+        // before the panel exists would be worse than holding a little longer.
+        if (!leaving && spent >= BOOT_MASK_MIN_SHOW && (panelReady || spent >= BOOT_MASK_MIN_SHOW + 8000)) {
+            leaving = true;
+            // The panel fades up through the sheet instead of appearing behind
+            // it the instant the backdrop clears.
+            const panel = document.querySelector("#lock_screen .lock_panel");
+            if (panel) panel.classList.add("boot_panel_in");
+            mask.classList.add("boot_mask_out");
+            setTimeout(() => mask.remove(), 500);
+            return;
+        }
+        requestAnimationFrame(readout);
+    };
+    requestAnimationFrame(readout);
+}
+
 // Startup boot log
 function displayLine() {
     let bootScreen = document.getElementById("boot_screen");
@@ -960,21 +1238,93 @@ function displayLine() {
             setTimeout(displayTitleScreen, 300);
             return;
         }
-        // Real boot log finished. Instead of the old centre logo, roll the boot
-        // passcode panel in from the bottom so it lands centre-screen and feels
-        // like the last line of the log ("FACILITY NOMINAL").
+        // Real boot log finished. Instead of the old centre logo, the boot
+        // passcode panel takes over the screen as if it were the last line of
+        // the log ("FACILITY NOMINAL").
         // This mirrors the tail of the old displayTitleScreen path: run the same
         // error/telemetry init, wait for fonts, remove the black boot_screen
         // overlay, then wire _onUnlocked (so a correct passcode runs initUI) and
         // call bootShow() (idempotent — only builds the panel once). No passcode
         // configured → it falls through to run initUI directly.
+        window.__bootDbg = window.__bootDbg || {};
+        window.__bootDbg.endBranch = Math.round(performance.now());
         initGraphicalErrorHandling();
+        window.__bootDbg.afterErrHandling = Math.round(performance.now());
         initSystemInformationProxy();
-        waitForFonts().then(() => {
+        window.__bootDbg.afterSysInfo = Math.round(performance.now());
+        // Order matters: the sheet goes up first, the panel is built second. The
+        // panel used to be built off the font promise, which can win this race —
+        // the keypad then flashed for a beat before the sheet covered it
+        // ("可能一瞬间出现了解锁界面"). The build below is gated on the sheet
+        // actually being in the DOM, so nothing becomes visible until it has
+        // played out.
+        scheduleBootMask();
+        window.__bootDbg.p1 = Math.round(performance.now());
+        // TEMP-DEBUG: record the end-of-log instant plus every rAF stall, so a
+        // real cold boot shows whether the gap is a late timer or a blocked main thread.
+        (() => {
+            const d = window.__bootDbg;
+            d.vis = [[Math.round(performance.now()), document.visibilityState, document.hasFocus()]];
+            window.__bootDbg.p2 = Math.round(performance.now());
+            document.addEventListener("visibilitychange", () => d.vis.push([Math.round(performance.now()), document.visibilityState, document.hasFocus()]));
+            document.addEventListener("focus", () => d.vis.push([Math.round(performance.now()), "focus-event", true]));
+            document.addEventListener("blur", () => d.vis.push([Math.round(performance.now()), "blur-event", false]));
+            setInterval(() => { (d.hb = d.hb || []).push(Math.round(performance.now())); }, 500);
+            window.__bootDbg.p3 = Math.round(performance.now());
+            try {
+                new PerformanceObserver(list => {
+                    for (const e of list.getEntries()) (d.longtasks = d.longtasks || []).push([Math.round(e.startTime), Math.round(e.duration)]);
+                }).observe({ entryTypes: ["longtask"] });
+            } catch (e) {}
+            window.__bootDbg.p4 = Math.round(performance.now());
+        })();
+        (() => {
+            let lf = performance.now(), frames = 0;
+            const probe = () => {
+                const now = performance.now();
+                if (now - lf > 120) window.__bootDbg.stalls = (window.__bootDbg.stalls || []).concat([[Math.round(lf), Math.round(now)]]);
+                lf = now;
+                if (++frames < 900) requestAnimationFrame(probe);
+            };
+            requestAnimationFrame(probe);
+            window.__bootDbg.p5 = Math.round(performance.now());
+        })();
+        setTimeout(() => { window.__bootDbg.taskEnd = Math.round(performance.now()); }, 0);
+        window.__bootDbg.maskPre = Math.round(performance.now());
+        scheduleBootMask();
+        window.__bootDbg.afterBootMask = Math.round(performance.now());
+        window.__bootDbg.fontStatusCall = document.fonts.status;
+        // TEMP-DEBUG: dump the marks to a file — the DevTools port is not
+        // reachable on every boot, and the renderer can write one.
+        const dumpDbg = (tag) => {
+            try {
+                window.__bootDbg.flushTag = tag;
+                window.__bootDbg.flushAt = Math.round(performance.now());
+                window.__bootDbg.fontStatusNow = document.fonts.status;
+                fs.writeFileSync("/tmp/bootdbg.json", JSON.stringify(window.__bootDbg));
+            } catch (e) {}
+        };
+        dumpDbg("sync");
+        setTimeout(() => dumpDbg("t+9000"), 9000);
+        setTimeout(() => dumpDbg("t+20000"), 20000);
+        Promise.all([waitForFonts(), window._bootMaskShown]).then(() => {
+            window.__bootDbg.fontsReady = Math.round(performance.now());
             const bsc = document.getElementById("boot_screen");
             if (bsc) bsc.remove();
+            // ui.html ships `<body class="solidBackground">` so the boot log sits
+            // on flat black; the logo path used to be the only one that cleared
+            // it, and this log→lock path does not run the logo. Leaving the class
+            // on hides the theme wallpaper (body.solidBackground sets a plain
+            // colour with a shorthand that also kills background-image) for the
+            // whole session — the "设置壁纸为主题默认后壁纸不见了" report.
+            document.body.classList.remove("solidBackground");
             window.audioManager.theme.play();
+            // The panel goes in place behind the sheet; the sheet holds until its
+            // own run is over AND this promise says the panel is really there.
             bootLockThenRun(() => initUI());
+            window.__bootDbg.panelBuilt = Math.round(performance.now());
+            dumpDbg("fonts");
+            if (window._bootMaskResolve) window._bootMaskResolve();
         });
         return;
     }
@@ -984,12 +1334,26 @@ function displayLine() {
     } else {
         window.audioManager.stdout.play();
     }
-    bootScreen.innerHTML += log[i]+"<br/>";
+    // Append only the new line: `innerHTML +=` re-serialises and re-parses the
+    // whole log on every line, which is O(n²) and most expensive exactly when
+    // the machine is busiest (a session restart). Entities in the log (&lt; …)
+    // still render as HTML, as before.
+    bootScreen.insertAdjacentHTML("beforeend", log[i]+"<br/>");
     i++;
+
+    // Queue the sheet from the last line, not from the end branch: it has to come
+    // up BOOT_MASK_DELAY after the log finishes, so the beat is a timer rather
+    // than a same-frame insert. Queueing it here also means a cold-boot
+    // main-thread park right after the last line (measured: ~10 s, zero CPU,
+    // resumed when the fonts land) cannot leave the log frozen on screen for the
+    // whole stall — the timer fires as soon as the thread wakes.
+    if (i === log.length - 1) {
+        scheduleBootMask();
+    }
 
     switch(true) {
         case i === 2:
-            bootScreen.innerHTML += `eDEX-UI Kernel version ${remote.app.getVersion()} boot at ${Date().toString()}; root:xnu-1699.22.73~1/RELEASE_X86_64`;
+            bootScreen.insertAdjacentHTML("beforeend", `eDEX-UI Kernel version ${remote.app.getVersion()} boot at ${Date().toString()}; root:xnu-1699.22.73~1/RELEASE_X86_64`);
         case i === 4:
             setTimeout(displayLine, 500);
             break;
@@ -4497,11 +4861,18 @@ async function initUI() {
     }
 }
 
+// Theme switch from the file browser (assets/themes/*.json → open). This used to
+// set an override and reload the whole renderer, which replayed the boot log and
+// killed every terminal; the UI is driven by CSS variables, so it can be
+// re-skinned in place instead (see applyThemeLive).
 window.themeChanger = theme => {
-    ipc.send("setThemeOverride", theme);
-    setTimeout(() => {
-        window.location.reload(true);
-    }, 100);
+    if (!theme || theme === window.settings.theme) return;
+    if (!window.applyThemeLive(theme)) return;
+    // Still tell the main process: the override is what a *restart* comes back
+    // to, and writing the file means a crash cannot lose the choice.
+    try { ipc.send("setThemeOverride", theme); } catch (e) {}
+    try { fs.writeFileSync(settingsFile, JSON.stringify(window.settings, "", 4)); } catch (e) {}
+    if (window.eventPlay) window.eventPlay("settings_save");
 };
 
 // Desktop background source (settings → 背景图片). The user picks between the
@@ -6272,6 +6643,9 @@ window.writeFile = (path) => {
 };
 
 window.writeSettingsFile = () => {
+    // Remember the theme that is on screen right now: a save that changes it
+    // re-skins the UI below, without a reload (and without a passcode prompt).
+    const _themeBeforeSave = window.settings.theme;
     // Passcode must be 4-8 digits to save (the Save button is already disabled
     // while it is short, but guard every path — e.g. the external editor).
     const lockInput = document.getElementById("settingsEditor-lockCode");
@@ -6405,6 +6779,12 @@ window.writeSettingsFile = () => {
 
     window.settings = s;
     fs.writeFileSync(settingsFile, JSON.stringify(s, "", 4));
+    // A theme change applies right here, live. The settings dialog used to leave
+    // it to the next launch, which is why switching themes felt like it needed a
+    // restart.
+    if (s.theme && s.theme !== _themeBeforeSave && window.applyThemeLive) {
+        window.applyThemeLive(s.theme);
+    }
     // Each window holds its own copy of settings.json; tell the others so the
     // theme / terminal font / audio switches apply there too instead of waiting
     // for a reload.

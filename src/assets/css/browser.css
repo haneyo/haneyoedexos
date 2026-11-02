@@ -1567,17 +1567,162 @@ body:has(#lock_block) #main_shell_tabs > li.active {
     from { opacity: 1; transform: scale(1); }
     to { opacity: 0; transform: scale(0.96); }
 }
-/* Boot lock roll-in: the passcode panel scrolls up out of the bottom of the
-   log and settles centre-screen, so it reads as the last line of the boot log
-   continuing rather than a separate pop-in. Only applied to the boot lock
-   (class added by _buildBootLock), not the in-session locks. */
-.lock_panel.lock_roll_in {
-    animation: lock_roll_in 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+/* Boot mask: the hand-off sheet between the last boot-log line and the passcode
+   panel. The panel is built underneath it and never moves; this layer is only
+   ever what the user sees, and its fade-out *is* the "you can type now" signal.
+   pointer-events stays off, so keys reach the field below from the first frame.
+   Look: Arknights: Endfield print layout — one hairline axis, a wide-tracked
+   label, a rule that fills left to right, one small red status tick. No spinner,
+   no sweep, no brackets: the only motion is the rule filling, then the sheet
+   dissolving while the panel fades up through it. */
+#boot_mask {
+    position: fixed;
+    inset: 0;
+    z-index: 9999998;
+    display: grid;
+    place-items: center;
+    /* Flat, exactly like the log screen it replaces, so its arrival is invisible
+       behind the last frame of the log. The dot grid then fades in over it and
+       ends on the lock screen's own background — that equality is what makes
+       the exit a dissolve instead of a cut to a differently-tinted screen. */
+    background: var(--color_light_black);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_mono), monospace;
+    pointer-events: none;
+    overflow: hidden;
+    opacity: 1;
+    transition: opacity .42s cubic-bezier(.4, 0, .2, 1);
 }
-@keyframes lock_roll_in {
-    from { opacity: 0; transform: translateY(56vh); }
+#boot_mask::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+        linear-gradient(90deg, var(--color_light_black) 1.85vh, transparent 1%) center,
+        linear-gradient(var(--color_light_black) 1.85vh, transparent 1%) center,
+        var(--color_grey);
+    background-size: 2.04vh 2.04vh;
+    opacity: 0;
+    animation: boot_mask_grid_in .6s ease-out .06s forwards;
+}
+@keyframes boot_mask_grid_in { to { opacity: 1; } }
+#boot_mask.boot_mask_out { opacity: 0; }
+
+/* The composition clears a beat before the backdrop so none of it ghosts across
+   the keypad on the way out — only the backdrop is left to fade. */
+.boot_mask_core {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 1.35vh;
+    width: 46vh;
+    max-width: 66vw;
+    animation: boot_mask_core_in .5s ease-out .1s backwards;
+    transition: opacity .16s linear;
+}
+.boot_mask_out .boot_mask_core {
+    opacity: 0;
+    animation: none;
+}
+@keyframes boot_mask_core_in {
+    from { opacity: 0; transform: translateY(.9vh); }
     to   { opacity: 1; transform: translateY(0); }
 }
+.boot_mask_label {
+    font-size: 1.4vh;
+    letter-spacing: .58em;
+    text-indent: .58em;
+    text-align: center;
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: rgba(var(--color_r), var(--color_g), var(--color_b), .82);
+}
+/* Endfield's red status tick: the one warm pixel on the sheet. */
+.boot_mask_label::before {
+    content: "";
+    display: inline-block;
+    width: .55vh;
+    height: .55vh;
+    margin-right: 1.2vh;
+    background: var(--color_red);
+    opacity: .85;
+}
+
+/* Status rows: pending ones sit dim with the dotted leader already drawn, then
+   brighten and print their state word as each stage completes. This is what
+   turns the wait into an auth sequence instead of a spinner. */
+.boot_mask_log {
+    display: flex;
+    flex-direction: column;
+    gap: .7vh;
+    font-size: .8vh;
+    letter-spacing: .28em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.bl_row {
+    display: flex;
+    align-items: baseline;
+    gap: 1vh;
+    opacity: .3;
+    transition: opacity .25s linear;
+}
+.bl_row i {
+    flex: 1;
+    min-width: 4vh;
+    border-bottom: 1px dotted rgba(var(--color_r), var(--color_g), var(--color_b), .22);
+    transform: translateY(-.25vh);
+}
+.bl_row b {
+    font-weight: 400;
+    opacity: 0;
+    transition: opacity .2s linear;
+}
+.bl_row.on { opacity: 1; }
+.bl_row.on b { opacity: .92; }
+
+/* Handshake bar: discrete segments, not a continuous fill — the Endfield /
+   Federation loading readout. Marked on by bootMask() one block at a time. */
+.boot_mask_bar {
+    display: flex;
+    gap: .35vh;
+    height: .32vh;
+}
+.boot_mask_bar i {
+    flex: 1;
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), .11);
+    transition: background-color .16s linear;
+}
+.boot_mask_bar i.on {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), .85);
+}
+.boot_mask_meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: .85vh;
+    letter-spacing: .3em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    color: rgba(var(--color_r), var(--color_g), var(--color_b), .38);
+}
+.boot_mask_meta #boot_mask_pct {
+    color: rgba(var(--color_r), var(--color_g), var(--color_b), .72);
+}
+
+/* The lock panel fades up through the sheet instead of popping in behind it, so
+   the keypad emerges from the hairline rather than replacing a different screen.
+   Added by bootMask() as the sheet starts leaving; opacity only, so the passcode
+   field never travels under the first keystrokes. */
+#lock_screen .lock_panel.boot_panel_in {
+    animation: boot_panel_in .46s cubic-bezier(.4, 0, .2, 1) both;
+}
+@keyframes boot_panel_in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
 .lock_title {
     font-size: 2.6vh; letter-spacing: 0.35em; font-weight: bold;
     color: rgb(var(--color_r), var(--color_g), var(--color_b));

@@ -1115,11 +1115,23 @@ class LockScreen {
         this.active = true;
         this._pushLockState();
         this._buildBootLock();
-        // Boot lock reads as the last line of the boot log scrolling up: roll
-        // the passcode panel in from the bottom and let it settle centre-screen
-        // (see .lock_panel.lock_roll_in in browser.css).
-        const panel = document.querySelector("#lock_screen .lock_panel");
-        if (panel) panel.classList.add("lock_roll_in");
+        // X11: on a full restart the X session is re-created under us and the
+        // window is not guaranteed to be the active one when the panel rolls
+        // in (the session script's wmctrl grab may still be polling). Keys
+        // would then go to whatever holds focus — re-assert focus here, right
+        // before the box can be typed into.
+        // Ask the main process to focus us instead of doing it inline. The remote
+        // module's getCurrentWindow()/isFocused()/focus() are SYNCHRONOUS IPC, and
+        // on a cold boot the browser process is still busy (font copy, WM hand-off,
+        // xinput probing): that single call blocked this thread for ~9 s right
+        // before the panel could take a passcode — the "滚完代码卡住几秒" report.
+        // The mask's own clock is driven by rAF, so a parked thread froze the
+        // animation too; the message below is fire-and-forget and returns at once.
+        try { require("electron").ipcRenderer.send("edex-focus-window"); } catch (e) {}
+        // The panel does not travel: it is placed centre-screen immediately and
+        // only fades up (bootMask adds .boot_panel_in as the sheet leaves), so
+        // the box stays readable and is never a moving target for the first
+        // keystrokes.
         if (window.cover) window.cover.set(true);
     }
 
