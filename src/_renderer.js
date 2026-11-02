@@ -1229,14 +1229,77 @@ function bootMask() {
     (window._bootMaskReady || Promise.resolve()).then(() => { panelReady = true; });
     const onVisibility = () => { last = performance.now(); };
     document.addEventListener("visibilitychange", onVisibility);
-    // The panel fades up through the sheet instead of appearing behind it the
-    // instant the backdrop clears.
+    // Hand-off: the readout folds down into a hairline, the sheet's backdrop
+    // clears, then that hairline — exactly as wide as the passcode panel, not
+    // the screen — opens vertically into the panel (a CRT power-on confined to
+    // the window). The seam is a separate fixed layer because the sheet fades
+    // as a whole: it has to survive the backdrop's exit, and the panel itself
+    // is revealed by a growing clip so nothing travels under the keys.
     const leave = () => {
         leaving = true;
         const panel = document.querySelector("#lock_screen .lock_panel");
-        if (panel) panel.classList.add("boot_panel_in");
-        mask.classList.add("boot_mask_out");
-        setTimeout(() => mask.remove(), 500);
+        let rect = null;
+        try { if (panel) rect = panel.getBoundingClientRect(); } catch (e) { rect = null; }
+        // The panel must not be visible while the sheet's backdrop clears: if it
+        // is, the passcode window simply fades in behind the sheet and the seam
+        // below has nothing to "open". Hide it until the line is ready.
+        if (panel && rect && rect.width > 0 && rect.height > 0) panel.style.visibility = "hidden";
+        const core = mask.querySelector(".boot_mask_core");
+        if (core) {
+            // The readout is 46vh wide, the passcode panel is narrower. Squash
+            // the width onto the panel's box too, so the fold lands exactly on
+            // the seam instead of a wider band snapping narrow when the seam
+            // takes over. Ratio goes in before the class, or the transition
+            // would start from scaleX(1).
+            if (rect) {
+                try {
+                    const cr = core.getBoundingClientRect();
+                    if (cr.width > 0) core.style.setProperty("--boot_fold_sx", (rect.width / cr.width).toFixed(4));
+                } catch (e) {}
+            }
+            core.classList.add("boot_mask_fold");
+        }
+
+        // "boot_mask_fold" (CSS): the composition squashes to a horizontal
+        // sliver, like a CRT losing vertical deflection.
+        let seam = null;
+        if (rect && rect.width > 0 && rect.height > 0) {
+            seam = document.createElement("div");
+            seam.id = "boot_seam";
+            seam.style.left = Math.round(rect.left) + "px";
+            seam.style.width = Math.round(rect.width) + "px";
+            seam.style.top = Math.round(rect.top + rect.height / 2) + "px";
+            document.body.appendChild(seam);
+            requestAnimationFrame(() => { if (seam) seam.classList.add("boot_seam_on"); });
+        }
+
+        // 0.26 s: the fold is read, only the line is left → clear the backdrop.
+        setTimeout(() => { mask.classList.add("boot_mask_out"); }, 260);
+        setTimeout(() => { try { mask.remove(); } catch (e) {} }, 620);
+        // 0.58 s: backdrop gone → the line opens into the panel (0.46 s).
+        setTimeout(() => {
+            if (!seam) return;
+            if (panel) {
+                // Clear the hide and start the clip in the same style recalc, so
+                // the panel's first painted frame is already the hairline, never
+                // the whole window flashing on.
+                panel.style.visibility = "";
+                panel.classList.add("boot_panel_crt");
+            }
+            seam.classList.add("boot_seam_open");
+            seam.style.height = Math.round(rect.height) + "px";
+            // The reveal keyframes end on clip-path: inset(0), which still
+            // clips the panel's glow — drop the class once the clip has
+            // finished so the box-shadow comes back.
+            setTimeout(() => {
+                if (panel) panel.classList.remove("boot_panel_crt");
+            }, 490);
+            setTimeout(() => {
+                if (!seam) return;
+                seam.classList.add("boot_seam_off");
+                setTimeout(() => { try { seam.remove(); } catch (e) {} }, 240);
+            }, 470);
+        }, 580);
     };
     const readout = () => {
         if (!mask.isConnected) {

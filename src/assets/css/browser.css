@@ -1591,7 +1591,7 @@ body:has(#lock_block) #main_shell_tabs > li.active {
     pointer-events: none;
     overflow: hidden;
     opacity: 1;
-    transition: opacity .42s cubic-bezier(.4, 0, .2, 1);
+    transition: opacity .3s cubic-bezier(.4, 0, .2, 1);
 }
 #boot_mask::before {
     content: "";
@@ -1628,6 +1628,16 @@ body:has(#lock_block) #main_shell_tabs > li.active {
 @keyframes boot_mask_core_in {
     from { opacity: 0; transform: translateY(.9vh); }
     to   { opacity: 1; transform: translateY(0); }
+}
+/* Hand-off, phase 1: the whole readout squashes toward its centre line like a
+   CRT losing vertical deflection and, at the same time, narrows to the passcode
+   panel's width, then dissolves — by then only the seam is left on screen.
+   --boot_fold_sx is measured by bootMask() (panel width / readout width). */
+.boot_mask_core.boot_mask_fold {
+    transform-origin: center;
+    transform: scale(var(--boot_fold_sx, 1), .03);
+    opacity: 0;
+    transition: transform .3s cubic-bezier(.45, 0, .25, 1), opacity .2s linear .08s;
 }
 .boot_mask_label {
     font-size: 1.4vh;
@@ -1740,16 +1750,45 @@ body:has(#lock_block) #main_shell_tabs > li.active {
     color: rgba(var(--color_r), var(--color_g), var(--color_b), .72);
 }
 
-/* The lock panel fades up through the sheet instead of popping in behind it, so
-   the keypad emerges from the hairline rather than replacing a different screen.
-   Added by bootMask() as the sheet starts leaving; opacity only, so the passcode
-   field never travels under the first keystrokes. */
-#lock_screen .lock_panel.boot_panel_in {
-    animation: boot_panel_in .46s cubic-bezier(.4, 0, .2, 1) both;
+/* Hand-off, phase 2: the seam (a fixed line sized to the passcode panel by
+   bootMask()) opens vertically into the panel instead of the panel popping up
+   behind the sheet. A CRT power-on confined to the window: the panel is
+   revealed by a clip band growing from its centre line, and the line itself
+   stretches to the panel's full height while it hands over. Both end on the
+   panel's exact box, so the line never spans the screen. */
+#boot_seam {
+    position: fixed;
+    z-index: 9999999;
+    height: .18vh;
+    transform: translateY(-50%);
+    /* A bright core line with transparent ends: as the element grows, the core
+       stays the readout's hairline and only its glow boundary stretches. A flat
+       fill would sit over the keypad as a grey sheet while it expands. */
+    background: linear-gradient(to bottom,
+        rgba(var(--color_r), var(--color_g), var(--color_b), 0) 0%,
+        rgba(var(--color_r), var(--color_g), var(--color_b), .26) 42%,
+        rgba(var(--color_r), var(--color_g), var(--color_b), .9) 50%,
+        rgba(var(--color_r), var(--color_g), var(--color_b), .26) 58%,
+        rgba(var(--color_r), var(--color_g), var(--color_b), 0) 100%);
+    box-shadow: 0 0 1vh rgba(var(--color_r), var(--color_g), var(--color_b), .55);
+    opacity: 0;
+    pointer-events: none;
+    transition: height .46s cubic-bezier(.3, 0, .25, 1), opacity .16s linear;
 }
-@keyframes boot_panel_in {
-    from { opacity: 0; }
-    to   { opacity: 1; }
+#boot_seam.boot_seam_on { opacity: .92; }
+/* The line opens and dims on the same curve: brightness tracks the revealed
+   area, so the bloom never reads as a grey sheet sitting over the keypad. */
+#boot_seam.boot_seam_open {
+    opacity: 0;
+    transition: height .46s cubic-bezier(.3, 0, .25, 1), opacity .46s cubic-bezier(.3, 0, .25, 1);
+}
+#boot_seam.boot_seam_off { opacity: 0; transition: opacity .2s linear; }
+#lock_screen .lock_panel.boot_panel_crt {
+    animation: boot_panel_crt .46s cubic-bezier(.3, 0, .25, 1) both;
+}
+@keyframes boot_panel_crt {
+    from { clip-path: inset(calc(50% - .09vh) 0 calc(50% - .09vh) 0); }
+    to   { clip-path: inset(0 0 0 0); }
 }
 
 .lock_title {

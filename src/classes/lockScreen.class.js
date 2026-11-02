@@ -1129,8 +1129,9 @@ class LockScreen {
         // animation too; the message below is fire-and-forget and returns at once.
         try { require("electron").ipcRenderer.send("edex-focus-window"); } catch (e) {}
         // The panel does not travel: it is placed centre-screen immediately and
-        // only fades up (bootMask adds .boot_panel_in as the sheet leaves), so
-        // the box stays readable and is never a moving target for the first
+        // is then revealed by the boot mask's CRT seam (the readout folds into a
+        // line as wide as this panel, which opens vertically over it), so the
+        // box stays readable and is never a moving target for the first
         // keystrokes.
         if (window.cover) window.cover.set(true);
     }
