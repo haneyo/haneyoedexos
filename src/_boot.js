@@ -2846,12 +2846,42 @@ status();
         proc.on("error", e => resolve({ ok: false, error: e.message }));
     }));
 
+    // Locate the AppImage file this process is running from, or null when it is
+    // not running from one. The upstream `APPIMAGE` env var is unreliable here:
+    // the AppImage runtime electron-builder bundles does not export it into the
+    // app's environment (a normal eDEX-OS boot shows execPath
+    // `/tmp/.mount_eDEX-…/edex-ui` and a /proc/self/environ with no APPIMAGE), so
+    // the old `!!process.env.APPIMAGE` check declared a healthy install "not an
+    // AppImage" and the updater fell back to opening a browser. Fall back to the
+    // conventional eDEX-OS path, cross-checked against the name the FUSE mount
+    // reports as its source.
+    function edexAppImagePath() {
+        const env = process.env.APPIMAGE;
+        if (env && fs.existsSync(env)) return env;
+        const mount = /\/\.mount_([^/]+)\//.exec(process.execPath);
+        if (!mount) return null;
+        let srcName = "";
+        try {
+            const mi = fs.readFileSync("/proc/self/mountinfo", "utf8").split("\n")
+                .find(l => l.indexOf("/.mount_" + mount[1] + "/") !== -1);
+            if (mi) {
+                // "… - fuse.eDEX-UI.AppImage eDEX-UI.AppImage ro,user_id=…"
+                srcName = ((mi.split(" - ")[1] || "").trim().split(/\s+/))[1] || "";
+            }
+        } catch (e) {}
+        const candidate = "/opt/edex/eDEX-UI.AppImage";
+        if (fs.existsSync(candidate) && (!srcName || path.basename(candidate) === srcName)) {
+            return candidate;
+        }
+        return null;
+    }
+
     // Tell the renderer whether eDEX is running from an AppImage (eDEX-OS
     // install). The GitHub self-update is only meaningful in that mode — when
     // running from src/ during development, or from an extracted tree
     // (/opt/edex/squashfs-root on a rescue install), there is no AppImage file
     // to replace, so the renderer explains that instead of opening a web page.
-    ipc.handle("app:env", () => ({ isAppImage: !!process.env.APPIMAGE }));
+    ipc.handle("app:env", () => ({ isAppImage: !!edexAppImagePath() }));
 
     // Laptop battery for the clock's battery readout. Desktops (no battery)
     // report present:false and the renderer hides the indicator.
@@ -3219,7 +3249,7 @@ status();
     // renderer relaunches. Everywhere else it refuses cleanly.
     ipc.handle("system:edex-update", (e, payload) => new Promise(resolve => {
         const { url, sha256Url } = payload || {};
-        const APPIMAGE = process.env.APPIMAGE;
+        const APPIMAGE = edexAppImagePath();
         const send = line => broadcast("edex-update-output", line);
         if (!APPIMAGE) return resolve({ ok: false, error: "NOT_APPIMAGE" });
         if (!url) return resolve({ ok: false, error: "NO_URL" });
@@ -3318,7 +3348,7 @@ status();
     // SIGKILLs every child on will-quit, so the re-exec is handed to `setsid`
     // (new session, reparented to init) after a 1s beat.
     ipc.handle("app:relaunch", () => {
-        const target = process.env.APPIMAGE;
+        const target = edexAppImagePath();
         if (!target) return { ok: false };
         const q = s => "'" + String(s).replace(/'/g, "'\\''") + "'";
         const args = process.argv.slice(1);   // switches passed by edex-session.sh
