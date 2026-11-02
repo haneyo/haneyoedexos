@@ -101,16 +101,27 @@ class UpdateChecker {
             }];
         }
 
-        new Modal({
-            type: "custom",
-            title: "New version available",
-            html:
-                `<p style="margin:0 0 .8vh">eDEX-UI <strong>${release.tag_name}</strong> is now available.` +
-                ` Current: <strong>${current}</strong></p>` +
-                (release.name ? `<h5 style="margin:0 0 .4vh">${release.name}</h5>` : "") +
-                (release.body ? `<pre style="max-height:30vh;overflow:auto;font-size:12px;margin:0">${release.body.slice(0, 1200)}</pre>` : ""),
-            buttons
-        });
+        // Wait for the boot audio (the ~6s "Welcome back" voice) to finish, then
+        // show the dialog together with the "update available" announcement.
+        // Shown immediately, the dialog stole focus from the tail of the boot
+        // animation and its voice was drowned out by the welcome.
+        const show = () => {
+            new Modal({
+                type: "custom",
+                title: "New version available",
+                html:
+                    `<p style="margin:0 0 .8vh">eDEX-UI <strong>${release.tag_name}</strong> is now available.` +
+                    ` Current: <strong>${current}</strong></p>` +
+                    (release.name ? `<h5 style="margin:0 0 .4vh">${release.name}</h5>` : "") +
+                    (release.body ? `<pre style="max-height:30vh;overflow:auto;font-size:12px;margin:0">${release.body.slice(0, 1200)}</pre>` : ""),
+                buttons
+            });
+            if (window.eventPlay) window.eventPlay("update_available");
+        };
+        let wait = 0;
+        try { wait = Number(window.__bootAudioUntil || 0) - Date.now(); } catch (e) { wait = 0; }
+        if (wait > 0) setTimeout(show, wait);
+        else show();
     }
 }
 

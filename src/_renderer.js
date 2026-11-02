@@ -1667,7 +1667,16 @@ async function initUI() {
     });
 
     greeter.setAttribute("style", "opacity: 1;");
-    window.eventPlay("boot_welcome");
+    // The "Welcome back" voice runs for ~6s. Anything that wants to announce
+    // something with its own voice (the update dialog) must wait for it —
+    // otherwise the two talk over each other and the second one is inaudible.
+    const welcomePlayed = window.eventPlay("boot_welcome");
+    if (welcomePlayed) {
+        const snd = window.audioManager && window.audioManager.boot_welcome;
+        let dur = 0;
+        try { dur = (snd && snd.duration && snd.duration()) || 0; } catch (e) { dur = 0; }
+        window.__bootAudioUntil = Date.now() + (dur > 0 ? dur * 1000 : 6000) + 400;
+    }
 
     document.getElementById("filesystem").setAttribute("style", "");
     // cyber_panel stays hidden (opacity:0) during the boot welcome - its
