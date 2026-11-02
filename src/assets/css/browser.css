@@ -1783,12 +1783,11 @@ body:has(#lock_block) #main_shell_tabs > li.active {
     transition: height .46s cubic-bezier(.3, 0, .25, 1), opacity .46s cubic-bezier(.3, 0, .25, 1);
 }
 #boot_seam.boot_seam_off { opacity: 0; transition: opacity .2s linear; }
-#lock_screen .lock_panel.boot_panel_crt {
-    animation: boot_panel_crt .46s cubic-bezier(.3, 0, .25, 1) both;
-}
-@keyframes boot_panel_crt {
-    from { clip-path: inset(calc(50% - .09vh) 0 calc(50% - .09vh) 0); }
-    to   { clip-path: inset(0 0 0 0); }
+/* A clip-path transition, not an animation: overriding .lock_panel's own
+   `animation` would make its lock_fade_in restart (a visible dip) when the
+   class is dropped, and would out-rank the later lock_fade_out by id. */
+.lock_panel.boot_panel_crt {
+    transition: clip-path .46s cubic-bezier(.3, 0, .25, 1);
 }
 
 .lock_title {

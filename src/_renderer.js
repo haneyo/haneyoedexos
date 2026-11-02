@@ -1242,8 +1242,12 @@ function bootMask() {
         try { if (panel) rect = panel.getBoundingClientRect(); } catch (e) { rect = null; }
         // The panel must not be visible while the sheet's backdrop clears: if it
         // is, the passcode window simply fades in behind the sheet and the seam
-        // below has nothing to "open". Hide it until the line is ready.
-        if (panel && rect && rect.width > 0 && rect.height > 0) panel.style.visibility = "hidden";
+        // below has nothing to "open". Hide it until the line is ready, and park
+        // its clip on the same hairline the seam starts from.
+        if (panel && rect && rect.width > 0 && rect.height > 0) {
+            panel.style.visibility = "hidden";
+            panel.style.clipPath = "inset(calc(50% - .09vh) 0 calc(50% - .09vh) 0)";
+        }
         const core = mask.querySelector(".boot_mask_core");
         if (core) {
             // The readout is 46vh wide, the passcode panel is narrower. Squash
@@ -1280,19 +1284,23 @@ function bootMask() {
         setTimeout(() => {
             if (!seam) return;
             if (panel) {
-                // Clear the hide and start the clip in the same style recalc, so
-                // the panel's first painted frame is already the hairline, never
-                // the whole window flashing on.
+                // Same style recalc for all three: the panel's first painted
+                // frame is the hairline, and the clip transition starts from it
+                // (arming the class and changing the value together is what
+                // makes that a transition rather than a jump).
                 panel.style.visibility = "";
                 panel.classList.add("boot_panel_crt");
+                panel.style.clipPath = "inset(0 0 0 0)";
             }
             seam.classList.add("boot_seam_open");
             seam.style.height = Math.round(rect.height) + "px";
-            // The reveal keyframes end on clip-path: inset(0), which still
-            // clips the panel's glow — drop the class once the clip has
-            // finished so the box-shadow comes back.
+            // Drop the transition but keep the end value in the same recalc: the
+            // clip is already inset(0), so nothing moves, and .lock_panel's base
+            // lock_fade_in animation is never re-triggered.
             setTimeout(() => {
-                if (panel) panel.classList.remove("boot_panel_crt");
+                if (!panel) return;
+                panel.classList.remove("boot_panel_crt");
+                panel.style.clipPath = "";
             }, 490);
             setTimeout(() => {
                 if (!seam) return;
