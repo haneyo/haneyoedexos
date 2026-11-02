@@ -445,6 +445,11 @@ if (remote.process.argv.includes("--nocursor")) {
     window.settings.nocursorOverride = false;
 }
 
+// The boot log scrolls and the readout sheet runs without a pointer. The class
+// is dropped when the sheet hands off to the passcode panel (leave()), or
+// immediately on the no-intro / secondary-display paths below.
+document.documentElement.classList.add("boot_cursor_off");
+
 // Retrieve theme override (hotswitch)
 ipc.once("getThemeOverride", (e, theme) => {
     if (theme !== null) {
@@ -1084,6 +1089,7 @@ let i = 0;
 // the animation cost on a laptop + external screen). They jump straight to the
 // same "no intro" path, which also removes the boot overlay.
 if (window.settings.nointro || window.settings.nointroOverride || !window.__screen.master) {
+    document.documentElement.classList.remove("boot_cursor_off");
     initGraphicalErrorHandling();
     initSystemInformationProxy();
     document.getElementById("boot_screen").remove();
@@ -1280,8 +1286,10 @@ function bootMask() {
         // 0.26 s: the fold is read, only the line is left → clear the backdrop.
         setTimeout(() => { mask.classList.add("boot_mask_out"); }, 260);
         setTimeout(() => { try { mask.remove(); } catch (e) {} }, 620);
-        // 0.58 s: backdrop gone → the line opens into the panel (0.46 s).
+        // 0.58 s: backdrop gone → the line opens into the panel (0.46 s). The
+        // pointer comes back here, with the panel, not at the end of the fold.
         setTimeout(() => {
+            document.documentElement.classList.remove("boot_cursor_off");
             if (!seam) return;
             if (panel) {
                 // Same style recalc for all three: the panel's first painted

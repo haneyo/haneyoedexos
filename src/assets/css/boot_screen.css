@@ -1,3 +1,11 @@
+/* The boot log and the readout sheet run pointerless: the theme cursor only
+   belongs on the passcode panel. The class lives on <html> because the boot
+   code rewrites body.className ("", "solidBackground") on its way in, and the
+   selector beats the theme's `html, body, body *` role rules on specificity. */
+html.boot_cursor_off, html.boot_cursor_off * {
+    cursor: none !important;
+}
+
 section#boot_screen {
     position: fixed;
     top: 0vh;
