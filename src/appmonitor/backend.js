@@ -123,10 +123,48 @@ function realBackend(deps) {
         try { fs.writeFileSync(MONITOR_RC, rc); } catch (e) { console.error("[appmonitor] write rc:", e.message); }
     }
 
+    function sleepMs(ms) {
+        try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch (e) {}
+    }
+
+    function envHasDisplay(pid, display) {
+        try {
+            return fs.readFileSync(`/proc/${pid}/environ`).toString().split("\0").includes("DISPLAY=" + display);
+        } catch (e) { return false; }
+    }
+
+    // A previous eDEX session (or one that was killed instead of quit) can leave
+    // the nested X server, its window manager and the VNC server running: they
+    // hold this monitor's display and port, serve a stale empty desktop and
+    // block the servers we are about to spawn, so a monitor sometimes came up
+    // blank or on the wrong port. Each :10x display belongs to this app only,
+    // so clear anything else bound to it before spawning.
+    function reapStaleMonitor(m) {
+        let pids = [];
+        try { pids = fs.readdirSync("/proc").filter(d => /^\d+$/.test(d)); } catch (e) { return false; }
+        let killed = false;
+        for (const pid of pids) {
+            if (Number(pid) === process.pid) continue;
+            let cmd = "";
+            try { cmd = fs.readFileSync(`/proc/${pid}/cmdline`).toString().replace(/\0/g, " ").trim(); } catch (e) { continue; }
+            if (!cmd) continue;
+            const xvfb = cmd.startsWith("Xvfb " + m.display + " ");
+            const vnc = cmd.startsWith("x11vnc ") && cmd.includes("-display " + m.display);
+            const wm = cmd.startsWith("openbox ") && cmd.includes("edex-monitor-openbox.xml")
+                && envHasDisplay(pid, m.display);
+            if (!xvfb && !vnc && !wm) continue;
+            try { process.kill(Number(pid), "SIGTERM"); killed = true; } catch (e) {}
+        }
+        return killed;
+    }
+
     function startMonitor(m) {
         if (running[m.id]) return;
         const children = [];
         ensureMonitorConfig();
+        // Bring down leftovers first and give them a beat to remove the X lock
+        // file, otherwise the new Xvfb cannot claim the display.
+        if (reapStaleMonitor(m)) sleepMs(350);
         const xvfb = spawn("Xvfb", [m.display, "-screen", "0", SCREEN, "-nolisten", "tcp", "-ac"],
             { stdio: "ignore" });
         const wm = spawn("openbox", ["--config", MONITOR_RC, "--sm-disable"],
