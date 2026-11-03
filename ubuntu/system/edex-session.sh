@@ -78,5 +78,11 @@ while true; do
     /opt/edex/eDEX-UI.AppImage --no-sandbox
     _status=$?
     echo "[edex-session] eDEX exited with status $_status, relaunching"
+    # The AppImage loader can outlive the app when the app is terminated (crash
+    # or a version swap), leaving its FUSE mount behind. Kill the stray loader
+    # so repeated relaunches do not pile up mounts and processes.
+    for _p in $(pgrep -f '^/opt/edex/eDEX-UI.AppImage' 2>/dev/null); do
+        kill -TERM "$_p" 2>/dev/null || true
+    done
     sleep 2
 done
