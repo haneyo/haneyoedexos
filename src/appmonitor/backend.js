@@ -152,7 +152,14 @@ function realBackend(deps) {
             const vnc = cmd.startsWith("x11vnc ") && cmd.includes("-display " + m.display);
             const wm = cmd.startsWith("openbox ") && cmd.includes("edex-monitor-openbox.xml")
                 && envHasDisplay(pid, m.display);
-            if (!xvfb && !vnc && !wm) continue;
+            // websockify bridges the client's port to rfbPort+10 (packaging
+            // patch); a stale one keeps that port bound and forwards it to a
+            // server that no longer exists.
+            const tokens = cmd.split(" ");
+            const ws = cmd.includes("websockify")
+                && (tokens.includes(String(m.rfbPort)) || tokens.includes("127.0.0.1:" + (m.rfbPort + 10)));
+            const bridge = cmd.includes("edex-clipboard-bridge.sh") && cmd.includes(m.display);
+            if (!xvfb && !vnc && !wm && !ws && !bridge) continue;
             try { process.kill(Number(pid), "SIGTERM"); killed = true; } catch (e) {}
         }
         return killed;
