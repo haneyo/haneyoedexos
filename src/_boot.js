@@ -747,14 +747,36 @@ async function startAppMonitor(settings, cleanEnv) {
 // on the X screen, which spans every output), so one button per eDEX window:
 // wherever the user is looking, the way out is in the same corner.
 let fsExitWins = [];
+let fsRaiseTimer = null;
+
+function stopFsRaiseTimer() {
+    if (fsRaiseTimer) { clearInterval(fsRaiseTimer); fsRaiseTimer = null; }
+}
+
+// Openbox stacks a _NET_WM_STATE_FULLSCREEN window above every ABOVE window, so
+// a button that only asks to be always-on-top is buried as soon as the app
+// re-raises itself (measured on the appliance: the fullscreen window stayed
+// topmost with the button marked ABOVE). Native fullscreen now maximizes the
+// app undecorated instead of setting the fullscreen state, and the button is
+// lifted again on a short timer to survive whatever the app does afterwards.
+function startFsRaiseTimer() {
+    if (fsRaiseTimer) return;
+    fsRaiseTimer = setInterval(() => {
+        for (const b of fsExitWins) {
+            try { if (b && !b.isDestroyed() && b.isVisible()) b.moveTop(); } catch (e) {}
+        }
+    }, 1200);
+}
 
 function hideFsExitButton() {
+    stopFsRaiseTimer();
     for (const b of fsExitWins) {
         try { if (b && !b.isDestroyed()) b.hide(); } catch (e) {}
     }
 }
 
 function closeFsExitButtons() {
+    stopFsRaiseTimer();
     for (const b of fsExitWins) { try { if (b && !b.isDestroyed()) b.close(); } catch (e) {} }
     fsExitWins = [];
 }
@@ -762,7 +784,7 @@ function closeFsExitButtons() {
 function showFsExitButton() {
     try {
         const live = fsExitWins.filter(b => b && !b.isDestroyed());
-        if (live.length) { live.forEach(b => { b.show(); b.moveTop(); }); return; }
+        if (live.length) { live.forEach(b => { b.show(); b.moveTop(); }); startFsRaiseTimer(); return; }
         const accent = "170,207,209";
         const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
             html,body{margin:0;height:100vh;overflow:hidden;background:transparent}
@@ -790,6 +812,7 @@ function showFsExitButton() {
             b.on("closed", () => { fsExitWins = fsExitWins.filter(x => x !== b); });
             return b;
         });
+        startFsRaiseTimer();
     } catch (e) { signale.warn("Could not show exit-fullscreen button: " + (e && e.message)); }
 }
 

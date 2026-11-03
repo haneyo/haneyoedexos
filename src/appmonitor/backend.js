@@ -277,9 +277,9 @@ function realBackend(deps) {
             return Promise.resolve({ ok: true });
         },
         // Native fullscreen: stop the nested-display preview and launch the app
-        // directly on the real display (:0), where openbox (the WM on :0) can
-        // raise/fullscreen it. This is the "the app runs completely natively"
-        // mode. Best-effort fullscreen via wmctrl (needs the app to be active).
+        // directly on the real display (:0) with the user's own GPU/driver, so it
+        // runs at full speed. The window is maximized undecorated rather than
+        // sent to _NET_WM_STATE_FULLSCREEN — see raiseAppWindow below.
         fullscreen(monitorId, appId) {
             const m = monitors.find(x => x.id === monitorId);
             if (!m) return Promise.resolve({ ok: false, error: "bad monitor" });
@@ -325,7 +325,16 @@ function realBackend(deps) {
                 } catch (e) {}
                 if (winId) {
                     try { spawn("wmctrl", ["-i", "-a", winId], { env, stdio: "ignore" }); } catch (e) {}
-                    try { spawn("wmctrl", ["-i", "-r", winId, "-b", "add,fullscreen"], { env, stdio: "ignore" }); } catch (e) {}
+                    // Cover the screen WITHOUT _NET_WM_STATE_FULLSCREEN: openbox
+                    // stacks a fullscreen window above every ABOVE window, which
+                    // buried eDEX's "exit fullscreen" button the moment the app
+                    // re-raised itself. An undecorated maximized window fills the
+                    // same area and leaves the button clickable.
+                    try {
+                        spawnSync("xprop", ["-id", winId, "-f", "_MOTIF_WM_HINTS", "32c", "-set", "_MOTIF_WM_HINTS", "2,0,0,0,0"], { env, stdio: "ignore" });
+                    } catch (e) {}
+                    try { spawn("wmctrl", ["-i", "-r", winId, "-b", "remove,fullscreen"], { env, stdio: "ignore" }); } catch (e) {}
+                    try { spawn("wmctrl", ["-i", "-r", winId, "-b", "add,maximized_vert,maximized_horz"], { env, stdio: "ignore" }); } catch (e) {}
                     try { spawn("wmctrl", ["-i", "-r", winId, "-b", "add,above"], { env, stdio: "ignore" }); } catch (e) {}
                 } else if (attempts < 40) {
                     setTimeout(raiseAppWindow, 500);
