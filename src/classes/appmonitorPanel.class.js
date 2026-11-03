@@ -223,6 +223,14 @@ class AppMonitorPanel {
     }
 
     /* ---- Focus entry points used by the shell (via the term shim) ---- */
+    // Re-arm the client's sync animation before the monitor is seen again: while
+    // this webview was hidden Chromium throttled it, so the canvas can lag
+    // behind the live stream for a moment (tab switch, native-fullscreen return).
+    resync() {
+        if (!this.selected || this.selected.kind !== "native") return;
+        if (!this.webview || !this.webview.isConnected) return;
+        try { this.webview.executeJavaScript("window.__sync && window.__sync()").catch(() => {}); } catch (e) {}
+    }
     activate() {
         if (!this.selected) return;
         if (this.selected.kind === "web") {
@@ -233,6 +241,7 @@ class AppMonitorPanel {
         } else {
             if (this.webview) this.webview.focus();
             else this._showNativeWebview(this.selected);
+            this.resync();
         }
     }
     focus() {

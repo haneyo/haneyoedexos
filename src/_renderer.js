@@ -3181,6 +3181,14 @@ async function initUI() {
         fullscreen: (monitorId, appId) => ipc.invoke("appmonitor:fullscreen", { monitorId, appId }),
         exitFullscreen: () => ipc.invoke("appmonitor:exit-fullscreen")
     };
+    // The shell has just been uncovered by a native fullscreen app: the monitor
+    // webviews were throttled while hidden, so have the client pages re-arm their
+    // sync animation until the canvas catches up with the live stream.
+    ipc.on("edex-appmonitor-resync", () => {
+        [window.appmonitorA, window.appmonitorB].forEach(p => {
+            try { if (p && typeof p.resync === "function") p.resync(); } catch (e) {}
+        });
+    });
     // Each display owns its own pair of app-monitor backends (screen 1 → a/b,
     // screen 2 → c/d), so the two CLI panels on this screen open apps on THIS
     // screen's displays instead of fighting the other window for a and b.

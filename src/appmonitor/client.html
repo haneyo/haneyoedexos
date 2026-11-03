@@ -38,11 +38,41 @@
     }
     #overlay button:hover  { background: rgba(var(--cr), var(--cg), var(--cb), 0.3); }
     #overlay button:focus  { box-shadow: 0 0 8px rgba(var(--cr), var(--cg), var(--cb), 0.6); }
+    /* Shown while the stream is (re)connecting and until the first frame lands:
+       the draw-away also covers the moment a hidden monitor is re-shown. */
+    #sync {
+        position: absolute; inset: 0; display: none;
+        flex-direction: column; align-items: center; justify-content: center;
+        background: #05080d;
+        color: rgb(var(--cr), var(--cg), var(--cb));
+        pointer-events: none; opacity: 1; transition: opacity 0.42s ease;
+    }
+    #sync.on   { display: flex; }
+    #sync.fade { opacity: 0; }
+    #sync-label {
+        font-size: 11px; letter-spacing: 0.3em; text-transform: uppercase; opacity: 0.8;
+        text-shadow: 0 0 8px rgba(var(--cr), var(--cg), var(--cb), 0.45);
+    }
+    #sync-bar {
+        position: relative; width: 176px; height: 1px; margin-top: 14px;
+        background: rgba(var(--cr), var(--cg), var(--cb), 0.2); overflow: hidden;
+    }
+    #sync-bar i {
+        position: absolute; top: 0; left: -45%; width: 45%; height: 1px;
+        background: rgb(var(--cr), var(--cg), var(--cb));
+        box-shadow: 0 0 10px rgba(var(--cr), var(--cg), var(--cb), 0.9);
+        animation: syncscan 1.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    }
+    @keyframes syncscan { from { left: -45%; } to { left: 100%; } }
 </style>
 </head>
 <body>
     <div id="screen"></div>
     <div id="hud">◈ <span id="name">MONITOR</span></div>
+    <div id="sync">
+        <div id="sync-label">SYNCING DISPLAY</div>
+        <div id="sync-bar"><i></i></div>
+    </div>
     <div id="overlay">
         <div id="overlay-msg">LINK LOST</div>
         <button id="retry" onclick="window.__connect()">RETRY</button>

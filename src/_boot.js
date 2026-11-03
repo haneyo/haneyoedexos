@@ -820,7 +820,15 @@ function exitFullscreenViaMain() {
     hideFsExitButton();
     if (global.appMonitor) { try { apiPost(global.appMonitor.httpPort, "/api/fullscreen/exit"); } catch (e) {} }
     for (const e of edexWins) {
-        try { if (e.win && !e.win.isDestroyed()) { e.win.show(); e.win.focus(); } } catch (err) {}
+        try {
+            if (e.win && !e.win.isDestroyed()) {
+                e.win.show(); e.win.focus();
+                // The monitor webviews were throttled while the native app covered
+                // the shell; tell them to re-arm their sync animation so the
+                // canvas lag reads as "reconnecting", not as a dead display.
+                e.win.webContents.send("edex-appmonitor-resync");
+            }
+        } catch (err) {}
     }
 }
 
