@@ -831,7 +831,12 @@ const targets = [
     name: 'backend.js (openbox --config → --config-file + #5 剪贴板桥 + #7 Xvfb 光标)',
     path: ['appmonitor', 'backend.js'],
     expectIn: '"openbox",["--config",',
-    expectOut: 'edex-clipboard-bridge.sh',
+    // expectOut 必须是「只有本 transform 才会产生」的串。不能再用
+    // edex-clipboard-bridge.sh —— backend.js 的 reapStaleMonitor 里已有这个字面量
+    // (v2.5.9 起),pristine 构建会命中它 → 整条 transform 被误判"已打过"跳过,
+    // 结果 openbox 仍用非法的 --config、x11vnc 仍直连 rfbPort、没有 websockify/桥。
+    // --config-file 只由下面第 1 步替换产生,source 里不存在。
+    expectOut: '"--config-file"',
     // expectIn 与 transform 均不硬编码 terser mangle 字母:变量名(openbox/Xvfb/x11vnc/fcitx5/
     // array 的 mangle 名)随 minify 的变量计数改变(2026-08: v2.3.11 的 MONITOR_RC=d 在 v2.4 变 l),
     // 这里全部按结构正则匹配,同一 transform 同时兼容旧版与新版 minified。
