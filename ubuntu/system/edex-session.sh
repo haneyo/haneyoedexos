@@ -69,4 +69,14 @@ for G in /usr/libexec/gvfsd /usr/lib/gvfs/gvfsd /usr/bin/gvfsd; do
     [ -x "$G" ] && { "$G" >/dev/null 2>&1 & break; }
 done
 sleep 1
-exec /opt/edex/eDEX-UI.AppImage --no-sandbox
+# Relaunch in place instead of exec'ing the app. The session command IS the X
+# session: lightdm stops the display server the moment it exits, so a crash or a
+# version swap drops the screen to a text console until systemd restarts
+# lightdm. The loop keeps X, openbox, fcitx5, D-Bus and gvfs alive — only the UI
+# comes back. The exit status lands in .xsession-errors for diagnosis.
+while true; do
+    /opt/edex/eDEX-UI.AppImage --no-sandbox
+    _status=$?
+    echo "[edex-session] eDEX exited with status $_status, relaunching"
+    sleep 2
+done
