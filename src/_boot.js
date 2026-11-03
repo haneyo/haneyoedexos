@@ -973,9 +973,9 @@ app.on('ready', async () => {
         const am = global.appMonitor;
         return am ? apiGet(am.httpPort, "/api/native-apps") : { ok: false, apps: [] };
     });
-    ipc.handle("appmonitor:launch", (e, { monitorId, appId }) => {
+    ipc.handle("appmonitor:launch", (e, { monitorId, appId, screen }) => {
         const am = global.appMonitor;
-        return am ? apiPost(am.httpPort, "/api/monitors/" + monitorId + "/launch", { appId }) : { ok: false, error: "disabled" };
+        return am ? apiPost(am.httpPort, "/api/monitors/" + monitorId + "/launch", { appId, screen }) : { ok: false, error: "disabled" };
     });
     ipc.handle("appmonitor:kill", (e, { monitorId }) => {
         const am = global.appMonitor;

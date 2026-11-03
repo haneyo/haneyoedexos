@@ -134,8 +134,13 @@ function handleRequest(req, res) {
     if (monMatch && (isPost || isGet)) {
         const mid = monMatch[1], action = monMatch[2];
         if (action === "launch" || action === "fullscreen") {
-            return readBody(req).then(body =>
-                backend[action](mid, body && body.appId).then(r => sendJson(res, r.ok ? 200 : 404, r)));
+            return readBody(req).then(body => {
+                const appId = body && body.appId;
+                const r = action === "launch"
+                    ? backend.launch(mid, appId, body && body.screen)
+                    : backend.fullscreen(mid, appId);
+                return r.then(x => sendJson(res, x.ok ? 200 : 404, x));
+            });
         }
         return backend.kill(mid).then(r => sendJson(res, 200, r));
     }

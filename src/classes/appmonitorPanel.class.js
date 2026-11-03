@@ -158,7 +158,22 @@ class AppMonitorPanel {
         }
         this.webview.style.display = "";
         this.webview.setAttribute("src", app ? this._clientUrl(app) : "about:blank");
-        if (app) window.appmonitorApi.launch(this.monitorId, app.id);
+        if (app) window.appmonitorApi.launch(this.monitorId, app.id, this._screenGeometry());
+    }
+
+    /* Framebuffer geometry for this panel's nested X display. The backend
+       defaults to 1600x800 (2:1) because the shell slot is ~2:1 in the standard
+       themes; focus themes keep the same width but raise the shell to ~95%
+       height, so that 2:1 stream is letterboxed with wide black bars. Derive the
+       screen from the slot's own aspect instead, so noVNC's aspect-preserving
+       scaleViewport fills the frame in every theme. */
+    _screenGeometry() {
+        if (!this.container) return null;
+        const w = this.container.clientWidth, h = this.container.clientHeight;
+        if (!w || !h) return null;
+        const width = 1600;
+        const height = Math.max(600, Math.min(2000, Math.round(width * h / w)));
+        return width + "x" + height + "x24";
     }
 
     // Show (or create, on first open) this web app's own persistent webview.

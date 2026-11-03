@@ -101,8 +101,20 @@ function realBackend(deps) {
     // scaleViewport fills the tab edge-to-edge with no letterbox, and auto-maximise
     // every window (undecorated) so the app itself fills the desktop — no black
     // desktop, just the app at terminal size. See docs/ubuntu-side-changes.md.
-    const SCREEN = "1600x800x24";          // 2:1, matches the monitor-slot aspect
+    const SCREEN = "1600x800x24";          // fallback (2:1) when the caller sends no geometry
     const MONITOR_RC = path.join(os.tmpdir(), "edex-monitor-openbox.xml");
+
+    // The shell asks for a framebuffer that matches its own slot aspect (focus
+    // themes are much taller than 2:1). Validate: only a plain WxHx24 within a
+    // sane range gets through, so a layout race can never ask Xvfb for a
+    // ridiculous screen.
+    function screenGeometry(spec) {
+        const m = /^(\d{3,5})x(\d{3,5})x24$/.exec(String(spec || ""));
+        if (!m) return SCREEN;
+        const w = Number(m[1]), h = Number(m[2]);
+        if (w < 640 || h < 480 || w > 2560 || h > 2560) return SCREEN;
+        return w + "x" + h + "x24";
+    }
     function ensureMonitorConfig() {
         if (fs.existsSync(MONITOR_RC)) return;
         const rc = [
@@ -165,14 +177,14 @@ function realBackend(deps) {
         return killed;
     }
 
-    function startMonitor(m) {
+    function startMonitor(m, screen) {
         if (running[m.id]) return;
         const children = [];
         ensureMonitorConfig();
         // Bring down leftovers first and give them a beat to remove the X lock
         // file, otherwise the new Xvfb cannot claim the display.
         if (reapStaleMonitor(m)) sleepMs(350);
-        const xvfb = spawn("Xvfb", [m.display, "-screen", "0", SCREEN, "-nolisten", "tcp", "-ac"],
+        const xvfb = spawn("Xvfb", [m.display, "-screen", "0", screenGeometry(screen), "-nolisten", "tcp", "-ac"],
             { stdio: "ignore" });
         const wm = spawn("openbox", ["--config", MONITOR_RC, "--sm-disable"],
             { stdio: "ignore", env: Object.assign({}, process.env, { DISPLAY: m.display }) });
@@ -247,10 +259,10 @@ function realBackend(deps) {
         listNativeApps() {
             return Promise.resolve(listNativeApps(opts));
         },
-        launch(monitorId, appId) {
+        launch(monitorId, appId, screen) {
             const m = monitors.find(x => x.id === monitorId);
             if (!m) return Promise.resolve({ ok: false, error: "bad monitor" });
-            startMonitor(m);
+            startMonitor(m, screen);
             const app = listNativeApps(opts).find(a => a.id === appId);
             if (!app) return Promise.resolve({ ok: false, error: "app not found" });
             const cmd = buildCommand(app);

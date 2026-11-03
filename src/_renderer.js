@@ -3172,19 +3172,32 @@ async function initUI() {
     window.appmonitorApi = {
         config: () => ipc.invoke("appmonitor:config"),
         nativeList: () => ipc.invoke("appmonitor:native-list"),
-        launch: (monitorId, appId) => ipc.invoke("appmonitor:launch", { monitorId, appId }),
+        launch: (monitorId, appId, screen) => ipc.invoke("appmonitor:launch", { monitorId, appId, screen }),
         kill: (monitorId) => ipc.invoke("appmonitor:kill", { monitorId }),
         status: () => ipc.invoke("appmonitor:status"),
         close: (appId) => ipc.invoke("appmonitor:close", { appId }),
         addNative: (entry) => ipc.invoke("appmonitor:add-native", entry),
         removeNative: (id) => ipc.invoke("appmonitor:remove-native", id),
-        fullscreen: (monitorId, appId) => ipc.invoke("appmonitor:fullscreen", { monitorId, appId }),
+        // A native fullscreen app covers the shell and owns the input, so eDEX
+        // stops receiving mouse/key events for the whole session. Flag it so the
+        // idle countdown is suspended (see the idle interval below): otherwise
+        // the screensaver/lock starts invisibly behind the app and the user
+        // lands straight in the passcode box when they exit fullscreen.
+        fullscreen: (monitorId, appId) => ipc.invoke("appmonitor:fullscreen", { monitorId, appId })
+            .then(r => {
+                if (r && r.ok && window.__nativeFullscreenOn) window.__nativeFullscreenOn();
+                return r;
+            }),
         exitFullscreen: () => ipc.invoke("appmonitor:exit-fullscreen")
+            .finally(() => { if (window.__nativeFullscreenOff) window.__nativeFullscreenOff(); })
     };
+    window.__nativeFullscreen = false;
+    window.__nativeFullscreenAt = 0;
     // The shell has just been uncovered by a native fullscreen app: the monitor
     // webviews were throttled while hidden, so have the client pages re-arm their
     // sync animation until the canvas catches up with the live stream.
     ipc.on("edex-appmonitor-resync", () => {
+        if (window.__nativeFullscreenOff) window.__nativeFullscreenOff();
         [window.appmonitorA, window.appmonitorB].forEach(p => {
             try { if (p && typeof p.resync === "function") p.resync(); } catch (e) {}
         });
@@ -8463,8 +8476,29 @@ let lastActivity = Date.now();
 // last real interaction (mouse/keyboard) so it can drop back to the screensaver
 // when the user stops typing without unlocking (#88).
 window._lastActivityTime = () => lastActivity;
+// Native-fullscreen bookkeeping for the idle timer. Entering/leaving must also
+// restart the countdown: Chromium throttles the idle interval while the app
+// covers the shell, so `lastActivity` can still sit at the moment the app went
+// fullscreen. Just flipping the flag would let the next tick count the whole
+// fullscreen session as idle and open the screensaver/lock right after exit.
+window.__nativeFullscreenOn = () => {
+    window.__nativeFullscreen = true;
+    window.__nativeFullscreenAt = Date.now();
+    lastActivity = Date.now();
+};
+window.__nativeFullscreenOff = () => {
+    window.__nativeFullscreen = false;
+    lastActivity = Date.now();
+};
 const bumpActivity = () => {
     lastActivity = Date.now();
+    // Input reached eDEX again, so the native fullscreen app no longer covers it
+    // (it closed itself instead of going through the exit button/hotkey). Ignore
+    // the first 20s: the app can take several seconds to map its window, and a
+    // stray move over the still-visible shell must not cancel the suppression.
+    if (window.__nativeFullscreen && Date.now() - (window.__nativeFullscreenAt || 0) > 20000) {
+        window.__nativeFullscreen = false;
+    }
     // Any input wakes the display if it was blanked by the screen-off timeout.
     window.hideScreenOff();
     if (window.screensaver.isActive()) {
@@ -8564,6 +8598,11 @@ setInterval(() => {
     // each running their own timers meant N independent screensavers and a race
     // over `power:screen`.
     if (!window.__screen.master) return;
+    // A native fullscreen app (GUI-app panel) covers the shell: the user is
+    // working in it, but eDEX gets no input events at all, so its countdown
+    // would run out behind the app and surface as a screensaver/lock the moment
+    // fullscreen is exited. Keep the countdown pinned while it is up.
+    if (window.__nativeFullscreen) { lastActivity = Date.now(); return; }
     // An open Wireless Transfer dialog keeps the display awake: the phone is
     // about to scan a code and move files, and blanking or locking the screen
     // would take the dialog down together with the server it is running.
