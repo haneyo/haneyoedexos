@@ -168,8 +168,12 @@ class AppMonitorPanel {
        screen from the slot's own aspect instead, so noVNC's aspect-preserving
        scaleViewport fills the frame in every theme. */
     _screenGeometry() {
-        if (!this.container) return null;
-        const w = this.container.clientWidth, h = this.container.clientHeight;
+        // Measure the webview itself: it bleeds past the slot by the shell padding
+        // on three sides, so the slot's aspect is a few percent off from the
+        // viewport the client actually renders into.
+        const el = (this.webview && this.webview.isConnected) ? this.webview : this.container;
+        if (!el) return null;
+        const w = el.clientWidth, h = el.clientHeight;
         if (!w || !h) return null;
         const width = 1600;
         const height = Math.max(600, Math.min(2000, Math.round(width * h / w)));
