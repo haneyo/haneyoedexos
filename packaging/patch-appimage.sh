@@ -856,10 +856,14 @@ const targets = [
       // 1) openbox 用非法参数 --config → 正确参数 --config-file(mangle 无关:变量名通配)。
       .replace(/"openbox",\["--config",[a-zA-Z_$][\w$]*,"--sm-disable"\]/g, m => m.replace('"--config",', '"--config-file",'))
       // 2) x11vnc 改监听 rfbPort+10,原 rfbPort 由 websockify 转发;再拉起剪贴板桥。
-      //    $2 = display var(realBackend 形参),$4/$5 = push 里的 Xvfb/openbox 变量。
-      .replace(/([a-zA-Z_$][\w$]*)=o\("x11vnc",\["-display",([a-zA-Z_$][\w$]*)\.display,"-rfbport",String\(\2\.rfbPort\),"-shared","-forever","-nopw","-listen","127\.0\.0\.1"\],\{stdio:"ignore"\}\);([a-zA-Z_$][\w$]*)\.push\(([a-zA-Z_$][\w$]*),([a-zA-Z_$][\w$]*),\1\);/g, '$1=o("x11vnc",["-display",$2.display,"-rfbport",String($2.rfbPort+10),"-shared","-forever","-nopw","-listen","127.0.0.1"],{stdio:"ignore"}),w=o("websockify",[String($2.rfbPort),"127.0.0.1:"+String($2.rfbPort+10)],{stdio:"ignore"}),B=o("/usr/local/bin/edex-clipboard-bridge.sh",[$2.display],{stdio:"ignore",env:Object.assign({},process.env,{DISPLAY:$2.display})});$3.push($4,$5,$1,w,B);')
+      //    生成 spawn 函数名也通配($2):它是 require("child_process").spawn 的
+      //    mangle 名,源码改动会让 terser 把它从 o 换成 r 等(2026-11 v2.5.10 起
+      //    新增 screenGeometry 后即发生),所以不能再硬编码 `o(`。
+      //    $3 = display var(realBackend 形参),$5/$6 = push 里的 Xvfb/openbox 变量;
+      //    注入变量用 _edex* 前缀,避免与 terser 在该作用域的短名冲突。
+      .replace(/([a-zA-Z_$][\w$]*)=([a-zA-Z_$][\w$]*)\("x11vnc",\["-display",([a-zA-Z_$][\w$]*)\.display,"-rfbport",String\(\3\.rfbPort\),"-shared","-forever","-nopw","-listen","127\.0\.0\.1"\],\{stdio:"ignore"\}\);([a-zA-Z_$][\w$]*)\.push\(([a-zA-Z_$][\w$]*),([a-zA-Z_$][\w$]*),\1\);/g, '$1=$2("x11vnc",["-display",$3.display,"-rfbport",String($3.rfbPort+10),"-shared","-forever","-nopw","-listen","127.0.0.1"],{stdio:"ignore"}),_edexWs=$2("websockify",[String($3.rfbPort),"127.0.0.1:"+String($3.rfbPort+10)],{stdio:"ignore"}),_edexBridge=$2("/usr/local/bin/edex-clipboard-bridge.sh",[$3.display],{stdio:"ignore",env:Object.assign({},process.env,{DISPLAY:$3.display})});$4.push($5,$6,$1,_edexWs,_edexBridge);')
       // 3) 删除虚拟屏 fcitx5 spawn 及其 push(独占主屏 dbus name,#144 盲打修复)。
-      .replace(/const ([a-zA-Z_$][\w$]*)=o\("fcitx5"[\s\S]*?\);([a-zA-Z_$][\w$]*)\.push\(\1\);/g, '')
+      .replace(/const ([a-zA-Z_$][\w$]*)=([a-zA-Z_$][\w$]*)\("fcitx5"[\s\S]*?\);([a-zA-Z_$][\w$]*)\.push\(\1\);/g, '')
       // 4) spawn 应用 env 加 XCURSOR_THEME=edex(已有则不重复;fcitx env 已被 #3 移除)。
       .replace(/\{DISPLAY:[a-zA-Z_$][\w$]*\.display[^{}]*GTK_IM_MODULE:"fcitx",QT_IM_MODULE:"fcitx",XMODIFIERS:"@im=fcitx"\}/g, m => m.includes('XCURSOR_THEME') ? m : m.slice(0, -1) + ',XCURSOR_THEME:"edex"}')
       // 5) 主屏 :0 的 env 加光标(v2.4 已烘焙进 src,此步为旧版补齐,命中即幂等)。
