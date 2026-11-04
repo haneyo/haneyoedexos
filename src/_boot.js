@@ -203,6 +203,31 @@ app.commandLine.appendSwitch("ignore-gpu-blocklist");
 app.commandLine.appendSwitch("enable-gpu-rasterization");
 app.commandLine.appendSwitch("enable-video-decode");
 
+// Chromium's default ANGLE backend on Linux hands the GPU process to whichever
+// Vulkan ICD the loader finds first, and on a Mesa install that is Lavapipe —
+// software. Compositing/raster silently fall back to the CPU while the iGPU
+// sits at its minimum clock, which is what made this panel crawl. Pin ANGLE to
+// Vulkan and point the loader at the hardware ICD of the platform's own GPU;
+// on anything else leave the loader to pick (default behaviour).
+if (process.platform === "linux") {
+    app.commandLine.appendSwitch("use-gl", "angle");
+    app.commandLine.appendSwitch("use-angle", "vulkan");
+    app.commandLine.appendSwitch("enable-zero-copy");
+    try {
+        const isIntel = fs.readdirSync("/sys/class/drm")
+            .filter(n => /^card\d+$/.test(n))
+            .some(n => {
+                try {
+                    return fs.readFileSync(`/sys/class/drm/${n}/device/vendor`, "utf8").trim() === "0x8086";
+                } catch (e) { return false; }
+            });
+        const intelIcd = "/usr/share/vulkan/icd.d/intel_icd.json";
+        if (isIntel && fs.existsSync(intelIcd) && !process.env.VK_ICD_FILENAMES) {
+            process.env.VK_ICD_FILENAMES = intelIcd;
+        }
+    } catch (e) {}
+}
+
 // Fix userData folder not setup on Windows
 try {
     fs.mkdirSync(electron.app.getPath("userData"));
