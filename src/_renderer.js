@@ -7998,6 +7998,11 @@ window.screensaver = (() => {
         // terminals (0-2) and running CLI sessions are never touched, so a
         // boot-time code lock (before _uiReady) simply no-ops, not crashes
         // (#50).
+        // The panel is powered down (screen_off): nothing written here is
+        // visible, and every line costs a pty round-trip plus an xterm grid
+        // repaint. Hold the stream until the display wakes (the interval keeps
+        // running, so it resumes by itself).
+        if (window.__uiCovered()) return;
         const w = coverTerm();
         if (!w || !w.term || typeof w.term.write !== "function") return;
         w.term.write(indentCode(nextLine()) + "\r\n");
@@ -8034,6 +8039,9 @@ window.screensaver = (() => {
         drops = Array.from({ length: cols }, () => Math.floor(Math.random() * -canvas.height / GRID));
     };
     const mDraw = () => {
+        // Panel blanked: keep the simulation (drops) frozen instead of
+        // repainting a fullscreen canvas nobody can see.
+        if (window.__uiCovered()) return;
         ctx.fillStyle = "rgba(5, 8, 13, 0.08)";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.font = (GRID - 3) + "px 'Fira Mono', monospace";

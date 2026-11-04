@@ -1318,6 +1318,10 @@ class LockScreen {
     }
 
     _drawMatrix() {
+        // Panel blanked (screen_off): the lock is still up but nothing is
+        // visible. Freeze the rain rather than repainting a fullscreen canvas
+        // 25 times a second; the timer keeps running and resumes on wake.
+        if (window.__uiCovered()) return;
         const ctx = this._ctx, w = this._canvas.width, h = this._canvas.height;
         if (!ctx) return;
         ctx.fillStyle = "rgba(5, 8, 13, 0.08)";
