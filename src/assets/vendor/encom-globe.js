@@ -42595,8 +42595,17 @@ var Marker = function(lat, lon, text, altitude, previous, scene, _opts){
 
         update();
 
-        this.scene.add(new THREE.Line(_this.geometrySpline, materialSpline));
-        this.scene.add(new THREE.Line(_this.geometrySplineDotted, materialSplineDotted, THREE.LinePieces));
+        // Keep the two Line wrappers: THREE.Scene.remove() can only detach the
+        // Line objects that were actually added here, not the geometries they
+        // wrap (removing a geometry was a no-op and leaked every connector
+        // permanently — the scene grew by ~2 meshes per activity marker until
+        // each tick cost ~180ms).
+        _this.splineLines = [
+            new THREE.Line(_this.geometrySpline, materialSpline),
+            new THREE.Line(_this.geometrySplineDotted, materialSplineDotted, THREE.LinePieces)
+        ];
+        this.scene.add(_this.splineLines[0]);
+        this.scene.add(_this.splineLines[1]);
     }
 
     this.scene.add(this.marker);
@@ -42607,6 +42616,22 @@ var Marker = function(lat, lon, text, altitude, previous, scene, _opts){
 Marker.prototype.remove = function(){
     var x = 0;
     var _this = this;
+
+    // Drop a marker's connector Lines from the scene. Only the Line wrappers are
+    // scene children — the geometries they wrap are not, so the old
+    // scene.remove(geometry) calls below were no-ops and every connector stayed
+    // in the graph (and in the render list) forever.
+    var detachSplines = function(marker){
+        if(!marker || !marker.splineLines) return;
+        var scene = marker.scene || _this.scene;
+        marker.splineLines.forEach(function(line){
+            try { scene.remove(line); } catch(e) {}
+            try { if(line.geometry && line.geometry.dispose) line.geometry.dispose(); } catch(e) {}
+        });
+        marker.splineLines = null;
+        try { scene.remove(marker.geometrySpline); } catch(e) {}
+        try { scene.remove(marker.geometrySplineDotted); } catch(e) {}
+    };
 
     var update = function(ref){
 
@@ -42621,8 +42646,7 @@ Marker.prototype.remove = function(){
         if(x < ref.geometrySpline.vertices.length){
             setTimeout(function(){update(ref)}, _this.opts.drawTime/_this.opts.lineSegments)
         } else {
-            _this.scene.remove(ref.geometrySpline);
-            _this.scene.remove(ref.geometrySplineDotted);
+            detachSplines(ref);
         }
     }
 
@@ -42631,6 +42655,10 @@ Marker.prototype.remove = function(){
             update(_this.next[k]);
         })(j);
     }
+
+    // The marker's own connectors (previous -> this) have nobody left to retract
+    // them, so detach them straight away.
+    detachSplines(_this);
 
     _this.scene.remove(_this.marker);
     _this.scene.remove(_this.labelSprite);
