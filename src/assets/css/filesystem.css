@@ -298,6 +298,66 @@ div#fs_copy_progress > progress#fs_copy_bar::-webkit-progress-value {
     height: 0.9vh;
     transition: width 0.3s cubic-bezier(0.4, 0, 1, 1);
 }
+/* Cancel is only meaningful for conversions, so it stays hidden during cp/mv */
+div#fs_copy_progress > button#fs_copy_cancel {
+    display: none;
+    background: transparent;
+    border: 0.15vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.6);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    font-family: var(--font_main_light);
+    font-size: 1.25vh;
+    letter-spacing: 0.05vh;
+    padding: 0.25vh 0.9vh;
+    cursor: pointer;
+}
+div#fs_copy_progress > button#fs_copy_cancel:hover {
+    background: rgba(var(--color_r), var(--color_g), var(--color_b), 0.2);
+}
+div#fs_copy_progress.cancellable > button#fs_copy_cancel {
+    display: block;
+}
+
+/* Convert dialog */
+p.fs_conv_src {
+    margin: 0 0 1vh;
+    font-family: var(--font_main_light);
+    font-size: 1.5vh;
+    word-break: break-all;
+    white-space: pre-wrap;
+}
+label.fs_conv_row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1vh;
+    margin: 0 0 0.8vh;
+    font-size: 1.4vh;
+}
+label.fs_conv_row > span {
+    opacity: 0.85;
+}
+label.fs_conv_row > input:not([type="checkbox"]),
+label.fs_conv_row > select {
+    width: 16vh;
+    box-sizing: border-box;
+    background: var(--color_light_black);
+    color: rgb(var(--color_r), var(--color_g), var(--color_b));
+    border: 0.15vh solid rgb(var(--color_r), var(--color_g), var(--color_b));
+    padding: 0.35vh;
+    font-size: 1.4vh;
+}
+label.fs_conv_row > input[type="checkbox"] {
+    width: 1.7vh;
+    height: 1.7vh;
+    margin: 0;
+    accent-color: rgb(var(--color_r), var(--color_g), var(--color_b));
+}
+p.fs_conv_hint {
+    margin: 0.8vh 0 0;
+    font-size: 1.25vh;
+    opacity: 0.7;
+    line-height: 1.5;
+}
 
 /* Drag-box multi-select */
 div#fs_drag_box {
@@ -317,6 +377,8 @@ div.fs_ctx_menu {
     border: 0.092vh solid rgba(var(--color_r), var(--color_g), var(--color_b), 0.5);
     box-shadow: 0 0 1.5vh rgba(0, 0, 0, 0.6);
     padding: 0.3vh 0;
+    max-height: 86vh;
+    overflow-y: auto;
 }
 div.fs_ctx_menu button.fs_ctx_item {
     display: block;

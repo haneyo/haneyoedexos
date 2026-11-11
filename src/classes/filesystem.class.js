@@ -98,8 +98,12 @@ class FilesystemDisplay {
         // Copy/move progress overlay (created once; shown/hidden during paste).
         const _copyEl = document.createElement("div");
         _copyEl.id = "fs_copy_progress";
-        _copyEl.innerHTML = `<span id="fs_copy_text"></span><progress id="fs_copy_bar" value="0" max="100"></progress>`;
+        _copyEl.innerHTML = `<span id="fs_copy_text"></span><progress id="fs_copy_bar" value="0" max="100"></progress><button id="fs_copy_cancel">Cancel</button>`;
         document.body.appendChild(_copyEl);
+        // The cancel button only shows while a conversion runs (see _convShow).
+        _copyEl.querySelector("#fs_copy_cancel").addEventListener("click", () => {
+            if (typeof this.cancelConversion === "function") this.cancelConversion();
+        });
         this.fsBlock = {};
         this.dirpath = "";
         this.failed = false;
@@ -522,7 +526,9 @@ class FilesystemDisplay {
             <button class="fs_ctx_item" data-action="delete">Delete Permanently</button>
             <button class="fs_ctx_item" data-action="newfolder">New Folder</button>
             <button class="fs_ctx_item" data-action="compress">Compress to .7z</button>
-            <button class="fs_ctx_item" data-action="extract">Extract Archive</button>`;
+            <button class="fs_ctx_item" data-action="extract">Extract Archive</button>
+            <button class="fs_ctx_item" data-action="extractto">Extract To&hellip;</button>
+            <button class="fs_ctx_item" data-action="convert">Convert To&hellip;</button>`;
         document.body.appendChild(this._ctxMenu);
         this._ctxMenu.addEventListener("click", e => {
             let btn = e.target.closest ? e.target.closest(".fs_ctx_item") : null;
@@ -534,10 +540,47 @@ class FilesystemDisplay {
             if (this._ctxMenu && !(e.target.closest && e.target.closest("#fs_ctx_menu"))) this._hideContextMenu();
         });
 
-        // True when the path looks like an archive 7-Zip can extract.
-        this._isArchive = p => /\.(?:tar\.(?:gz|xz|bz2|zst)|tgz|7z|zip|tar|gz|xz|bz2|rar|cab|zst|lzma)$/i.test(p);
-        // Strip a known archive suffix so extracting `foo.tar.gz` lands in `foo/`.
-        this._archiveBase = p => p.replace(/\.(?:tar\.(?:gz|xz|bz2|zst)|tgz|7z|zip|tar|gz|xz|bz2|rar|cab|zst|lzma)$/i, "");
+        // 7-Zip is the only binary used for archives. Probe once because some
+        // distros ship it as `7zz`/`7za` instead of `7z`.
+        this._sevenZip = "7z";
+        this._initSevenZip = () => {
+            const { execFile } = require("child_process");
+            const cands = ["7z", "7zz", "7za"];
+            const next = i => {
+                if (i >= cands.length) { this._sevenZip = null; return; }
+                execFile("which", [cands[i]], (err, stdout) => {
+                    if (!err && String(stdout).trim()) this._sevenZip = String(stdout).trim();
+                    else next(i + 1);
+                });
+            };
+            next(0);
+        };
+        this._initSevenZip();
+
+        // Split archives are one logical archive in several files. Returns the
+        // logical base name plus this volume's index (1 = first volume).
+        this._volumeParts = p => {
+            let name = String(p).split("/").pop() || "";
+            let m;
+            if ((m = name.match(/^(.*)\.(\d{3})$/))) return { base: m[1], index: parseInt(m[2], 10) };
+            if ((m = name.match(/^(.*)\.part(\d+)\.rar$/i))) return { base: m[1] + ".rar", index: parseInt(m[2], 10) };
+            if ((m = name.match(/^(.*)\.z(\d{2})$/i))) return { base: m[1] + ".zip", index: parseInt(m[2], 10) + 1 };
+            // Old-style RAR volumes: a.rar is #1, a.r00 is #2, a.r01 is #3.
+            if ((m = name.match(/^(.*)\.r(\d{2})$/i))) return { base: m[1] + ".rar", index: parseInt(m[2], 10) + 2 };
+            return null;
+        };
+        // True when the path looks like something 7-Zip can extract.
+        this._isArchive = p => {
+            if (this._volumeParts(p)) return true;
+            return /\.(?:tar\.(?:gz|xz|bz2|zst)|tgz|7z|zip|tar|gz|xz|bz2|rar|cab|zst|lzma|iso|arj|lzh)$/i.test(p);
+        };
+        // Strip volume + archive suffixes so `foo.tar.gz` / `foo.7z.001` → `foo`.
+        this._archiveBase = p => {
+            let name = String(p).split("/").pop() || "";
+            let v = this._volumeParts(name);
+            if (v) name = v.base;
+            return name.replace(/\.(?:tar\.(?:gz|xz|bz2|zst)|tgz|7z|zip|tar|gz|xz|bz2|rar|cab|zst|lzma|iso|arj|lzh)$/i, "");
+        };
 
         this._showContextMenu = (x, y, hasSelection) => {
             let m = this._ctxMenu;
@@ -553,6 +596,8 @@ class FilesystemDisplay {
             m.querySelector('[data-action="delete"]').classList.toggle("disabled", !hasSelection);
             m.querySelector('[data-action="compress"]').classList.toggle("disabled", !hasSelection);
             m.querySelector('[data-action="extract"]').classList.toggle("disabled", !(this.selected.length === 1 && this._isArchive(this.selected[0])));
+            m.querySelector('[data-action="extractto"]').classList.toggle("disabled", !(this.selected.length === 1 && this._isArchive(this.selected[0])));
+            m.querySelector('[data-action="convert"]').classList.toggle("disabled", !this._canConvert());
             m.style.display = "block";
             let mw = m.offsetWidth, mh = m.offsetHeight;
             m.style.left = Math.min(x, window.innerWidth - mw - 8) + "px";
@@ -574,31 +619,856 @@ class FilesystemDisplay {
                 case "newfolder": this._newFolder(); break;
                 case "compress": this._compressSelected(); break;
                 case "extract": this._extractSelected(); break;
+                case "extractto": this._extractTo(this.selected[0]); break;
+                case "convert": this._convertDialog(); break;
             }
         };
 
         // Compress the selection into a .7z archive in the current directory.
         // Single selection → <name>.7z; multiple → <current-folder>.7z.
-        // `cd` into the target dir so 7z stores relative names — feeding it
-        // absolute paths would bake the whole tree into the archive.
+        // spawn() with an args array (not a shell string): filenames containing
+        // quotes, `$()` or backticks can no longer be interpreted as commands.
         this._compressSelected = () => {
             if (!this.selected.length || !this.dirpath) return;
-            let name = this.selected.length === 1
-                ? (this.selected[0].split("/").pop() || "archive")
+            if (this._convBusy) return this._notify("An operation is already running");
+            if (!this._sevenZip) return this._convError("7z is not installed.\nInstall it with: sudo apt install p7zip-full", "Compression failed");
+            // Freeze the selection: the dialog's own clicks could change it.
+            this._compressSel = this.selected.slice();
+            let name = this._compressSel.length === 1
+                ? (this._compressSel[0].split("/").pop() || "archive")
                 : (this.dirpath.split("/").pop() || "archive");
-            let names = this.selected
-                .map(p => `"${(p.split("/").pop() || "").replace(/"/g, '\\"')}"`)
-                .join(" ");
-            this._exec(`cd "${this.dirpath.replace(/"/g, '\\"')}" && 7z a -y "${name}.7z" ${names}`);
+            new Modal({
+                type: "custom",
+                title: "Compress to .7z",
+                html: `<p class="fs_conv_src">${_escapeHtml(name)}.7z</p>
+                       <label class="fs_conv_row"><span>Password</span>
+                           <input id="fs_zip_pw" type="password" placeholder="optional" onkeydown="if(event.key==='Enter'){event.preventDefault();window.fsDisp.doCompress();}">
+                       </label>
+                       <label class="fs_conv_row"><span>Encrypt names</span>
+                           <input id="fs_zip_mhe" type="checkbox">
+                       </label>
+                       <p class="fs_conv_hint">Leave the password empty to create an unencrypted archive.<br>Encrypt names also hides the file list (7z -mhe=on).</p>`,
+                buttons: [{ label: "Compress", action: "window.fsDisp.doCompress();" }]
+            });
         };
 
-        // Extract the selected archive into a folder named after it (sans
-        // extension), e.g. `foo.tar.gz` → `foo/`. `-o` creates the folder.
+        this.doCompress = () => {
+            let pwEl = document.getElementById("fs_zip_pw");
+            let mheEl = document.getElementById("fs_zip_mhe");
+            let password = pwEl ? pwEl.value : "";
+            let mhe = !!(mheEl && mheEl.checked);
+            // Close here (not in the button) so pressing Enter behaves the same.
+            let top = window.modals[Object.keys(window.modals).pop()];
+            if (top && top.close) top.close();
+            // Let the dialog close first, otherwise a synchronous error modal
+            // would be the "top" modal and get closed by the button.
+            setTimeout(() => this._compressRun(password, mhe), 0);
+        };
+
+        this._compressRun = async (password, mhe) => {
+            let sel = this._compressSel || this.selected;
+            if (!sel.length || !this.dirpath) return;
+            let bin = this._sevenZip;
+            let name = sel.length === 1
+                ? (sel[0].split("/").pop() || "archive")
+                : (this.dirpath.split("/").pop() || "archive");
+            let out = this._uniquePath(path.join(this.dirpath, name + ".7z"));
+            let names = sel.map(p => p.split("/").pop()).filter(Boolean);
+            if (!names.length) return;
+            let args = ["a", "-y", "-bsp1"];
+            if (password) {
+                args.push("-p" + password);
+                if (mhe) args.push("-mhe=on");
+            }
+            args.push(out);
+            args = args.concat(names);
+            this._convShow(`Compressing ${names.length} item${names.length === 1 ? "" : "s"}${password ? " (encrypted)" : ""} …`);
+            let r = await this._convSpawn(bin, args,
+                s => {
+                    let m = s.match(/(\d+)%/);
+                    if (m) this._convSet(`Compressing … ${m[1]}%`, parseInt(m[1], 10));
+                },
+                { cwd: this.dirpath });
+            if (r.cancelled) { this._convDone(null); this._notify("Compression cancelled"); return; }
+            if (r.code !== 0) {
+                let e = r.err || (r.stderr || "").trim() || `7z exited with code ${r.code}`;
+                return this._convDone(null, { message: String(e.message || e), title: "Compression failed" });
+            }
+            this._convDone(`Archive created: ${path.basename(out)}`);
+        };
+
+        // Extract into a folder named after the archive.
         this._extractSelected = () => {
             let p = this.selected[0];
             if (!p || !this.dirpath) return;
-            let out = this._archiveBase(p.split("/").pop()) || "extracted";
-            this._exec(`7z x -y "${p.replace(/"/g, '\\"')}" -o"${this.dirpath.replace(/"/g, '\\"')}/${out}"`);
+            if (this._convBusy) return this._notify("An operation is already running");
+            let v = this._volumeParts(p);
+            if (v && v.index > 1) {
+                return this._notify(`This is volume ${v.index} — select the first volume instead`);
+            }
+            let out = this._uniquePath(path.join(this.dirpath, this._archiveBase(p) || "extracted"));
+            this._extractArchive(p, out).catch(e => this._convDone(null, e));
+        };
+
+        // "Extract To…": native folder picker (defaults to the current folder),
+        // then options — destination plus "delete the archive afterwards".
+        this._extractTo = async (p) => {
+            if (!p) return;
+            if (this._convBusy) return this._notify("An operation is already running");
+            let v = this._volumeParts(p);
+            if (v && v.index > 1) {
+                return this._notify(`This is volume ${v.index} — select the first volume instead`);
+            }
+            let remote;
+            try { remote = require("@electron/remote"); } catch (e) {}
+            if (!remote || !remote.dialog) return this._convError("Folder picker is unavailable.", "Extraction failed");
+            let res;
+            try {
+                res = await remote.dialog.showOpenDialog(remote.getCurrentWindow(), {
+                    title: "Extract to folder",
+                    buttonLabel: "Select",
+                    defaultPath: this._lastExtractDir || this.dirpath,
+                    properties: ["openDirectory", "createDirectory"]
+                });
+            } catch (e) { return this._convError(e, "Extraction failed"); }
+            if (!res || res.canceled || !res.filePaths || !res.filePaths[0]) return;
+            let dest = res.filePaths[0];
+            this._lastExtractDir = dest;
+            try { fs.accessSync(dest, fs.constants.W_OK); }
+            catch (e) { return this._convError("No write permission for:\n" + dest, "Extraction failed"); }
+            let name = p.split("/").pop() || "archive";
+            this._pendingExtract = { p: p, dest: dest };
+            new Modal({
+                type: "custom",
+                title: "Extract archive",
+                html: `<p class="fs_conv_src">${_escapeHtml(name)}</p>
+                       <p class="fs_conv_hint">Destination:<br>${_escapeHtml(dest)}</p>
+                       <label class="fs_conv_row"><span>Delete archive</span>
+                           <input id="fs_ext_del" type="checkbox">
+                       </label>
+                       <p class="fs_conv_hint">When checked, the archive (and all its volumes) is removed after a successful extraction.</p>`,
+                buttons: [{ label: "Extract", action: "window.fsDisp.doExtractTo();" }]
+            }, () => { this._pendingExtract = null; });
+        };
+
+        this.doExtractTo = () => {
+            let pending = this._pendingExtract;
+            if (!pending) return;
+            this._pendingExtract = null;
+            let delEl = document.getElementById("fs_ext_del");
+            let deleteSource = !!(delEl && delEl.checked);
+            let top = window.modals[Object.keys(window.modals).pop()];
+            if (top && top.close) top.close();
+            // Let the dialog close before the progress overlay / error modal.
+            setTimeout(() => {
+                this._extractArchive(pending.p, pending.dest, { deleteSource: deleteSource })
+                    .catch(e => this._convDone(null, e));
+            }, 0);
+        };
+
+        // Ask for the password. Resolves with the typed string, or null when
+        // the dialog is closed/cancelled. Empty input is not accepted.
+        this._askArchivePassword = (name, wrong) => new Promise(resolve => {
+            this._pwResolve = resolve;
+            new Modal({
+                type: "custom",
+                title: "Encrypted archive",
+                html: `<p class="fs_conv_src">${_escapeHtml(name)}</p>
+                       <p class="fs_conv_hint">${wrong ? "Wrong password — try again." : "This archive is password-protected."}</p>
+                       <label class="fs_conv_row"><span>Password</span>
+                           <input id="fs_pw" type="password" onkeydown="if(event.key==='Enter'){event.preventDefault();window.fsDisp.submitArchivePassword();}">
+                       </label>`,
+                buttons: [{ label: "Extract", action: "window.fsDisp.submitArchivePassword();" }]
+            }, () => {
+                let r = this._pwResolve;
+                this._pwResolve = null;
+                if (r) r(null);
+            });
+            setTimeout(() => {
+                let el = document.getElementById("fs_pw");
+                if (el) el.focus();
+            }, 60);
+        });
+        this.submitArchivePassword = () => {
+            let el = document.getElementById("fs_pw");
+            if (!el) return;
+            if (!el.value) { el.focus(); return; }
+            let v = el.value;
+            let r = this._pwResolve;
+            this._pwResolve = null;
+            let top = window.modals[Object.keys(window.modals).pop()];
+            if (top && top.close) top.close();
+            if (r) r(v);
+        };
+
+        // 1) List the archive (headers only in 7z; encrypted entries are flagged
+        //    with `Encrypted = +`). 2) Prompt for a password when needed.
+        // 3) Extract, and re-prompt if 7-Zip reports a bad password.
+        this._extractArchive = async (p, out, opts) => {
+            let bin = this._sevenZip;
+            if (!bin) return this._convError("7z is not installed.\nInstall it with: sudo apt install p7zip-full", "Extraction failed");
+            let name = p.split("/").pop() || "archive";
+            let destLabel = path.basename(out) ? path.basename(out) + "/" : out;
+            let password = null, wrong = false, needList = true, checked = false;
+            for (let attempt = 0; attempt < 6; attempt++) {
+                if (needList) {
+                    let listArgs = ["l", "-slt"];
+                    if (password !== null) listArgs.push("-p" + password);
+                    listArgs.push(p);
+                    this._convShow(`Reading ${name} …`);
+                    let lr = await this._convSpawn(bin, listArgs);
+                    if (lr.cancelled) { this._convDone(null); this._notify("Extraction cancelled"); return; }
+                    let combined = (lr.stdout || "") + "\n" + (lr.stderr || "");
+                    let needsPw = false;
+                    if (lr.code !== 0) {
+                        if (/password|encrypt/i.test(combined)) needsPw = true;
+                        else {
+                            let e = lr.err || (lr.stderr || "").trim() || (lr.stdout || "").trim().slice(-400) || "Cannot open this archive";
+                            return this._convDone(null, { message: String(e.message || e), title: "Extraction failed" });
+                        }
+                    } else if (/^Encrypted = \+/m.test(lr.stdout || "") && password === null) {
+                        needsPw = true;
+                    }
+                    if (needsPw) {
+                        let pw = await this._askArchivePassword(name, wrong || password !== null);
+                        if (pw === null) { this._convDone(null); this._notify("Extraction cancelled"); return; }
+                        password = pw;
+                        wrong = false;
+                        continue; // list again with the new password
+                    }
+                    // Warn once before silently overwriting existing entries.
+                    if (!checked) {
+                        checked = true;
+                        let hits = this._archiveConflicts(lr.stdout, out);
+                        if (hits.length) {
+                            let more = hits.length > 5 ? ` (+${hits.length - 5} more)` : "";
+                            let ok = await this._askConfirm("Overwrite existing files?",
+                                `${hits.slice(0, 5).join(", ")}${more}\n\n${hits.length} item(s) from this archive already exist in ${destLabel}. Extracting will overwrite them.`);
+                            if (!ok) { this._convDone(null); this._notify("Extraction cancelled"); return; }
+                        }
+                    }
+                    needList = false;
+                }
+                let args = ["x", "-y", "-bsp1"];
+                if (password) args.push("-p" + password);
+                args.push(p, "-o" + out);
+                this._convShow(`Extracting ${name} → ${destLabel} …`);
+                let r = await this._convSpawn(bin, args, s => {
+                    let m = s.match(/(\d+)%/);
+                    if (m) this._convSet(`Extracting ${name} → ${destLabel} … ${m[1]}%`, parseInt(m[1], 10));
+                });
+                if (r.cancelled) { this._convDone(null); this._notify("Extraction cancelled"); return; }
+                if (r.code === 0) {
+                    let extra = "";
+                    if (opts && opts.deleteSource) {
+                        let removed = this._deleteArchive(p);
+                        extra = removed ? " · archive deleted" : " · archive could not be deleted";
+                    }
+                    return this._convDone(`Extracted to ${destLabel}${extra}`);
+                }
+                let errText = ((r.stdout || "") + "\n" + (r.stderr || "")).trim();
+                if (password !== null && /wrong password|password is incorrect|data error in encrypted|cannot open encrypted/i.test(errText)) {
+                    // Only the file data was encrypted (e.g. zip): listing still
+                    // works, so prompt again instead of retrying the same password.
+                    let pw = await this._askArchivePassword(name, true);
+                    if (pw === null) { this._convDone(null); this._notify("Extraction cancelled"); return; }
+                    password = pw;
+                    wrong = false;
+                    needList = false;
+                    continue;
+                }
+                return this._convDone(null, {
+                    message: (r.err && String(r.err.message || r.err)) || errText || `7z exited with code ${r.code}`,
+                    title: "Extraction failed"
+                });
+            }
+            this._convDone(null, { message: "Too many password attempts.", title: "Extraction failed" });
+        };
+
+        // Minimal yes/no dialog (closing it means "no").
+        this._askConfirm = (title, message) => new Promise(resolve => {
+            this._confirmResolve = resolve;
+            new Modal({
+                type: "custom",
+                title: title,
+                closeLabel: "Cancel",
+                html: `<p class="fs_conv_src">${_escapeHtml(message)}</p>`,
+                buttons: [{ label: "Overwrite", action: "window.fsDisp.submitConfirm(true);" }]
+            }, () => {
+                let r = this._confirmResolve;
+                this._confirmResolve = null;
+                if (r) r(false);
+            });
+        });
+        this.submitConfirm = v => {
+            let r = this._confirmResolve;
+            this._confirmResolve = null;
+            let top = window.modals[Object.keys(window.modals).pop()];
+            if (top && top.close) top.close();
+            if (r) r(!!v);
+        };
+
+        // Top-level entries from a `7z l -slt` listing that already exist in
+        // the destination — used to warn before overwriting anything.
+        this._archiveConflicts = (listing, dest) => {
+            let names = [], block = null, hasAttr = false;
+            const flush = () => { if (block && hasAttr) names.push(block); };
+            String(listing || "").split(/\r?\n/).forEach(line => {
+                if (/^-{5,}\s*$/.test(line.trim())) { flush(); block = null; hasAttr = false; return; }
+                let m = line.match(/^Path = (.*)$/);
+                if (m) { flush(); block = m[1]; hasAttr = false; return; }
+                if (block && /^Attributes = /.test(line)) hasAttr = true;
+            });
+            flush();
+            let hits = [];
+            names.forEach(n => {
+                let first = String(n).replace(/\\/g, "/").split("/")[0];
+                if (!first) return;
+                try {
+                    if (fs.existsSync(path.join(dest, first)) && hits.indexOf(first) === -1) hits.push(first);
+                } catch (e) {}
+            });
+            return hits;
+        };
+
+        // Delete a (possibly multi-volume) archive after a successful extract:
+        // a .001/.z01/.part1.rar selection also removes its sibling volumes so
+        // no orphan parts are left behind.
+        this._deleteArchive = p => {
+            let dir = path.dirname(p), base = path.basename(p);
+            let v = this._volumeParts(p);
+            let core = v ? v.base : base;
+            let stem = core.replace(/\.(?:7z|zip|rar|tar|gz|xz|bz2|cab|iso)$/i, "");
+            let esc = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            let re1 = new RegExp("^" + esc(core) + "\\.\\d{3}$", "i");
+            let re2 = new RegExp("^" + esc(stem) + "\\.(?:part\\d+\\.rar|r\\d{2}|z\\d{2})$", "i");
+            let targets = [p];
+            try {
+                fs.readdirSync(dir).forEach(f => {
+                    if (f === base) return;
+                    if (re1.test(f) || re2.test(f)) targets.push(path.join(dir, f));
+                });
+            } catch (e) {}
+            let removed = 0;
+            targets.forEach(f => { try { fs.unlinkSync(f); removed++; } catch (e) {} });
+            return removed;
+        };
+
+        // ------------------------------------------------------------------
+        // Format conversion
+        // Everything runs out-of-process (bundled ffmpeg / poppler / LibreOffice)
+        // so a long conversion can never stall the renderer or the animations.
+        // ------------------------------------------------------------------
+        this._convBusy = false;
+        this._convCancelled = false;
+        this._convChild = null;
+        this._CONV_IMAGE = ["png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff", "gif", "avif", "svg"];
+        this._CONV_VIDEO = ["mp4", "mkv", "webm", "mov", "avi", "flv", "wmv", "m4v", "ts", "mpg", "mpeg", "3gp", "m2ts"];
+        this._CONV_AUDIO = ["mp3", "wav", "flac", "ogg", "m4a", "aac", "opus", "wma", "amr", "aiff"];
+        this._CONV_DOC = ["doc", "docx", "odt", "rtf", "xls", "xlsx", "ods", "ppt", "pptx", "odp"];
+
+        // ffmpeg ships with the app; the rest are probed once at startup and
+        // their menu entries simply don't appear when missing.
+        // undefined = probe still running, null = definitely absent.
+        this._convTools = { ffmpeg: null, pdftoppm: undefined, pdftotext: undefined, pdfinfo: undefined, rsvg: undefined, soffice: undefined };
+        this._initConvTools = () => {
+            let ffmpeg = null;
+            try { ffmpeg = require("ffmpeg-static"); } catch (e) {}
+            // Inside a packaged build the binary sits in app.asar, which cannot
+            // be executed — use electron-builder's unpacked copy when present.
+            if (ffmpeg && ffmpeg.indexOf("app.asar") !== -1) {
+                let unpacked = ffmpeg.replace("app.asar", "app.asar.unpacked");
+                try { if (fs.existsSync(unpacked)) ffmpeg = unpacked; } catch (e) {}
+            }
+            this._convTools.ffmpeg = ffmpeg;
+            const { execFile } = require("child_process");
+            const probes = { pdftoppm: "pdftoppm", pdftotext: "pdftotext", pdfinfo: "pdfinfo", rsvg: "rsvg-convert", soffice: "soffice" };
+            Object.keys(probes).forEach(k => {
+                execFile("which", [probes[k]], (err, stdout) => {
+                    this._convTools[k] = (!err && String(stdout).trim()) || null;
+                });
+            });
+        };
+        this._initConvTools();
+
+        this._convExt = p => {
+            let s = String(p);
+            let i = s.lastIndexOf(".");
+            return i === -1 ? "" : s.slice(i + 1).toLowerCase();
+        };
+        this._normExt = e => {
+            e = String(e || "").toLowerCase();
+            return e === "jpeg" ? "jpg" : (e === "tif" ? "tiff" : e);
+        };
+        this._convCategory = p => {
+            let ext = this._normExt(this._convExt(p));
+            if (ext === "pdf") return "pdf";
+            if (this._CONV_IMAGE.indexOf(ext) !== -1) return "image";
+            if (this._CONV_VIDEO.indexOf(ext) !== -1) return "video";
+            if (this._CONV_AUDIO.indexOf(ext) !== -1) return "audio";
+            if (this._CONV_DOC.indexOf(ext) !== -1) return "doc";
+            return null;
+        };
+        this._convTargets = (cat, ext) => {
+            const T = this._convTools || {};
+            const src = this._normExt(ext);
+            if (cat === "image") {
+                // SVG is rasterized by librsvg only (ffmpeg can't read it).
+                if (src === "svg") return (T.rsvg !== null) ? ["png"] : [];
+                return ["png", "jpg", "webp", "bmp", "tiff", "gif", "avif", "pdf"].filter(t => t !== src);
+            }
+            if (cat === "pdf") {
+                let t = [];
+                if (T.pdftoppm !== null) t.push("png", "jpg");
+                if (T.pdftotext !== null) t.push("txt");
+                return t;
+            }
+            if (cat === "video") return ["mp4", "webm", "mkv", "gif", "mp3", "wav"].filter(t => t !== src);
+            if (cat === "audio") return ["mp3", "wav", "flac", "ogg", "m4a"].filter(t => t !== src);
+            if (cat === "doc") return (T.soffice !== null) ? ["pdf"] : [];
+            return [];
+        };
+        this._canConvert = () => {
+            let sel = this.selected || [];
+            if (!sel.length) return false;
+            let cats = sel.map(p => this._convCategory(p));
+            if (cats.indexOf(null) !== -1) return false;
+            // Multi-selection is only meaningful for "merge images into one PDF".
+            if (sel.length > 1) return cats.every(c => c === "image") && this._normExt(this._convExt(sel[0])) !== "svg";
+            return this._convTargets(cats[0], this._convExt(sel[0])).length > 0;
+        };
+
+        this._notify = msg => {
+            let t = document.getElementById("edex_toast");
+            if (!t) {
+                t = document.createElement("div");
+                t.id = "edex_toast";
+                t.className = "browser_toast";
+                document.body.appendChild(t);
+            }
+            t.textContent = msg;
+            t.classList.add("show");
+            clearTimeout(this._notifyTimer);
+            this._notifyTimer = setTimeout(() => t.classList.remove("show"), 2600);
+        };
+
+        this._convertDialog = () => {
+            let sel = this.selected.slice();
+            if (!sel.length) return;
+            this._convSel = sel; // freeze: dialog clicks can change the selection
+            let cat = this._convCategory(sel[0]);
+            if (!cat) return;
+            let multi = sel.length > 1;
+            let targets = multi ? ["pdf"] : this._convTargets(cat, this._convExt(sel[0]));
+            if (!targets.length) {
+                this._convError("No converter available for this file type.\nMissing tool: " + (cat === "pdf" ? "poppler-utils" : "librsvg2-bin / libreoffice"));
+                return;
+            }
+            let name = String(sel[0]).split("/").pop();
+            if (multi) name += ` (+${sel.length - 1})`;
+            let opts = targets.map(t => `<option value="${t}">${t.toUpperCase()}</option>`).join("");
+            let pdfOpts = (!multi && cat === "pdf") ? `
+                <label class="fs_conv_row"><span>DPI</span>
+                    <select id="fs_conv_dpi"><option>96</option><option selected>150</option><option>300</option><option>600</option></select>
+                </label>
+                <label class="fs_conv_row"><span>Pages</span>
+                    <input id="fs_conv_pages" type="text" placeholder="all, e.g. 1-3">
+                </label>` : "";
+            let html = `
+                <p class="fs_conv_src">${_escapeHtml(name)}</p>
+                <label class="fs_conv_row"><span>Convert to</span>
+                    <select id="fs_conv_fmt" onchange="window.fsDisp.convFmtChanged()">${opts}</select>
+                </label>
+                <label class="fs_conv_row" id="fs_conv_qrow"><span>Quality</span>
+                    <input id="fs_conv_q" type="number" min="1" max="100" value="90">
+                </label>
+                ${pdfOpts}
+                <p class="fs_conv_hint">${multi ? "Pages are merged in selection order into one PDF." : "The converted file is written next to the original."}</p>`;
+            new Modal({
+                type: "custom",
+                title: "Convert",
+                html: html,
+                buttons: [{ label: "Convert", action: "window.fsDisp.doConvert(); window.modals[Object.keys(window.modals).pop()].close();" }]
+            });
+            this.convFmtChanged();
+        };
+
+        // Hide the quality field for formats that don't use it.
+        this.convFmtChanged = () => {
+            let f = document.getElementById("fs_conv_fmt");
+            let row = document.getElementById("fs_conv_qrow");
+            if (!f || !row) return;
+            row.style.display = ["jpg", "webp", "avif", "mp4", "webm"].indexOf(f.value) !== -1 ? "flex" : "none";
+        };
+
+        this.doConvert = () => {
+            if (this._convBusy) { this._notify("A conversion is already running"); return; }
+            let fmtEl = document.getElementById("fs_conv_fmt");
+            if (!fmtEl) return;
+            let target = fmtEl.value;
+            let qEl = document.getElementById("fs_conv_q");
+            let dpiEl = document.getElementById("fs_conv_dpi");
+            let pagesEl = document.getElementById("fs_conv_pages");
+            let quality = qEl ? Math.max(1, Math.min(100, parseInt(qEl.value, 10) || 90)) : 90;
+            let dpi = dpiEl ? (parseInt(dpiEl.value, 10) || 150) : 150;
+            let pages = pagesEl ? String(pagesEl.value || "").trim() : "";
+            let sel = this._convSel || this.selected.slice();
+            if (!sel.length) return;
+            let cat = this._convCategory(sel[0]);
+            // Let the dialog's own close() run first: an error raised later would
+            // otherwise become the "top" modal and get closed by the button.
+            setTimeout(() => {
+                try {
+                    if (sel.length > 1) this._imagesToPdf(sel, quality);
+                    else if (cat === "pdf" && target === "txt") this._pdfToText(sel[0]);
+                    else if (cat === "pdf") this._pdfToImages(sel[0], target, dpi, pages, quality);
+                    else if (cat === "image" && target === "pdf") this._imagesToPdf(sel, quality);
+                    else if (cat === "image" && this._normExt(this._convExt(sel[0])) === "svg") this._svgToPng(sel[0]);
+                    else if (cat === "doc") this._docToPdf(sel[0]);
+                    else this._mediaConvert(sel[0], target, quality);
+                } catch (e) {
+                    this._convDone(null, e);
+                }
+            }, 0);
+        };
+
+        // --- progress overlay plumbing -----------------------------------
+        this._convShow = label => {
+            this._convBusy = true;
+            this._convCancelled = false;
+            let el = document.getElementById("fs_copy_progress");
+            let bar = document.getElementById("fs_copy_bar");
+            if (bar) bar.style.display = "";
+            if (el) { el.style.display = "flex"; el.classList.add("cancellable"); }
+            this._convSet(label, null);
+        };
+        this._convSet = (text, pct) => {
+            let txt = document.getElementById("fs_copy_text");
+            if (txt) txt.textContent = text;
+            let bar = document.getElementById("fs_copy_bar");
+            if (!bar) return;
+            if (pct == null) { bar.style.display = "none"; }
+            else { bar.style.display = ""; bar.value = Math.max(0, Math.min(100, pct)); }
+        };
+        this._convDone = (msg, err) => {
+            this._convBusy = false;
+            this._convChild = null;
+            let el = document.getElementById("fs_copy_progress");
+            let bar = document.getElementById("fs_copy_bar");
+            if (el) el.classList.remove("cancellable");
+            this._hideCopyProgress();
+            if (bar) bar.style.display = "";
+            this.readFS(this.dirpath);
+            if (err) this._convError(err); else if (msg) this._notify(msg);
+        };
+        this.cancelConversion = () => {
+            if (!this._convChild) return;
+            this._convCancelled = true;
+            try { this._convChild.kill("SIGTERM"); } catch (e) {}
+        };
+        this._convError = (e, title) => {
+            let msg = String((e && e.message) || e || "Unknown error");
+            if (/ENOENT/.test(msg)) msg += "\n\nThe required tool is not installed on this system.";
+            new Modal({
+                type: "custom",
+                title: (e && e.title) || title || "Conversion failed",
+                html: `<p class="fs_conv_src">${_escapeHtml(msg.slice(0, 800))}</p>`
+            });
+        };
+
+        // Spawn a converter, streaming output lines to `onLine` for progress.
+        this._convSpawn = (bin, args, onLine, opts) => new Promise(resolve => {
+            let settled = false;
+            const finish = r => { if (!settled) { settled = true; resolve(r); } };
+            let child;
+            try {
+                // stdin is closed so tools that would ask interactively (7-Zip's
+                // password prompt) fail fast instead of blocking forever.
+                let spawnOpts = { stdio: ["ignore", "pipe", "pipe"] };
+                if (opts && opts.cwd) spawnOpts.cwd = opts.cwd;
+                child = require("child_process").spawn(bin, args, spawnOpts);
+            }
+            catch (e) { return finish({ code: -1, err: e }); }
+            this._convChild = child;
+            let stdout = "", stderr = "";
+            child.stdout.on("data", d => {
+                stdout = (stdout + d.toString()).slice(-8000);
+                if (onLine) onLine(d);
+            });
+            child.stderr.on("data", d => {
+                stderr = (stderr + d.toString()).slice(-8000);
+                if (onLine) onLine(d);
+            });
+            child.on("error", e => { this._convChild = null; finish({ code: -1, err: e }); });
+            child.on("close", code => {
+                this._convChild = null;
+                if (this._convCancelled) { this._convCancelled = false; return finish({ code: -2, cancelled: true }); }
+                finish({ code: code, stdout: stdout, stderr: stderr });
+            });
+        });
+
+        this._uniquePath = p => {
+            if (!fs.existsSync(p)) return p;
+            let ext = path.extname(p), base = p.slice(0, p.length - ext.length);
+            for (let i = 2; i < 1000; i++) {
+                let c = `${base} (${i})${ext}`;
+                if (!fs.existsSync(c)) return c;
+            }
+            return `${base} (${Date.now()})${ext}`;
+        };
+        this._qToQscale = q => Math.max(2, Math.min(31, Math.round(31 - (q - 1) * 29 / 99)));
+        this._qToCrf = q => Math.max(10, Math.min(51, Math.round(51 - q * 0.41)));
+
+        this._mediaDuration = p => new Promise(resolve => {
+            let ff = this._convTools.ffmpeg;
+            if (!ff) return resolve(0);
+            require("child_process").execFile(ff, ["-hide_banner", "-i", p], { timeout: 8000 }, (err, stdout, stderr) => {
+                let m = String(stderr || "").match(/Duration:\s*(\d+):(\d+):(\d+\.?\d*)/);
+                resolve(m ? (+m[1]) * 3600 + (+m[2]) * 60 + parseFloat(m[3]) : 0);
+            });
+        });
+
+        // Image / video / audio → image / video / audio, all through ffmpeg.
+        this._mediaConvert = async (p, target, quality) => {
+            let ff = this._convTools.ffmpeg;
+            if (!ff) return this._convError("ffmpeg is not bundled in this build.");
+            let cat = this._convCategory(p);
+            let srcExt = this._normExt(this._convExt(p));
+            let dir = path.dirname(p), base = path.basename(p, path.extname(p));
+            let out = this._uniquePath(path.join(dir, `${base}.${target}`));
+            let args = ["-hide_banner", "-y"];
+            let duration = 0;
+            if (cat === "video" || cat === "audio") {
+                duration = await this._mediaDuration(p);
+                args.push("-progress", "pipe:1", "-nostats");
+            }
+            args.push("-i", p);
+            switch (target) {
+                case "png": case "bmp": case "tiff":
+                    args.push("-frames:v", "1");
+                    if (target === "bmp") args.push("-pix_fmt", "bgr24");
+                    break;
+                case "jpg":
+                    args.push("-frames:v", "1", "-q:v", String(this._qToQscale(quality)), "-pix_fmt", "yuvj420p");
+                    break;
+                case "webp":
+                    args.push("-frames:v", "1", "-quality", String(quality));
+                    break;
+                case "avif":
+                    args.push("-frames:v", "1", "-c:v", "libaom-av1",
+                        "-crf", String(Math.round(63 - quality * 0.5)), "-cpu-used", "8");
+                    break;
+                case "gif":
+                    if (cat === "audio") return this._convError("GIF requires a video or image input.");
+                    if (cat === "image") args.push("-frames:v", "1", "-loop", "0");
+                    else args.push("-vf", "fps=12,scale=480:-1:flags=lanczos", "-loop", "0");
+                    break;
+                case "mp4":
+                    args.push("-c:v", "libx264", "-preset", "veryfast", "-crf", String(this._qToCrf(quality)),
+                        "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", "-pix_fmt", "yuv420p");
+                    break;
+                case "webm":
+                    args.push("-c:v", "libvpx-vp9", "-crf", String(Math.max(20, Math.min(50, this._qToCrf(quality) + 8))),
+                        "-b:v", "0", "-row-mt", "1", "-cpu-used", "4", "-c:a", "libopus", "-b:a", "96k");
+                    break;
+                case "mkv":
+                    args.push("-c", "copy");
+                    break;
+                case "mp3": args.push("-vn", "-c:a", "libmp3lame", "-q:a", "2"); break;
+                case "wav": args.push("-vn", "-c:a", "pcm_s16le"); break;
+                case "flac": args.push("-vn", "-c:a", "flac"); break;
+                case "ogg": args.push("-vn", "-c:a", "libvorbis", "-q:a", "5"); break;
+                case "m4a": args.push("-vn", "-c:a", "aac", "-b:a", "192k"); break;
+                default: return this._convError("Unsupported target: " + target);
+            }
+            args.push(out);
+            let label = `${base}.${srcExt} → ${target.toUpperCase()}`;
+            this._convShow(`Converting ${label} …`);
+            let r = await this._convSpawn(ff, args, s => {
+                if (!duration) return;
+                let m = s.match(/out_time_us=(\d+)/);
+                if (!m) return;
+                let pct = Math.min(99, (parseInt(m[1], 10) / 1e6 / duration) * 100);
+                this._convSet(`Converting ${label} … ${Math.round(pct)}%`, pct);
+            });
+            if (r.cancelled) { this._convDone(null); this._notify("Conversion cancelled"); return; }
+            if (r.code !== 0) return this._convDone(null, r.err || (r.stderr || "").trim() || `ffmpeg exited with code ${r.code}`);
+            this._convDone(`${target.toUpperCase()} saved: ${path.basename(out)}`);
+        };
+
+        // PDF → one image per page, written into "<name>_pages/".
+        this._parsePages = s => {
+            s = String(s || "").trim();
+            if (!s) return null;
+            let m = s.match(/^(\d+)(?:\s*-\s*(\d+))?$/);
+            if (!m) return null;
+            let a = parseInt(m[1], 10), b = m[2] ? parseInt(m[2], 10) : a;
+            if (!a || a < 1) return null;
+            if (b < a) { let t = a; a = b; b = t; }
+            return [a, b];
+        };
+        this._pdfPages = p => new Promise(resolve => {
+            let bin = this._convTools.pdfinfo;
+            if (!bin) return resolve(0);
+            require("child_process").execFile(bin, [p], (err, stdout) => {
+                let m = String(stdout || "").match(/^Pages:\s*(\d+)/m);
+                resolve(m ? parseInt(m[1], 10) : 0);
+            });
+        });
+        this._pdfToImages = async (p, target, dpi, pages, quality) => {
+            let bin = this._convTools.pdftoppm;
+            if (!bin) return this._convError("pdftoppm is missing.\nInstall it with: sudo apt install poppler-utils");
+            let dir = path.dirname(p), base = path.basename(p, path.extname(p));
+            let range = this._parsePages(pages);
+            if (pages && !range) return this._convError("Invalid page range: " + pages + "\nUse e.g. 3 or 1-5, or leave empty for all pages.");
+            let outDir = this._uniquePath(path.join(dir, base + "_pages"));
+            try { fs.mkdirSync(outDir, { recursive: true }); } catch (e) { return this._convDone(null, e); }
+            let args = [target === "jpg" ? "-jpeg" : "-png", "-r", String(dpi)];
+            if (target === "jpg") args.push("-jpegopt", "quality=" + Math.round(quality));
+            if (range) args.push("-f", String(range[0]), "-l", String(range[1]));
+            args.push(p, path.join(outDir, base));
+            let total = range ? (range[1] - range[0] + 1) : await this._pdfPages(p);
+            this._convShow(`Rendering ${base}.pdf …`);
+            let poll = setInterval(() => {
+                let n = 0;
+                try { n = fs.readdirSync(outDir).filter(f => /\.(png|jpe?g)$/i.test(f)).length; } catch (e) {}
+                this._convSet(`Rendering ${base} … ${n}${total ? "/" + total : ""} pages`, total ? (n / total) * 100 : null);
+            }, 400);
+            let r = await this._convSpawn(bin, args);
+            clearInterval(poll);
+            if (r.cancelled) { this._convDone(null); this._notify("Conversion cancelled"); return; }
+            if (r.code !== 0) return this._convDone(null, r.err || (r.stderr || "").trim() || `pdftoppm exited with code ${r.code}`);
+            let count = 0;
+            try { count = fs.readdirSync(outDir).filter(f => /\.(png|jpe?g)$/i.test(f)).length; } catch (e) {}
+            if (!count) return this._convDone(null, "No page was rendered — check the page range.");
+            this._convDone(`${count} image${count === 1 ? "" : "s"} → ${path.basename(outDir)}/`);
+        };
+
+        this._pdfToText = async p => {
+            let bin = this._convTools.pdftotext;
+            if (!bin) return this._convError("pdftotext is missing.\nInstall it with: sudo apt install poppler-utils");
+            let out = this._uniquePath(p.replace(/\.pdf$/i, "") + ".txt");
+            this._convShow(`Extracting text from ${path.basename(p)} …`);
+            let r = await this._convSpawn(bin, ["-layout", p, out]);
+            if (r.cancelled) { this._convDone(null); this._notify("Conversion cancelled"); return; }
+            if (r.code !== 0) return this._convDone(null, r.err || (r.stderr || "").trim() || "pdftotext failed");
+            this._convDone("Text saved: " + path.basename(out));
+        };
+
+        // Any image Chromium can decode (PNG/JPG/WebP/BMP/GIF/AVIF) → JPEG
+        // buffer; anything else (e.g. TIFF) is transcoded by ffmpeg first.
+        this._imageToJpeg = async (p, quality) => {
+            const { nativeImage } = require("electron");
+            let img = nativeImage.createFromPath(p);
+            if (!img.isEmpty()) {
+                let s = img.getSize();
+                return { width: s.width, height: s.height, data: img.toJPEG(quality) };
+            }
+            let ff = this._convTools.ffmpeg;
+            if (!ff) return null;
+            let tmp = path.join(os.tmpdir(), "edex_conv_" + Date.now() + "_" + Math.random().toString(36).slice(2) + ".png");
+            try {
+                let r = await this._convSpawn(ff, ["-hide_banner", "-y", "-i", p, "-frames:v", "1", tmp]);
+                if (r.code !== 0) return null;
+                img = nativeImage.createFromPath(tmp);
+                if (img.isEmpty()) return null;
+                let s = img.getSize();
+                return { width: s.width, height: s.height, data: img.toJPEG(quality) };
+            } finally {
+                try { fs.unlinkSync(tmp); } catch (e) {}
+            }
+        };
+
+        // Minimal PDF writer: each page is one embedded JPEG (DCTDecode), so
+        // image → PDF needs no external dependency at all.
+        this._buildPdf = pages => {
+            const chunks = [], offsets = [];
+            let pos = 0;
+            const push = b => {
+                let buf = Buffer.isBuffer(b) ? b : Buffer.from(String(b), "binary");
+                chunks.push(buf);
+                pos += buf.length;
+            };
+            const obj = (n, body) => { offsets[n] = pos; push(n + " 0 obj\n" + body + "\nendobj\n"); };
+            push("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
+            const count = pages.length;
+            const kids = pages.map((_, i) => (3 + i * 3) + " 0 R").join(" ");
+            obj(1, "<< /Type /Catalog /Pages 2 0 R >>");
+            obj(2, `<< /Type /Pages /Kids [${kids}] /Count ${count} >>`);
+            pages.forEach((pg, i) => {
+                const pageN = 3 + i * 3, imgN = pageN + 1, contN = pageN + 2;
+                const w = pg.width * 72 / 96, h = pg.height * 72 / 96;
+                obj(pageN, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${w.toFixed(2)} ${h.toFixed(2)}] /Resources << /XObject << /Im0 ${imgN} 0 R >> >> /Contents ${contN} 0 R >>`);
+                offsets[imgN] = pos;
+                push(`${imgN} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${pg.width} /Height ${pg.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${pg.data.length} >>\nstream\n`);
+                push(pg.data);
+                push("\nendstream\nendobj\n");
+                const content = `q\n${w.toFixed(2)} 0 0 ${h.toFixed(2)} 0 0 cm\n/Im0 Do\nQ\n`;
+                obj(contN, `<< /Length ${content.length} >>\nstream\n${content}endstream`);
+            });
+            const size = 3 + count * 3;
+            const xref = pos;
+            push(`xref\n0 ${size}\n0000000000 65535 f \n`);
+            for (let i = 1; i < size; i++) push(String(offsets[i]).padStart(10, "0") + " 00000 n \n");
+            push(`trailer\n<< /Size ${size} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+            return Buffer.concat(chunks);
+        };
+
+        this._imagesToPdf = async (paths, quality) => {
+            let dir = path.dirname(paths[0]);
+            let name = paths.length === 1
+                ? path.basename(paths[0], path.extname(paths[0]))
+                : (path.basename(dir) || "images");
+            this._convShow(`Encoding ${paths.length} image${paths.length === 1 ? "" : "s"} …`);
+            let pages = [];
+            for (let i = 0; i < paths.length; i++) {
+                this._convSet(`Encoding image ${i + 1}/${paths.length} …`, (i / paths.length) * 100);
+                let jp;
+                try { jp = await this._imageToJpeg(paths[i], quality); } catch (e) { return this._convDone(null, e); }
+                if (!jp) return this._convDone(null, "Cannot decode image: " + path.basename(paths[i]));
+                pages.push(jp);
+            }
+            let out = this._uniquePath(path.join(dir, name + ".pdf"));
+            try { fs.writeFileSync(out, this._buildPdf(pages)); } catch (e) { return this._convDone(null, e); }
+            this._convDone(`PDF saved: ${path.basename(out)} (${pages.length} page${pages.length === 1 ? "" : "s"})`);
+        };
+
+        this._svgToPng = async p => {
+            let bin = this._convTools.rsvg;
+            if (!bin) return this._convError("rsvg-convert is missing.\nInstall it with: sudo apt install librsvg2-bin");
+            let out = this._uniquePath(p.replace(/\.svg$/i, "") + ".png");
+            this._convShow(`Rendering ${path.basename(p)} …`);
+            let r = await this._convSpawn(bin, ["-o", out, p]);
+            if (r.cancelled) { this._convDone(null); this._notify("Conversion cancelled"); return; }
+            if (r.code !== 0) return this._convDone(null, r.err || (r.stderr || "").trim() || "rsvg-convert failed");
+            this._convDone("PNG saved: " + path.basename(out));
+        };
+
+        // Documents → PDF through headless LibreOffice (optional dependency).
+        this._docToPdf = async p => {
+            let bin = this._convTools.soffice;
+            if (!bin) return this._convError("LibreOffice is not installed.\nInstall it with: sudo apt install libreoffice-writer libreoffice-calc libreoffice-impress");
+            let tmp;
+            try { tmp = fs.mkdtempSync(path.join(os.tmpdir(), "edex_doc_")); } catch (e) { return this._convDone(null, e); }
+            this._convShow(`Converting ${path.basename(p)} …`);
+            let r = await this._convSpawn(bin, ["--headless", "--norestore", "--convert-to", "pdf", "--outdir", tmp, p]);
+            let made = null;
+            try { made = fs.readdirSync(tmp).find(f => /\.pdf$/i.test(f)); } catch (e) {}
+            if (r.cancelled) {
+                if (made) { try { fs.unlinkSync(path.join(tmp, made)); } catch (e) {} }
+                this._convDone(null); this._notify("Conversion cancelled"); return;
+            }
+            if (r.code !== 0 || !made) {
+                return this._convDone(null, r.err || (r.stderr || "").trim() || "LibreOffice produced no PDF (is the file password-protected?)");
+            }
+            let out = this._uniquePath(path.join(path.dirname(p), path.basename(p, path.extname(p)) + ".pdf"));
+            try {
+                // /tmp is often a different filesystem, so rename() may fail.
+                try { fs.renameSync(path.join(tmp, made), out); }
+                catch (e) { fs.copyFileSync(path.join(tmp, made), out); fs.unlinkSync(path.join(tmp, made)); }
+            } catch (e) { return this._convDone(null, e); }
+            try { fs.rmdirSync(tmp); } catch (e) {}
+            this._convDone("PDF saved: " + path.basename(out));
         };
 
         // Rename the single selected item via `mv` in the shell.
