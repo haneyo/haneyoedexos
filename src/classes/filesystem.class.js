@@ -701,13 +701,51 @@ class FilesystemDisplay {
         this._extractSelected = () => {
             let p = this.selected[0];
             if (!p || !this.dirpath) return;
+            this._extractInto(p, this.dirpath);
+        };
+
+        // Extract p into <dir>/<archive base name>. Shared by the context menu
+        // and the click-on-archive prompt so both paths behave identically.
+        this._extractInto = (p, dir) => {
+            if (!p || !dir) return;
             if (this._convBusy) return this._notify("An operation is already running");
             let v = this._volumeParts(p);
             if (v && v.index > 1) {
                 return this._notify(`This is volume ${v.index} — select the first volume instead`);
             }
-            let out = this._uniquePath(path.join(this.dirpath, this._archiveBase(p) || "extracted"));
+            let out = this._uniquePath(path.join(dir, this._archiveBase(p) || "extracted"));
             this._extractArchive(p, out).catch(e => this._convDone(null, e));
+        };
+
+        // Clicking an archive asks what to do with it instead of handing the
+        // file to the OS: eDEX-OS ships no desktop archive handler, so
+        // shell.openPath() would only report that nothing can open the file.
+        this._extractPrompt = block => {
+            let p = String(block.path);
+            let name = p.split("/").pop() || "archive";
+            window._pendingArchivePath = p; // keep the path out of the inline onclick
+            new Modal({
+                type: "custom",
+                title: "Extract Archive",
+                html: `<p class="fs_conv_src">${_escapeHtml(name)}</p>
+                       <p class="fs_conv_hint">Extract into a folder next to the archive, or choose a destination folder.</p>`,
+                buttons: [
+                    {label: "Extract here", action: "window.fsDisp.extractArchiveHere(window._pendingArchivePath);"},
+                    {label: "Extract To…", action: "window.fsDisp.extractArchiveTo(window._pendingArchivePath);"}
+                ]
+            });
+        };
+        this._closeTopModal = () => {
+            let top = window.modals[Object.keys(window.modals).pop()];
+            if (top && top.close) top.close();
+        };
+        this.extractArchiveHere = p => {
+            this._closeTopModal();
+            this._extractInto(p, String(p).slice(0, String(p).lastIndexOf("/")) || "/");
+        };
+        this.extractArchiveTo = p => {
+            this._closeTopModal();
+            this._extractTo(p);
         };
 
         // "Extract To…": native folder picker (defaults to the current folder),
@@ -727,7 +765,7 @@ class FilesystemDisplay {
                 res = await remote.dialog.showOpenDialog(remote.getCurrentWindow(), {
                     title: "Extract to folder",
                     buttonLabel: "Select",
-                    defaultPath: this._lastExtractDir || this.dirpath,
+                    defaultPath: this._lastExtractDir || String(p).slice(0, String(p).lastIndexOf("/")) || this.dirpath,
                     properties: ["openDirectory", "createDirectory"]
                 });
             } catch (e) { return this._convError(e, "Extraction failed"); }
@@ -858,12 +896,22 @@ class FilesystemDisplay {
                     if (m) this._convSet(`Extracting ${name} → ${destLabel} … ${m[1]}%`, parseInt(m[1], 10));
                 });
                 if (r.cancelled) { this._convDone(null); this._notify("Extraction cancelled"); return; }
-                if (r.code === 0) {
+                // 7-Zip refuses to recreate symlinks that point outside the
+                // archive ("Dangerous link path was ignored") and exits with
+                // code 2. Archives built on another machine — a macOS venv, for
+                // instance — hit this while every regular file extracts fine,
+                // so only unsafe-link errors are reported as a warning.
+                let errLines = ((r.stdout || "") + "\n" + (r.stderr || ""))
+                    .split("\n").map(l => l.trim()).filter(l => /^ERROR:/i.test(l));
+                let onlyUnsafeLinks = errLines.length > 0 &&
+                    errLines.every(l => /Dangerous link path was ignored/i.test(l));
+                if (r.code === 0 || onlyUnsafeLinks) {
                     let extra = "";
                     if (opts && opts.deleteSource) {
                         let removed = this._deleteArchive(p);
                         extra = removed ? " · archive deleted" : " · archive could not be deleted";
                     }
+                    if (onlyUnsafeLinks) extra += ` · ${errLines.length} unsafe link(s) skipped`;
                     return this._convDone(`Extracted to ${destLabel}${extra}`);
                 }
                 let errText = ((r.stdout || "") + "\n" + (r.stderr || "")).trim();
@@ -1193,11 +1241,13 @@ class FilesystemDisplay {
             let stdout = "", stderr = "";
             child.stdout.on("data", d => {
                 stdout = (stdout + d.toString()).slice(-8000);
-                if (onLine) onLine(d);
+                // Callbacks parse progress with String methods (e.match), so
+                // hand them text — the raw chunk is a Buffer.
+                if (onLine) onLine(d.toString());
             });
             child.stderr.on("data", d => {
                 stderr = (stderr + d.toString()).slice(-8000);
-                if (onLine) onLine(d);
+                if (onLine) onLine(d.toString());
             });
             child.on("error", e => { this._convChild = null; finish({ code: -1, err: e }); });
             child.on("close", code => {
@@ -3186,6 +3236,11 @@ class FilesystemDisplay {
                 this._confirmRun(block, _isScript);
                 return;
             }
+
+            // Archives get an in-app extract prompt. eDEX-OS has no desktop
+            // archive handler, so shell.openPath() would only report that no
+            // application can open the file.
+            if (this._isArchive(block.path)) { this._extractPrompt(block); return; }
 
             let filetype = mime.lookup(name.split(".")[name.split(".").length - 1]);
 
