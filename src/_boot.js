@@ -900,6 +900,26 @@ app.on('ready', async () => {
     // service / API into every terminal's environment.
     const claudeConf = settings.claude || {};
     const claudeShell = await which("claude", { path: cleanEnv.PATH }).catch(() => null);
+    // The ISO installs claude with `npm -g --prefix=/usr/local`, and claude's
+    // own updater refuses to touch a system-wide npm folder ("npm global
+    // folder isn't writable"), so the terminal tab could never update itself.
+    // Migrate once, in the background, to the native installer under the
+    // user's home — that copy is writable and updates on startup. The bundled
+    // /usr/local copy stays as an offline fallback if this never succeeds.
+    try {
+        const claudeLocal = path.join(require("os").homedir(), ".local", "bin", "claude");
+        if (claudeShell && claudeShell.startsWith("/usr/local") && !fs.existsSync(claudeLocal)) {
+            const installer = require("child_process").spawn(claudeShell, ["install"], {
+                env: cleanEnv,
+                detached: true,
+                stdio: "ignore"
+            });
+            installer.unref();
+            signale.info("Claude Code: migrating to a self-updating user install");
+        }
+    } catch (e) {
+        signale.warn(`Claude Code install migration skipped: ${e.message}`);
+    }
     // Bundled local LLM (#144): the ISO bakes llama-server + one quantized GGUF
     // into /opt/edex/llm. That copy is read-only and stays as the undeletable
     // fallback; downloaded models and upgraded llama-server builds live in
