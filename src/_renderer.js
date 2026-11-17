@@ -8707,13 +8707,18 @@ if (window.__screen.master) {
 // re-lock when a passcode is configured. The whole body is fenced: a throw
 // mid-teardown leaves the cursor hidden and the overlay stuck — exactly the
 // "dead keyboard/touchpad after lid-open" the resume path used to produce.
-const resumeFromSuspend = () => {
+// `relock: false` is used when the window merely stopped being occluded (a
+// fullscreen app such as Firefox on top). Chromium reports that as a visibility
+// change too, but nothing was suspended, so re-locking there would drop the user
+// onto the PIN pad every time they leave fullscreen.
+const resumeFromSuspend = (opts) => {
     try {
         lastActivity = Date.now();
         window.hideScreenOff();
         if (window.screensaver) window.screensaver.hide(true);
         if (window.cursorTrap) window.cursorTrap.show();
         if (window.lockScreen && !window.lockScreen.active
+            && (!opts || opts.relock !== false)
             && window.settings.lockOnIdle !== false
             && String(window.settings.lockCode || "").length > 0) {
             window.lockScreen.engage();
@@ -8746,9 +8751,13 @@ ipc.on("pm:suspend", () => {
     }
 });
 // A lid close that only blanks the display (no full suspend) arrives as a
-// visibility change instead — run the same recovery.
+// visibility change instead — run the same recovery. Never re-lock here: a
+// fullscreen native app (Firefox, launched through the app monitor) hides the
+// shell for as long as the user keeps it open, and coming back must not drop
+// them onto the PIN pad. Real suspend/resume goes through pm:suspend/pm:resume,
+// which still locks, and the idle timer still covers walking away.
 document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") resumeFromSuspend();
+    if (document.visibilityState === "visible") resumeFromSuspend({ relock: false });
 });
 
 // ---- Self-heal watchdog: a long session accumulates JS heap in the decorative
