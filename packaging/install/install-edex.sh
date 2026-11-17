@@ -581,6 +581,47 @@ curl -s -m 1 -X POST http://127.0.0.1:17323/osd \
     -d "{\"type\":\"volume\",\"value\":${PCT:-0},\"muted\":${MUT}}" >/dev/null 2>&1 || true
 VOL
 chmod +x /usr/local/sbin/edex-volume.sh
+cat > /usr/local/sbin/edex-announce.sh <<'ANN'
+#!/usr/bin/env bash
+# Speaks Ubuntu update events with the same recordings the eDEX shell uses.
+# Called from /etc/apt/apt.conf.d/99-edex-voice. The UI plays the shipped cue;
+# if it is not running the POST simply fails, so updates are never blocked by
+# audio.
+PORT=17324
+STATE_DIR=/var/lib/edex-voice
+say() {
+    [ -n "${1:-}" ] || return 0
+    curl -fsS -m 3 -X POST -H 'Content-Type: application/json' \
+        --data "{\"sound\":\"$1\"}" "http://127.0.0.1:${PORT}/" >/dev/null 2>&1 || true
+}
+case "${1:-}" in
+    updates)
+        mkdir -p "$STATE_DIR"
+        N=$(apt list --upgradable 2>/dev/null | grep -c 'upgradable from')
+        [ "$N" -gt 0 ] || exit 0
+        # apt update runs on a timer; only speak when the count actually changes.
+        [ "$N" = "$(cat "$STATE_DIR/count" 2>/dev/null)" ] && exit 0
+        echo "$N" > "$STATE_DIR/count"
+        say update_available
+        ;;
+    upgraded)
+        mkdir -p "$STATE_DIR"
+        rm -f "$STATE_DIR/count"
+        # dpkg fires this after every transaction, so speak only once per
+        # pending reboot, and only when a restart is actually required.
+        [ -f /var/run/reboot-required ] || exit 0
+        [ "$STATE_DIR/reboot" -nt /var/run/reboot-required ] && exit 0
+        touch "$STATE_DIR/reboot"
+        say update_done
+        ;;
+esac
+ANN
+chmod +x /usr/local/sbin/edex-announce.sh
+cat > /etc/apt/apt.conf.d/99-edex-voice <<'VOICE'
+// Spoken system-update events (same voice as the eDEX shell).
+APT::Update::Post-Invoke-Success { "if [ -x /usr/local/sbin/edex-announce.sh ]; then /usr/local/sbin/edex-announce.sh updates; fi"; };
+DPkg::Post-Invoke { "if [ -x /usr/local/sbin/edex-announce.sh ]; then /usr/local/sbin/edex-announce.sh upgraded; fi"; };
+VOICE
 cat > /usr/local/sbin/edex-brightness.sh <<'BRI'
 #!/usr/bin/env bash
 # Backlight helper for the Fn keys and the eDEX settings slider.

@@ -2853,6 +2853,46 @@ status();
         dbgLog("tts:speak FAIL " + String((err && err.message) || err));
         return { ok: false, error: String((err && err.message) || err) };
     }));
+    // ---- System update cues ----------------------------------------------
+    // Ubuntu's own update flow is silent. The apt hooks below
+    // (/opt/edex/bin/edex-announce.sh) ask for one of the shell's shipped
+    // recordings, so system updates sound exactly like the UI
+    // (apt_check / update_available / update_done) instead of a synthesised
+    // voice. Hooks run as root and may fire before the desktop is up, so a
+    // refused connection stays harmless.
+    const playCue = name => {
+        const cue = String(name || "").replace(/[^a-z_]/g, "");
+        if (!cue) return false;
+        let buf;
+        try {
+            buf = fs.readFileSync(path.join(__dirname, "assets", "audio", `${cue}.wav`));
+        } catch (e) {
+            return false;
+        }
+        const tmp = path.join(electron.app.getPath("temp"), `edex-cue-${process.pid}-${Date.now()}.wav`);
+        fs.writeFileSync(tmp, buf);
+        const player = require("child_process").spawn("aplay", ["-q", tmp], { stdio: "ignore" });
+        const cleanup = () => { try { fs.unlinkSync(tmp); } catch (e) {} };
+        player.on("close", cleanup);
+        player.on("error", cleanup);
+        return true;
+    };
+    try {
+        const cueServer = http.createServer((req, res) => {
+            let body = "";
+            req.on("data", c => { body += c; if (body.length > 512) body = body.slice(0, 512); });
+            req.on("end", () => {
+                res.setHeader("Content-Type", "text/plain");
+                res.end("ok");
+                let p = null;
+                try { p = JSON.parse(body); } catch (e) {}
+                if (p && p.sound) playCue(p.sound);
+            });
+        });
+        cueServer.listen(17324, "127.0.0.1");
+    } catch (e) {
+        signale.warn("Could not start update cue listener: " + (e && e.message));
+    }
     // #158/#172 "联网查询": the AI had no way to get current information, so
     // live-data questions (weather, news, prices) were answered from the model's
     // training cutoff. We now inject two sources before each chat (RAG-lite) —
